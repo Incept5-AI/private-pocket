@@ -1,0 +1,31 @@
+connecting to PKT01_GREY_2617abcd <peripheral id>
+connected, mtu=247
+
+SERVICE 0000180f-0000-1000-8000-00805f9b34fb  Battery Service
+  CHAR 00002a19-0000-1000-8000-00805f9b34fb  handle=17  [read, notify]  Battery Level
+       value: 64  |d|
+       DESC 00002902-0000-1000-8000-00805f9b34fb Client Characteristic Configuration: 0000  |..|
+
+SERVICE 0000ffd0-0000-1000-8000-00805f9b34fb  Vendor specific
+  CHAR 0000ffd1-0000-1000-8000-00805f9b34fb  handle=21  [write-without-response, write]  Vendor specific
+  CHAR 0000ffd2-0000-1000-8000-00805f9b34fb  handle=23  [notify]  Vendor specific
+       DESC 00002902-0000-1000-8000-00805f9b34fb Client Characteristic Configuration: 0000  |..|
+  CHAR 0000ffd3-0000-1000-8000-00805f9b34fb  handle=26  [write-without-response, notify, write]  Vendor specific
+       DESC 00002902-0000-1000-8000-00805f9b34fb Client Characteristic Configuration: 0000  |..|
+
+SERVICE e49a3001-f69a-11e8-8eb2-f2801f1b9fd1  Unknown
+  CHAR e49a3002-f69a-11e8-8eb2-f2801f1b9fd1  handle=30  [write-without-response, write]  Unknown
+  CHAR e49a3003-f69a-11e8-8eb2-f2801f1b9fd1  handle=32  [notify]  Unknown
+       DESC 00002902-0000-1000-8000-00805f9b34fb Client Characteristic Configuration: 0000  |..|
+
+SERVICE e49a25f8-f69a-11e8-8eb2-f2801f1b9fd1  Unknown
+  CHAR e49a25e0-f69a-11e8-8eb2-f2801f1b9fd1  handle=36  [write-without-response, write]  Unknown
+  CHAR e49a28e1-f69a-11e8-8eb2-f2801f1b9fd1  handle=38  [notify]  Unknown
+       DESC 00002902-0000-1000-8000-00805f9b34fb Client Characteristic Configuration: 0000  |..|
+
+SERVICE 001120a0-2233-4455-6677-889912345678  Unknown
+  CHAR 001120a2-2233-4455-6677-889912345678  handle=42  [write-without-response, write]  Unknown
+  CHAR 001120a1-2233-4455-6677-889912345678  handle=44  [notify]  Unknown
+       DESC 00002902-0000-1000-8000-00805f9b34fb Client Characteristic Configuration: 0000  |..|
+  CHAR 001120a3-2233-4455-6677-889912345678  handle=47  [write-without-response, notify]  Unknown
+       DESC 00002902-0000-1000-8000-00805f9b34fb Client Characteristic Configuration: 0000  |..|

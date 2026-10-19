@@ -1,0 +1,27 @@
+# Secrets and local settings
+.env
+.env.*
+!.env.example
+signing.env
+
+# Private data: recordings, Bluetooth captures (they contain the session key), downloads
+recordings/
+ble/captures/
+ble/downloads/
+*.pklg
+*.mp3
+*.m4a
+*.wav
+
+# Not part of this project: clones of Pocket's own repos, private notes
+docs/
+plugins/
+report/
+
+# Build output
+ios/PrivatePocket/Generated/
+ios/PrivatePocket/build/
+*.xcodeproj/
+.DS_Store
+__pycache__/
+.venv/

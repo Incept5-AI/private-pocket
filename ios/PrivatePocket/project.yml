@@ -1,0 +1,54 @@
+name: PrivatePocket
+
+# Generated with `xcodegen generate`; the .xcodeproj is not checked in.
+# Build + install: see README.md.
+
+options:
+  bundleIdPrefix: com.incept5
+  deploymentTarget:
+    iOS: "27.0"
+  xcodeVersion: "27.0"
+
+targets:
+  PrivatePocket:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - path: Generated
+        optional: true
+    preBuildScripts:
+      - name: Generate default device from ../../ble/.env
+        script: |
+          "$SRCROOT/gen-defaults.sh"
+        outputFiles:
+          - $(SRCROOT)/Generated/DefaultDevice.swift
+        basedOnDependencyAnalysis: false
+    settings:
+      base:
+        # Either set your team here (or in Xcode) and run from Xcode, or build
+        # unsigned and sign with sign-install.sh (see signing.env.example).
+        CODE_SIGN_STYLE: Automatic
+        PRODUCT_BUNDLE_IDENTIFIER: com.incept5.private-pocket
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        INFOPLIST_KEY_CFBundleDisplayName: Private Pocket
+        INFOPLIST_KEY_UILaunchScreen_Generation: true
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Connects to your Pocket recorder to list, record and download recordings. Nothing leaves this phone."
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Tags each recording with where it was made. Stays on this phone."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Transcribes your recordings on this iPhone."
+        INFOPLIST_KEY_UIFileSharingEnabled: YES
+        INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
+    info:
+      path: App/Info.plist
+      properties:
+        UIBackgroundModes: [bluetooth-central, audio]
+        # Lets the language model setting point at a plain-http server on a private network.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
