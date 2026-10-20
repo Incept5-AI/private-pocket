@@ -18,6 +18,53 @@ the iPhone. Optionally, it uses a server **you** choose.
 > Not affiliated with, endorsed by or supported by Open Vision Engineering, Inc. (Pocket).
 > "Pocket" is their trademark, used here only to say which device this works with.
 
+## Why this exists
+
+We bought a Pocket to use in Europe, for conversations that include other people. Before
+putting real conversations on it, we read Pocket's privacy policy, terms and trust page.
+**The lack of meaningful GDPR information is what led to this project.** The trust page
+shows a GDPR badge, but the documents behind it don't give a European user what the law
+requires. Testing the device then showed that its encryption claims don't match what it
+does either.
+
+*Sources:* [Privacy Policy](https://heypocket.com/pages/privacy) (last modified
+8 September 2025), [Terms of Use](https://heypocket.com/pages/terms) (15 September 2025)
+and [Trust page](https://heypocket.com/pages/pocket-trust), all read on 19 October 2026,
+plus our own tests on two cards running firmware 1.8. We'll gladly update this section
+if Pocket addresses these points.
+
+### GDPR: the claims and the reality
+
+| Pocket says | What we found |
+|---|---|
+| A **"GDPR"** badge on the trust page, beside SOC 2 Type I, SOC 2 Type II and "HIPPA" (sic) | No report, certificate or audit is linked from any of them. GDPR has no compliance badge to display. |
+| "Transcription and summarization run on US-based cloud infrastructure" | Recordings leave Europe, but the policy names **no transfer safeguard**: no Standard Contractual Clauses, EU–US Data Privacy Framework or UK extension (GDPR Arts. 44–49, 13(1)(f)). |
+| Controller: Open Vision Engineering, Inc., Delaware | **No EU or UK representative** (Art. 27) and **no data protection officer contact**. |
+| Recordings go to "cloud/AI vendors" for transcription and model processing | **No list of subprocessors.** Your voice, and the voices of everyone you recorded, go to companies that aren't named. |
+| Data is kept "only for as long as necessary" | **No retention periods.** Deleted accounts linger in backups for unstated "scheduled cycles" (Art. 13(2)(a)). |
+| One sentence on legal bases "(EEA/UK where applicable)" | **No mention of the right to complain to a supervisory authority** (Art. 13(2)(d)). |
+| "We don't share your data with third parties" (trust page) | The privacy policy allows advertising cookies and SDKs, and says these "may be deemed a 'sale' or 'sharing' of personal information". It ignores Do Not Track. |
+| Health or other sensitive details: "If you choose to record or otherwise include sensitive information…" | Responsibility for special-category data (Art. 9) is passed to the user, including for bystanders who never agreed to anything. |
+
+We also saw the official app do this: whenever it connects to the card, it downloads every
+recording it finds and syncs it to Pocket's cloud. That includes recordings made by other
+software.
+
+### Encryption: the claims and the reality
+
+| Pocket says (trust page) | What we observed |
+|---|---|
+| "Audio is written to encrypted storage the moment it leaves the microphone. Pull the device apart and there is nothing readable on it without your account." | With USB access (Web Sync) on, the card mounts on any computer as an ordinary drive of **plain, unencrypted MP3 files**. No account is involved. Over Bluetooth, the same plain MP3s can be downloaded by anyone who has the session key. |
+| "The recording is never in the clear on the wire, on your network or on ours." | From card to phone, recordings travel over Bluetooth as **plain MP3 frames**, with no Bluetooth pairing or link encryption, so the audio is in the clear over the air. *(We didn't examine the Wi-Fi or cloud upload path.)* |
+| "Built on rigorous security standards, strong encryption…", "security at every layer" | **The Bluetooth link has no cryptography.** The card accepts connections from any device without pairing, and anyone in range can read its battery level. The only access control is a 16-character key that the official app sends **in clear text** at every connection. It doesn't change between sessions, and it unlocks listing, downloading, live streaming and starting or stopping recordings. |
+
+To Pocket's credit, USB access has been **off by default** since firmware 1.2.
+
+These findings are about how the device and its documentation work today, and they are
+fixable. Possible fixes: Bluetooth LE Secure Connections pairing, a per-device key that can
+be rotated, real encryption at rest, an EU processing region, and a GDPR-complete privacy
+notice. Until then, Private Pocket keeps your recordings on your own phone.
+
 ## What it does
 
 - **Record and stream.** Start and stop the Pocket from the phone, or use its button.
