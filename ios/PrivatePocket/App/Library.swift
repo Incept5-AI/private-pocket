@@ -87,6 +87,11 @@ struct RecordingMeta: Codable, Hashable {
     /// What the conversation was and what came out of it (see `MomentInsight`).
     var insight: MomentInsight?
     var analysedAt: Date?
+    /// Your correction of the kind, which wins over the reading.
+    var labelKind: String?
+    /// Sample moments (see `SampleMoments`): which one, and the kind it is meant to be read as.
+    var sampleID: String?
+    var expectedKind: String?
 }
 
 enum PocketTime {

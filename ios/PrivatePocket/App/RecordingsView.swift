@@ -2,6 +2,7 @@ import AVFoundation
 import SwiftUI
 
 struct RecordingsView: View {
+    @EnvironmentObject var model: AppModel
     @EnvironmentObject var library: Library
     @EnvironmentObject var devices: DeviceStore
     @State private var search = ""
@@ -45,8 +46,13 @@ struct RecordingsView: View {
         NavigationStack {
             List {
                 if library.recordings.isEmpty {
-                    ContentUnavailableView("No moments yet", systemImage: "waveform",
-                                           description: Text("Press the side button on your Pocket. Recordings stream in as they are made, and ones made while the phone was away arrive when it reconnects."))
+                    ContentUnavailableView {
+                        Label("No moments yet", systemImage: "waveform")
+                    } description: {
+                        Text("Press the side button on your Pocket. Recordings stream in as they are made, and ones made while the phone was away arrive when it reconnects.")
+                    } actions: {
+                        Button("Add sample moments") { Task { await model.addSamples() } }
+                    }
                 } else if shown.isEmpty {
                     ContentUnavailableView.search(text: search)
                 }
@@ -473,6 +479,11 @@ struct MomentCard: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 KindChip(kind: r.kind)
+                if let e = r.meta.expectedKind, let i = r.meta.insight, i.readByModel {
+                    let ok = e == i.kind
+                    Label(ok ? "As expected" : "Expected \(MomentKind(rawValue: e)?.label ?? e)", systemImage: ok ? "checkmark" : "xmark")
+                        .font(.caption2.weight(.semibold)).foregroundStyle(ok ? Brand.good : Brand.bad)
+                }
                 Spacer()
                 if model.working.contains(r.id) { ProgressView().controlSize(.small) }
                 Text(when).font(.caption).foregroundStyle(Brand.muted)
@@ -524,7 +535,21 @@ struct MomentSections: View {
         let i = r.meta.insight
         Section {
             HStack {
-                KindChip(kind: r.kind)
+                Menu {
+                    ForEach([MomentKind.businessCall, .personalCall, .businessMeeting, .personalMeeting, .note], id: \.self) { k in
+                        Button { model.setKind(r, k) } label: { Label(k.label, systemImage: k.symbol) }
+                    }
+                    if r.meta.labelKind != nil {
+                        Divider()
+                        Button("Back to the reading") { model.setKind(r, nil) }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        KindChip(kind: r.kind)
+                        Image(systemName: "chevron.down").font(.caption2.weight(.semibold)).foregroundStyle(Brand.muted)
+                    }
+                }
+                if r.meta.labelKind != nil { Text("your correction").font(.caption2).foregroundStyle(Brand.dim) }
                 Spacer()
                 if r.meta.transcript != nil, i?.readByModel != true {
                     Button("Read it") { Task { await model.analyse(r) } }

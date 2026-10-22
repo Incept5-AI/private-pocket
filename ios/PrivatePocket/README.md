@@ -94,6 +94,14 @@ cyan for anything you can tap, the card's own amber for recording, blue for work
 pink for life. The status light's colours are the device's and are never restyled. The
 app icon is the card with its light.
 
+## Sample moments
+
+Settings → Try it → Sample moments adds eight short spoken conversations, one of each
+kind, dated over the last few hours. Each goes through speech to text, the reading,
+Moments and Insights exactly as a recording from the Pocket would, on this iPhone or
+on your server, and shows whether it was read as the kind it was meant to be. Remove
+them from the same page.
+
 ## Screens
 
 Four tabs. **Pocket**: the card, drawn at its real proportions with the real light on

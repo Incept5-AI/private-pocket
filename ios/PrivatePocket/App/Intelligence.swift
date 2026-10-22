@@ -58,6 +58,7 @@ struct MomentInsight: Codable, Hashable {
 
 extension Recording {
     var kind: MomentKind {
+        if let l = meta.labelKind.flatMap(MomentKind.init(rawValue:)) { return l }
         if let k = meta.insight?.momentKind, k != .other { return k }
         if isCall { return .call }
         if let t = meta.turns, Speakers.count(t) > 1 { return .meeting }

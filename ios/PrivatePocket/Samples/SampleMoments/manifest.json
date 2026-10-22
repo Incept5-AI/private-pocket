@@ -1,0 +1,112 @@
+{
+  "notes": "Sample moments bundled with the app: short fictional conversations, one per kind, spoken by macOS voices and encoded like the Pocket records (16 kHz mono MP3). make.py builds SampleMoments/ from this file. 'kind' is what a reading of the transcript is expected to say.",
+  "samples": [
+    {
+      "id": "call-venue", "title": "Booking the workshop venue", "kind": "business_call", "mode": "CALL", "file": "call-venue.mp3",
+      "lines": [
+        {"v": 1, "t": "Hi, is that Tom? It's Maya from Northlight, we spoke last week about the workshop."},
+        {"v": 2, "t": "Maya, hi, yes. The all-day one, you were thinking March."},
+        {"v": 1, "t": "That's it. We've settled on Tuesday the twelfth of March, about thirty people, nine till four."},
+        {"v": 2, "t": "Tuesday the twelfth. Let me look. Yes, the Garden Room is free that day. Do you want lunch in as well?"},
+        {"v": 1, "t": "Lunch in, please, and a couple of vegetarian options. Can you send me a quote with the room and the catering together?"},
+        {"v": 2, "t": "I can. I'll email the quote tomorrow morning, and I'll hold the room for you until Friday."},
+        {"v": 1, "t": "Perfect. I'll confirm numbers by the end of next week, and I'll send over the agenda so you know when the breaks are."},
+        {"v": 2, "t": "Lovely. Oh, and parking, there's about twenty spaces, so if people can share lifts that helps."},
+        {"v": 1, "t": "Noted, I'll tell the team. Thanks Tom."},
+        {"v": 2, "t": "Thanks Maya, bye."}
+      ]
+    },
+    {
+      "id": "call-website", "title": "The website launch slipping", "kind": "business_call", "mode": "CALL", "file": "call-website.mp3",
+      "lines": [
+        {"v": 1, "t": "Hi, it's Ravi at the agency. Have you got a minute about the launch?"},
+        {"v": 2, "t": "Go on."},
+        {"v": 1, "t": "So, the honest version is the new site won't be ready for the first. The product pages are fine, but we're still waiting on the case study copy, and the checkout testing found two bugs on Safari."},
+        {"v": 2, "t": "Right. What's a realistic date?"},
+        {"v": 1, "t": "If we get the copy by Wednesday, we can launch on the eighth. I'll put that in writing today so you've got it."},
+        {"v": 2, "t": "Okay. I'll chase Lena for the case study copy, she's had it a fortnight. And I want to see the Safari bugs fixed on staging before we agree the eighth."},
+        {"v": 1, "t": "Fair. I'll send you the staging link once they're done, probably Thursday."},
+        {"v": 2, "t": "Thursday. Fine. And Ravi, let's do a quick call Monday to check we're on track."},
+        {"v": 1, "t": "Monday, ten o'clock?"},
+        {"v": 2, "t": "Ten's fine. Speak then."}
+      ]
+    },
+    {
+      "id": "call-cycling", "title": "Sunday ride", "kind": "personal_call", "mode": "CALL", "file": "call-cycling.mp3",
+      "lines": [
+        {"v": 1, "t": "Alright mate, are you still up for a ride on Sunday?"},
+        {"v": 2, "t": "Yeah, if the weather holds. What time were you thinking?"},
+        {"v": 1, "t": "Eight, from the café by the park, before it gets busy. We could do the loop out to the reservoir, it's about forty k."},
+        {"v": 2, "t": "Eight's early for a Sunday but fine. My back tyre's been going down though, can I borrow your track pump on Saturday?"},
+        {"v": 1, "t": "Course, I'll drop it round Saturday afternoon. Bring a spare tube as well, last time you didn't."},
+        {"v": 2, "t": "I know, I know. Oh, and Alice said she might come, is that alright?"},
+        {"v": 1, "t": "More the merrier. I'll text her the café. Right, see you Sunday at eight."},
+        {"v": 2, "t": "See you then."}
+      ]
+    },
+    {
+      "id": "call-allotment", "title": "Seedlings and the summer fair", "kind": "personal_call", "mode": "CALL", "file": "call-allotment.mp3",
+      "lines": [
+        {"v": 2, "t": "Hiya, it's Kemi from number twelve. Are you going down to the allotment this weekend?"},
+        {"v": 1, "t": "Saturday morning probably, why?"},
+        {"v": 2, "t": "I've got way too many tomato seedlings, do you want some? I've got about thirty."},
+        {"v": 1, "t": "I'd love some, I'll take ten. I've got courgettes if you want to swap."},
+        {"v": 2, "t": "Oh go on then, two courgettes. And the other thing, the summer fair's on the twenty-second, they want someone to do the plant stall again."},
+        {"v": 1, "t": "I'll do it if you do it with me. Saturday the twenty-second?"},
+        {"v": 2, "t": "Saturday the twenty-second, yes, from eleven. I'll put both our names down."},
+        {"v": 1, "t": "Deal. See you Saturday, I'll bring a tray for the seedlings."},
+        {"v": 2, "t": "Lovely, bye."}
+      ]
+    },
+    {
+      "id": "meeting-roadmap", "title": "Next quarter's roadmap", "kind": "business_meeting", "mode": "CON", "file": "meeting-roadmap.mp3",
+      "lines": [
+        {"v": 1, "t": "Right, next quarter. Two things on the table, the reporting dashboard and the mobile app, and I don't think we can do both well."},
+        {"v": 2, "t": "The dashboard's what the sales team keep asking for."},
+        {"v": 3, "t": "But the app is what the board signed off, and they'll ask about it at the review on the twenty-eighth."},
+        {"v": 1, "t": "Okay. Proposal: dashboard first, six weeks, then the app. Priya, can you write up the scope for the dashboard by Friday?"},
+        {"v": 2, "t": "Yes, I'll have a draft by Friday."},
+        {"v": 1, "t": "Tom, can you tell the board the app starts in May, so it's not a surprise on the twenty-eighth?"},
+        {"v": 3, "t": "I'll put it in the pre-read. And I'll book the demo slot for the dashboard, say the last week of April."},
+        {"v": 1, "t": "Good. One more thing, the hiring. We've still got the open backend role, so I'll chase recruitment this week."},
+        {"v": 2, "t": "Please do, we're all covering for it."},
+        {"v": 1, "t": "Right, that's it, thanks both."}
+      ]
+    },
+    {
+      "id": "meeting-offsite", "title": "Planning the team offsite", "kind": "business_meeting", "mode": "CON", "file": "meeting-offsite.mp3",
+      "lines": [
+        {"v": 1, "t": "So, the offsite. Lena, where did we get to on the venue?"},
+        {"v": 2, "t": "Two options. The place in the Peaks, which is nicer but it's a two-hour drive, or the hotel near the station, which is dull but easy."},
+        {"v": 1, "t": "How many are we?"},
+        {"v": 2, "t": "Fourteen, if everyone comes. Budget's about three thousand all in, including the dinner."},
+        {"v": 1, "t": "Let's do the Peaks. People remember the nice one. Can you book it for the fifteenth and sixteenth of May?"},
+        {"v": 2, "t": "I'll book it this week and send the details round. Can you do the agenda? Last time it was all presentations and people hated it."},
+        {"v": 1, "t": "I'll draft the agenda, more workshops, fewer slides, and send it to you by Monday."},
+        {"v": 2, "t": "And someone needs to sort transport. I'll ask Ben to organise the minibus."},
+        {"v": 1, "t": "Good. Okay, that's the offsite."}
+      ]
+    },
+    {
+      "id": "meeting-bookclub", "title": "Book club", "kind": "personal_meeting", "mode": "CON", "file": "meeting-bookclub.mp3",
+      "lines": [
+        {"v": 2, "t": "Okay, so did everyone actually finish it this time?"},
+        {"v": 1, "t": "I finished it on the train this morning, so technically yes."},
+        {"v": 3, "t": "I gave up at chapter nine, I'm sorry, the whole lighthouse thing lost me."},
+        {"v": 2, "t": "Fair. So, next book. I was going to suggest the one Alice recommended, the Icelandic one."},
+        {"v": 1, "t": "I've got a copy, I can lend it to whoever wants it."},
+        {"v": 3, "t": "Me, please. When are we meeting? Not a Tuesday again, I've got choir."},
+        {"v": 2, "t": "How about Thursday the fourth, at mine, I'll cook."},
+        {"v": 1, "t": "Thursday the fourth works. I'll bring pudding."},
+        {"v": 3, "t": "And I'll actually finish the book. Probably."},
+        {"v": 2, "t": "Right. Thursday the fourth, Icelandic book, pudding. Done."}
+      ]
+    },
+    {
+      "id": "note-evening", "title": "Note to self", "kind": "note", "mode": "CON", "file": "note-evening.mp3",
+      "lines": [
+        {"v": 1, "t": "Right, note to self, end of the day. Tomorrow I need to send the agenda for the offsite to Lena before she books anything. Order the printer paper, we're out again. Ring the garage about the car, the service is due at the end of the month. And remember to book the table for Dad's birthday on the eighteenth, somewhere he can park. Oh, and water Mo's plants while she's away, she's back on Sunday. That's it, I think."}
+      ]
+    }
+  ]
+}

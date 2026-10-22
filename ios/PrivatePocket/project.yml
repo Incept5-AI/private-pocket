@@ -18,6 +18,9 @@ targets:
       - Shared
       - path: Generated
         optional: true
+      - path: Samples/SampleMoments
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: PrivatePocketWidgets
     preBuildScripts:

@@ -106,6 +106,12 @@ struct SettingsView: View {
                     Text(Summariser.availability ?? "Sent with each transcript to \(LLM.whereLabel)")
                 }
 
+                Section {
+                    NavigationLink { SamplesView() } label: { Label("Sample moments", systemImage: "waveform.badge.plus") }
+                } header: { Text("Try it") } footer: {
+                    Text("Eight short spoken conversations, one of each kind, that go through speech to text, reading, Moments and Insights exactly as a recording from the Pocket would.")
+                }
+
                 Section("Privacy") {
                     Text("Recordings are kept on this iPhone (Files → On My iPhone → Private Pocket) and reach it over Bluetooth, never Pocket's cloud. " +
                          (sttRemote ? "Audio is uploaded to the speech-to-text server for transcription. " : "Transcription runs on this iPhone. ") +
