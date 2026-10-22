@@ -107,12 +107,12 @@ them from the same page.
 Four tabs. **Pocket**: the card, drawn at its real proportions with the real light on
 it, the screen glowing in the light's colour, the timer and the live words while it
 records, the amber shutter, and today's moments. **Moments**: every recording as a
-card on a time rail, with what kind of conversation it was. Open one and you get one screen: what happened, in
-two or three sentences written to you; Next, everything that follows, already in
-Reminders and Calendar, tick it here and it is done there; and the recording beneath
-as a waveform with the lines that mattered marked on it. Tap any sentence or item to
-hear the words behind it. Tap the recording to listen with the words following, and to
-find a word or ask a question. **Insights**: the week or month added up. **Ask**: questions across
+card on a time rail, with what kind of conversation it was. Open one and you get one screen, in this order:
+the speakers, identified where they named themselves; a summary written to you; to-dos,
+each with Add to Reminders; events, each with Add to Calendar; the transcript, following
+the audio from the player pinned at the bottom; and a field to ask anything about it.
+Tap any sentence or item to hear the words behind it. Nothing needs starting: every
+recording is transcribed and read as it lands. **Insights**: the week or month added up. **Ask**: questions across
 recordings. Settings is behind the gear on the Pocket tab, and holds **Your own
 server**: one address and key, used when it answers and left alone when it does not.
 The first launch opens a swipe-only walkthrough of the card itself.

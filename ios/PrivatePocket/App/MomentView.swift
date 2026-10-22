@@ -12,11 +12,13 @@ struct MomentView: View {
     let id: String
     @StateObject private var player = Player()
     @State private var envelope: [Float] = []
-    @State private var listening = false
     @State private var behind: Behind?
     @State private var showDetails = false
+    @State private var showAll = false
     @State private var renaming = false
     @State private var newTitle = ""
+    @State private var renamingSpeaker: Int?
+    @State private var newName = ""
     @State private var confirmDelete = false
     @State private var confirmRedo = false
 
@@ -24,45 +26,58 @@ struct MomentView: View {
 
     var body: some View {
         if let r = recording {
+            let blocks = TranscriptBlock.make(r)
+            let current = blocks.last { $0.start <= player.position }?.id
             ZStack(alignment: .top) {
                 Brand.ground.ignoresSafeArea()
                 RadialGradient(colors: [r.kind.colour.opacity(0.2), .clear],
                                center: UnitPoint(x: 0.5, y: 0), startRadius: 0, endRadius: 420)
                     .ignoresSafeArea()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        MomentHeader(recording: r) {
-                            newTitle = r.meta.title ?? ""
-                            renaming = true
-                        }
-                        stage(r)
-                        if let brief = r.meta.insight?.brief, !brief.isEmpty {
-                            BriefText(sentences: brief) { behind = Behind(sentence: $0) }
-                                .padding(.top, 22)
-                            if brief.contains(where: { $0.at != nil }) {
-                                Text("Tap a sentence to hear where it came from.")
-                                    .font(.caption).foregroundStyle(Brand.dim).padding(.top, 8)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            MomentHeader(recording: r, rename: {
+                                newTitle = r.meta.title ?? ""
+                                renaming = true
+                            }, renameSpeaker: { i in
+                                newName = r.meta.speakerNames?[String(i)] ?? ""
+                                renamingSpeaker = i
+                            })
+                            stage(r)
+                            if let brief = r.meta.insight?.brief, !brief.isEmpty {
+                                SectionTitle("Summary")
+                                BriefText(sentences: brief) { behind = Behind(sentence: $0) }
+                                if brief.contains(where: { $0.at != nil }) {
+                                    Text("Tap a sentence to hear where it came from.")
+                                        .font(.caption).foregroundStyle(Brand.dim).padding(.top, 8)
+                                }
                             }
+                            TodoSection(recording: r) { behind = Behind(item: $0) }
+                            EventSection(recording: r) { behind = Behind(item: $0) }
+                            TranscriptSection(recording: r, blocks: blocks, current: current, player: player, showAll: $showAll) { i in
+                                newName = r.meta.speakerNames?[String(i)] ?? ""
+                                renamingSpeaker = i
+                            }
+                            AskSection(recording: r)
+                            footer(r)
                         }
-                        NextList(recording: r) { behind = Behind(item: $0) }
-                        footer(r)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 8)
+                        .padding(.bottom, 24)
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.top, 8)
-                    .padding(.bottom, 24)
+                    .onChange(of: current) {
+                        guard player.playing, showAll, let c = current else { return }
+                        withAnimation { proxy.scrollTo(c, anchor: .center) }
+                    }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
-                PlayerBar(player: player, envelope: envelope, marks: marks(r),
-                          caption: "The recording · tap to listen and find") { listening = true }
-            }
+            .safeAreaInset(edge: .bottom) { PlayerBar(player: player, envelope: envelope, marks: marks(r)) }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: model.notes(for: r)) { Image(systemName: "square.and.arrow.up") }
                 }
             }
-            .sheet(isPresented: $listening) { ListenView(id: r.id, player: player, envelope: envelope, marks: marks(r)) }
             .sheet(item: $behind) { b in BehindSheet(id: r.id, behind: b, player: player).presentationDetents([.medium]) }
             .sheet(isPresented: $showDetails) { MomentDetailsSheet(id: r.id) }
             .alert("Name this moment", isPresented: $renaming) {
@@ -71,6 +86,13 @@ struct MomentView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("Leave it empty to go back to the title it was given.")
+            }
+            .alert("Name this speaker", isPresented: Binding(get: { renamingSpeaker != nil }, set: { if !$0 { renamingSpeaker = nil } })) {
+                TextField(renamingSpeaker.map { "Speaker \($0 + 1)" } ?? "", text: $newName)
+                Button("Save") { if let i = renamingSpeaker { model.renameSpeaker(r, speaker: i, to: newName) } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Used wherever this moment names them.")
             }
             .confirmationDialog("Delete this moment?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete", role: .destructive) {
@@ -85,6 +107,7 @@ struct MomentView: View {
             } message: {
                 Text("With the current speech-to-text and language-model settings.")
             }
+            .onChange(of: player.playing) { if player.playing { showAll = true } }
             .task(id: r.audioURL) {
                 player.load(r.audioURL)
                 model.refreshDone(r)
@@ -102,13 +125,13 @@ struct MomentView: View {
 
     private func marks(_ r: Recording) -> [Double] { (r.meta.insight?.keyLines ?? []).compactMap(\.at) }
 
-    /// While nothing has been read yet: what is happening, by itself.
+    /// What is happening, by itself, until the moment is ready.
     @ViewBuilder private func stage(_ r: Recording) -> some View {
         let working = model.working.contains(r.id)
         if r.meta.transcript == nil {
-            StageRow(title: working ? "Transcribing \(Prefs.sttRemoteNow ? "on your server" : "on this iPhone")…" : "Not transcribed yet",
-                     detail: working ? "Then it is read, and anything to do or to remember goes to Reminders and Calendar. Nothing for you to do." : nil,
-                     spinning: working, action: working ? nil : "Transcribe") { Task { await model.transcribe(r) } }
+            StageRow(title: working ? "Transcribing \(Prefs.sttRemoteNow ? "on your server" : "on this iPhone")…" : "Waiting to be transcribed",
+                     detail: working ? "Then it is read for its speakers, a summary, to-dos and events. Nothing for you to do." : nil,
+                     spinning: working, action: working ? nil : "Transcribe now") { Task { await model.transcribe(r) } }
         } else if r.meta.insight?.readByModel != true {
             StageRow(title: working ? "Reading it…" : "Not read yet",
                      detail: working ? nil : Summariser.availability,
@@ -130,6 +153,23 @@ struct MomentView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 36)
+    }
+}
+
+/// A section's name, in the page's quiet grey.
+struct SectionTitle: View {
+    let title: String
+    var trailing: AnyView? = nil
+    init(_ title: String) { self.title = title }
+    init<T: View>(_ title: String, @ViewBuilder trailing: () -> T) { self.title = title; self.trailing = AnyView(trailing()) }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(Brand.muted)
+            Spacer()
+            trailing
+        }
+        .padding(.top, 26).padding(.bottom, 4)
     }
 }
 
@@ -157,11 +197,25 @@ struct StageRow: View {
     }
 }
 
-/// Kind, title, when, where, with whom.
+/// Kind, title, when, where, and the speakers, identified where they named themselves.
 struct MomentHeader: View {
     @EnvironmentObject var model: AppModel
     let recording: Recording
     let rename: () -> Void
+    let renameSpeaker: (Int) -> Void
+
+    /// Speakers by number with their names (or "Speaker N"), then anyone else named.
+    private var faces: [(index: Int?, name: String)] {
+        let r = recording
+        var out: [(Int?, String)] = []
+        if let t = r.meta.turns, Speakers.count(t) > 1 {
+            for i in Set(t.map(\.speaker)).sorted() { out.append((i, Speakers.name(i, r.meta.speakerNames))) }
+        }
+        for p in r.meta.insight?.people ?? [] where !out.contains(where: { $0.1.caseInsensitiveCompare(p) == .orderedSame }) {
+            out.append((nil, p))
+        }
+        return out
+    }
 
     var body: some View {
         let r = recording
@@ -196,19 +250,31 @@ struct MomentHeader: View {
                 .padding(.top, 6)
                 .onTapGesture(perform: rename)
             Text(meta).font(.subheadline).foregroundStyle(Brand.muted)
-            if !r.people.isEmpty {
-                HStack(spacing: 10) {
-                    HStack(spacing: -8) {
-                        ForEach(Array(r.people.prefix(4).enumerated()), id: \.offset) { i, name in
-                            Text(String(name.prefix(1)).uppercased())
-                                .font(.system(size: 12, weight: .bold))
-                                .frame(width: 30, height: 30)
-                                .background(Brand.speakers[i % Brand.speakers.count].opacity(0.22), in: Circle())
-                                .overlay(Circle().strokeBorder(Brand.ground, lineWidth: 2))
-                                .foregroundStyle(Brand.speakers[i % Brand.speakers.count])
+            if !faces.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(faces.enumerated()), id: \.offset) { i, f in
+                            let colour = Brand.speakers[(f.index ?? i) % Brand.speakers.count]
+                            let unnamed = f.index != nil && (r.meta.speakerNames?[String(f.index!)] ?? "").isEmpty
+                            Button {
+                                if let idx = f.index { renameSpeaker(idx) }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Text(String(f.name.prefix(1)).uppercased())
+                                        .font(.system(size: 11, weight: .bold))
+                                        .frame(width: 24, height: 24)
+                                        .background(colour.opacity(0.22), in: Circle())
+                                        .foregroundStyle(colour)
+                                    Text(f.name).font(.subheadline.weight(.medium)).foregroundStyle(unnamed ? Brand.muted : Brand.text)
+                                    if unnamed { Image(systemName: "pencil").font(.caption2).foregroundStyle(Brand.dim) }
+                                }
+                                .padding(.trailing, 10).padding(.leading, 4).padding(.vertical, 4)
+                                .background(Brand.surface, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(f.index == nil)
                         }
                     }
-                    Text("with " + ListFormatter.localizedString(byJoining: r.people)).font(.subheadline).foregroundStyle(Brand.textSecondary).lineLimit(1)
                 }
                 .padding(.top, 10)
             }
@@ -260,28 +326,52 @@ struct BriefText: View {
     }
 }
 
-/// Everything that follows from the conversation, in one list.
-struct NextList: View {
+/// What the user has to do, each addable to Reminders, and what others promised.
+struct TodoSection: View {
     @EnvironmentObject var model: AppModel
     let recording: Recording
     let open: (NextItem) -> Void
 
     var body: some View {
-        let items = Self.ordered(recording.meta.insight?.items ?? [])
+        let r = recording
+        let items = NextList.ordered(r.meta.insight?.items ?? []).filter { $0.isAction || $0.isPromise }
         if !items.isEmpty {
-            HStack(alignment: .firstTextBaseline) {
-                Text("Next").font(.subheadline.weight(.semibold)).foregroundStyle(Brand.muted)
-                Spacer()
-                Text(placed(items)).font(.caption2.weight(.semibold)).foregroundStyle(Brand.good)
+            let unplaced = items.filter { $0.isAction && $0.reminderID == nil && !$0.isDone }
+            SectionTitle("To do") {
+                if unplaced.count > 1 {
+                    Button("Add all to Reminders") { Task { for i in unplaced { await model.place(r, i) } } }
+                        .font(.caption.weight(.semibold))
+                }
             }
-            .padding(.top, 26).padding(.bottom, 2)
             ForEach(items) { item in
-                NextRow(recording: recording, item: item) { open(item) }
+                NextRow(recording: r, item: item) { open(item) }
                 Divider().overlay(Brand.hairline)
             }
         }
     }
+}
 
+/// Meetings, deadlines and dates, each addable to Calendar.
+struct EventSection: View {
+    @EnvironmentObject var model: AppModel
+    let recording: Recording
+    let open: (NextItem) -> Void
+
+    var body: some View {
+        let r = recording
+        let items = NextList.ordered(r.meta.insight?.items ?? []).filter(\.isDate)
+        if !items.isEmpty {
+            SectionTitle("Events")
+            ForEach(items) { item in
+                NextRow(recording: r, item: item) { open(item) }
+                Divider().overlay(Brand.hairline)
+            }
+        }
+    }
+}
+
+/// Ordering shared by the sections and the notes.
+enum NextList {
     /// Soonest first, undated after, done last; dismissed ones gone.
     static func ordered(_ items: [NextItem]) -> [NextItem] {
         items.filter { !$0.isDismissed }.sorted { a, b in
@@ -293,12 +383,6 @@ struct NextList: View {
             default: return false
             }
         }
-    }
-
-    private func placed(_ items: [NextItem]) -> String {
-        let r = items.contains { $0.isAction && $0.reminderID != nil }
-        let c = items.contains { $0.isDate && $0.eventID != nil }
-        return r && c ? "in Reminders and Calendar" : r ? "in Reminders" : c ? "in Calendar" : ""
     }
 }
 
@@ -320,12 +404,28 @@ struct NextRow: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if item.isPromise {
-                Button(item.reminderID == nil ? "Remind me" : "Reminder set") { Task { await model.remindMe(recording, item: item) } }
-                    .font(.footnote.weight(.semibold)).disabled(item.reminderID != nil)
-            }
+            trailing
         }
         .padding(.vertical, 11)
+    }
+
+    @ViewBuilder private var trailing: some View {
+        if item.isAction {
+            if item.reminderID != nil {
+                Text("Added").font(.footnote.weight(.semibold)).foregroundStyle(Brand.good)
+            } else if !item.isDone {
+                Button("Add") { Task { await model.place(recording, item) } }.font(.footnote.weight(.semibold))
+            }
+        } else if item.isDate {
+            if item.eventID != nil {
+                Text("Added").font(.footnote.weight(.semibold)).foregroundStyle(Brand.good)
+            } else if item.date != nil {
+                Button("Add") { Task { await model.place(recording, item) } }.font(.footnote.weight(.semibold))
+            }
+        } else {
+            Button(item.reminderID == nil ? "Remind me" : "Set") { Task { await model.remindMe(recording, item: item) } }
+                .font(.footnote.weight(.semibold)).disabled(item.reminderID != nil)
+        }
     }
 
     @ViewBuilder private var glyph: some View {
@@ -367,6 +467,7 @@ struct NextRow: View {
                 ? "\(d.formatted(.dateTime.weekday(.wide))) \(d.formatted(date: .omitted, time: .shortened))"
                 : d.formatted(.dateTime.weekday(.wide).day().month(.abbreviated))
         }
+        if item.isPromise, let who = item.who { return [who, item.when].compactMap { $0 }.joined(separator: " · ") }
         return item.when
     }
 }
@@ -379,8 +480,6 @@ struct PlayerBar: View {
     @ObservedObject var player: Player
     let envelope: [Float]
     let marks: [Double]
-    var caption: String? = nil
-    var onCaption: (() -> Void)? = nil
 
     var body: some View {
         let total = max(player.duration, 0.1)
@@ -396,10 +495,6 @@ struct PlayerBar: View {
                     .frame(height: 26)
                 HStack {
                     Text(Speakers.stamp(player.position))
-                    Spacer()
-                    if let caption {
-                        Button(caption) { onCaption?() }.buttonStyle(.plain).foregroundStyle(Brand.muted).lineLimit(1)
-                    }
                     Spacer()
                     Text(Speakers.stamp(total))
                 }
@@ -421,18 +516,25 @@ struct WaveformView: View {
     var body: some View {
         GeometryReader { geo in
             Canvas { ctx, size in
-                let n = max(envelope.count, 48)
-                let gap: CGFloat = 2
-                let bw = max(1, (size.width - gap * CGFloat(n - 1)) / CGFloat(n))
+                // Fixed 3-point bars with 2-point gaps, as many as fit; the envelope is
+                // resampled to that count, so a bar is never thinner than its corners.
+                let bw: CGFloat = 3, gap: CGFloat = 2
+                let n = max(8, Int((size.width + gap) / (bw + gap)))
+                let lit = Int((progress * Double(n)).rounded(.down))
                 for i in 0..<n {
-                    let v: CGFloat = envelope.isEmpty ? 0.25 : CGFloat(max(envelope[min(i, envelope.count - 1)], 0.08))
+                    let v: CGFloat
+                    if envelope.isEmpty {
+                        v = 0.22
+                    } else {
+                        let j = min(envelope.count - 1, i * envelope.count / n)
+                        v = CGFloat(max(envelope[j], 0.06))
+                    }
                     let h = max(3, v * (size.height - 6))
                     let x = CGFloat(i) * (bw + gap)
-                    let on = Double(i) / Double(n) <= progress
-                    ctx.fill(Path(roundedRect: CGRect(x: x, y: (size.height - h) / 2, width: bw, height: h), cornerRadius: 1.5),
-                             with: .color(on ? Brand.record : Brand.hairline))
+                    ctx.fill(Path(roundedRect: CGRect(x: x, y: (size.height - h) / 2, width: bw, height: h), cornerRadius: bw / 2),
+                             with: .color(i < lit ? Brand.record : Brand.hairline))
                 }
-                for m in marks {
+                for m in marks where m >= 0 && m <= 1 {
                     ctx.fill(Path(ellipseIn: CGRect(x: size.width * CGFloat(m) - 2.5, y: 0, width: 5, height: 5)), with: .color(Brand.record))
                 }
             }
@@ -442,127 +544,115 @@ struct WaveformView: View {
     }
 }
 
-/// The shape of a recording: the loudness of each of a few dozen slices.
+/// The shape of a recording: the loudness of each of a hundred or so slices, on a
+/// gentle curve, scaled so one loud moment does not flatten the rest.
 enum Waveform {
-    nonisolated static func envelope(url: URL, bars: Int = 64) -> [Float] {
+    nonisolated static func envelope(url: URL, slices: Int = 120) -> [Float] {
         guard let file = try? AVAudioFile(forReading: url) else { return [] }
         let frames = Int(file.length)
         guard frames > 0 else { return [] }
-        let per = max(1, frames / bars)
+        let per = max(1, frames / slices)
         guard let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(per)) else { return [] }
         var out: [Float] = []
-        for _ in 0..<bars {
+        for _ in 0..<slices {
             do { try file.read(into: buf, frameCount: AVAudioFrameCount(per)) } catch { break }
             let n = Int(buf.frameLength)
             guard n > 0, let ch = buf.floatChannelData?[0] else { break }
             var sum: Float = 0
             for i in 0..<n { sum += ch[i] * ch[i] }
-            out.append((sum / Float(n)).squareRoot())
+            out.append(pow((sum / Float(n)).squareRoot(), 0.6))
         }
-        let top = out.max() ?? 0
-        return top > 0 ? out.map { $0 / top } : out
+        guard !out.isEmpty else { return [] }
+        let sorted = out.sorted()
+        let top = sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.95))]
+        return top > 0 ? out.map { min(1, $0 / top) } : out
     }
 }
 
-/// The conversation following the audio, with one field that finds a word or answers a question.
-struct ListenView: View {
-    @EnvironmentObject var model: AppModel
-    @EnvironmentObject var library: Library
-    @Environment(\.dismiss) private var dismiss
-    let id: String
+/// The transcript, inline: a few turns, or all of them; follows the audio while playing.
+struct TranscriptSection: View {
+    let recording: Recording
+    let blocks: [TranscriptBlock]
+    let current: Int?
     @ObservedObject var player: Player
-    let envelope: [Float]
-    let marks: [Double]
-    @State private var query = ""
-    @State private var asked: String?
-    @State private var renaming: Int?
-    @State private var newName = ""
-
-    private var recording: Recording? { library.recordings.first { $0.id == id } }
-    private var isQuestion: Bool {
-        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        return q.hasSuffix("?") || ["who", "what", "when", "where", "why", "how", "did", "was", "were", "is", "are", "do", "does", "can", "which"].contains { q.hasPrefix($0 + " ") }
-    }
+    @Binding var showAll: Bool
+    let renameSpeaker: (Int) -> Void
 
     var body: some View {
-        NavigationStack {
-            if let r = recording {
-                let blocks = TranscriptBlock.make(r)
-                let current = blocks.last { $0.start <= player.position }?.id
-                let shown = query.isEmpty || isQuestion ? blocks : blocks.filter { $0.text.localizedCaseInsensitiveContains(query) }
-                ScrollViewReader { proxy in
-                    List {
-                        if let asked, let qa = model.conversations[r.id]?.last(where: { $0.question == asked }) {
-                            Section {
-                                Text(qa.question).font(.subheadline.weight(.semibold))
-                                if let a = qa.answer {
-                                    Text(a).textSelection(.enabled)
-                                } else if let e = qa.error {
-                                    Text(e).foregroundStyle(Brand.muted)
-                                } else {
-                                    HStack { ProgressView(); Text(qa.progress ?? "Thinking…").foregroundStyle(Brand.muted) }
-                                }
-                            }
-                            .listRowBackground(Brand.surface)
-                        }
-                        if blocks.isEmpty {
-                            Text(r.meta.transcript == nil ? "Not transcribed yet." : "Nothing to show.").foregroundStyle(Brand.muted)
-                                .listRowBackground(Color.clear)
-                        } else if shown.isEmpty {
-                            Text("Not said in this one.").foregroundStyle(Brand.muted).listRowBackground(Color.clear)
-                        }
-                        ForEach(shown) { b in
-                            TranscriptBlockRow(block: b, names: r.meta.speakerNames, position: b.id == current ? player.position : nil) { s in
-                                newName = r.meta.speakerNames?[String(s)] ?? ""
-                                renaming = s
-                            }
-                            .id(b.id)
-                            .listRowBackground(b.id == current && player.playing ? Brand.record.opacity(0.12) : Color.clear)
-                            .listRowSeparator(.hidden)
-                            .onTapGesture { player.play(from: b.start) }
-                        }
+        let r = recording
+        if !blocks.isEmpty {
+            let speakers = r.meta.turns.map { Speakers.count($0) } ?? 1
+            SectionTitle("Transcript") {
+                HStack(spacing: 10) {
+                    Text([speakers > 1 ? "\(speakers) speakers" : nil, r.meta.locale.map { Languages.name($0) }].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(Brand.dim)
+                    if blocks.count > 3 {
+                        Button(showAll ? "Less" : "Show all") { withAnimation { showAll.toggle() } }.font(.caption.weight(.semibold))
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
-                    .background(Brand.ground)
-                    .onChange(of: current) {
-                        guard player.playing, query.isEmpty, let c = current else { return }
-                        withAnimation { proxy.scrollTo(c, anchor: .center) }
-                    }
-                }
-                .safeAreaInset(edge: .top) {
-                    HStack {
-                        TextField("Find a word, or ask a question…", text: $query).submitLabel(.go).onSubmit(ask)
-                        if !query.isEmpty {
-                            Button { query = ""; asked = nil } label: { Image(systemName: "xmark.circle.fill") }
-                                .buttonStyle(.plain).foregroundStyle(Brand.muted)
-                        }
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 10)
-                    .background(Brand.surface, in: Capsule())
-                    .padding(.horizontal, 16).padding(.vertical, 6)
-                    .background(Brand.ground)
-                }
-                .safeAreaInset(edge: .bottom) { PlayerBar(player: player, envelope: envelope, marks: marks) }
-                .navigationTitle(r.displayTitle)
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-                .alert("Name this speaker", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-                    TextField(renaming.map { "Speaker \($0 + 1)" } ?? "", text: $newName)
-                    Button("Save") { if let s = renaming { model.renameSpeaker(r, speaker: s, to: newName) } }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Used wherever this moment names them.")
                 }
             }
+            ForEach(showAll ? blocks : Array(blocks.prefix(3))) { b in
+                TranscriptBlockRow(block: b, names: r.meta.speakerNames, position: b.id == current ? player.position : nil, onRename: renameSpeaker)
+                    .id(b.id)
+                    .padding(.horizontal, 8)
+                    .background(b.id == current && player.playing ? Brand.record.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .onTapGesture { player.play(from: b.start) }
+            }
+            Text(blocks.count > 3 && !showAll ? "Tap a line to play from there. Play, and the rest follows." : "Tap a line to play from there.")
+                .font(.caption).foregroundStyle(Brand.dim).padding(.top, 6)
         }
-        .preferredColorScheme(.dark)
+    }
+}
+
+/// Questions about this moment, answered from its transcript, in place.
+struct AskSection: View {
+    @EnvironmentObject var model: AppModel
+    let recording: Recording
+    @State private var question = ""
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        let r = recording
+        let conversation = model.conversations[r.id] ?? []
+        let busy = conversation.last.map { $0.answer == nil && $0.error == nil } ?? false
+        SectionTitle("Ask")
+        ForEach(conversation) { qa in
+            VStack(alignment: .leading, spacing: 6) {
+                Text(qa.question).font(.subheadline.weight(.semibold))
+                if let a = qa.answer {
+                    Text(a).font(.body).foregroundStyle(Brand.textSecondary).textSelection(.enabled)
+                } else if let e = qa.error {
+                    Text(e).font(.subheadline).foregroundStyle(Brand.muted)
+                } else {
+                    HStack { ProgressView().controlSize(.small); Text(qa.progress ?? "Thinking…").font(.subheadline).foregroundStyle(Brand.muted) }
+                }
+            }
+            .padding(.vertical, 10)
+            Divider().overlay(Brand.hairline)
+        }
+        HStack(spacing: 10) {
+            TextField("Anything about this moment…", text: $question, axis: .vertical)
+                .lineLimit(1...3).focused($typing).submitLabel(.send).onSubmit(send)
+            Button(action: send) {
+                Image(systemName: "arrow.up").font(.body.weight(.bold)).foregroundStyle(Brand.onAct)
+                    .frame(width: 30, height: 30).background(Brand.act, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(question.trimmingCharacters(in: .whitespaces).isEmpty || busy || r.meta.transcript == nil || Summariser.availability != nil)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 10)
+        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(.top, 8)
+        Text(Summariser.availability ?? (r.meta.transcript == nil ? "Once it is transcribed." : "Answered from this conversation only, \(Prefs.llmRemoteNow ? "on your server" : "on this iPhone")."))
+            .font(.caption).foregroundStyle(Brand.dim).padding(.top, 6)
     }
 
-    private func ask() {
-        guard isQuestion, let r = recording, r.meta.transcript != nil else { return }
-        let q = query
-        asked = q
+    private func send() {
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return }
+        question = ""
+        typing = false
+        let r = recording
         Task { await model.ask(q, scope: r.id, recordings: [r]) }
     }
 }

@@ -247,12 +247,12 @@ enum Prefs {
 
     /// Once a recording is read, its actions go to Reminders and its dates to Calendar.
     @MainActor static var autoReminders: Bool {
-        get { UserDefaults.standard.object(forKey: "autoReminders") as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: "autoReminders") as? Bool ?? false }
         set { UserDefaults.standard.set(newValue, forKey: "autoReminders") }
     }
 
     @MainActor static var autoCalendar: Bool {
-        get { UserDefaults.standard.object(forKey: "autoCalendar") as? Bool ?? true }
+        get { UserDefaults.standard.object(forKey: "autoCalendar") as? Bool ?? false }
         set { UserDefaults.standard.set(newValue, forKey: "autoCalendar") }
     }
 

@@ -145,6 +145,7 @@ final class AppModel: ObservableObject {
     /// completes whenever the Pocket is in range (an existing connection just stays up).
     func setActive(_ active: Bool) {
         if active { Task { await ServerStatus.shared.check() } }
+        if active { Task { await self.transcribeWhatLanded() } }
         self.active = active
         keepAlive?.cancel()
         guard active else { standby(); return }
@@ -404,7 +405,7 @@ final class AppModel: ObservableObject {
 
     /// Transcribes in `localeID`, else the language last used for this recording,
     /// else the default from Settings.
-    func transcribe(_ r: Recording, localeID: String? = nil) async {
+    func transcribe(_ r: Recording, localeID: String? = nil, quiet: Bool = false) async {
         await ServerStatus.shared.check()
         working.insert(r.id)
         defer { working.remove(r.id) }
@@ -429,7 +430,8 @@ final class AppModel: ObservableObject {
             let read = r
             Task { await self.analyse(read, quiet: true) }
         } catch {
-            aiError = "Transcription failed: \(error.localizedDescription)"
+            if !quiet { aiError = "Transcription failed: \(error.localizedDescription)" }
+            link.note("transcription failed for \(r.name): \(error.localizedDescription)")
         }
     }
 
@@ -636,6 +638,18 @@ final class AppModel: ObservableObject {
         lines.append("")
         lines.append("From Private Pocket.")
         return lines.joined(separator: "\n")
+    }
+
+    private var sweptThisSession: Set<String> = []
+
+    /// Every recording on this phone that was never transcribed, one at a time, quietly:
+    /// nothing should need a tap to become a moment. Each is tried once per session.
+    func transcribeWhatLanded() async {
+        await ServerStatus.shared.check()
+        for r in library.recordings where r.meta.transcript == nil && !working.contains(r.id) && !sweptThisSession.contains(r.id) {
+            sweptThisSession.insert(r.id)
+            await transcribe(r, quiet: true)
+        }
     }
 
     /// Transcribes, one at a time, recordings that have no transcript.

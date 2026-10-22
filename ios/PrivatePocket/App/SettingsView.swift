@@ -114,7 +114,7 @@ struct SettingsView: View {
                     Toggle("Dates go to Calendar", isOn: $autoCalendar)
                         .onChange(of: autoCalendar) { Prefs.autoCalendar = autoCalendar }
                 } header: { Text("After each recording") } footer: {
-                    Text("Once a recording is read, what you agreed to do goes into a Pocket list in Reminders, with its due date when one was said, and meetings and deadlines go into Calendar. Tick one off in either place and the moment shows it done. Off, everything stays on the moment's page, with Add there instead.")
+                    Text("Each moment lists its to-dos and events with Add beside them. Turn these on and they go in by themselves as soon as a moment is read: to-dos into a Pocket list in Reminders with their due dates, events into Calendar. Tick one off in either place and the moment shows it done.")
                 }
 
                 Section {
