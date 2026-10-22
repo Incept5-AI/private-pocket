@@ -56,7 +56,7 @@ enum PocketError: LocalizedError {
         case .timeout(let what): "Timed out waiting for \(what)."
         case .notReady: "Not connected."
         case .rejected: "The Pocket rejected this phone's key, which happens after another app pairs it. Hold its side button for 5 seconds until the light blinks blue, then tap Pair."
-        case .notPairing: "The Pocket did not take a new key. Hold its side button for 5 seconds until the light blinks blue, then tap Pair straight away."
+        case .notPairing: "The Pocket didn't take the key. Hold its side button for five seconds until the light blinks blue, then tap Pair while it blinks."
         }
     }
 }
@@ -116,6 +116,10 @@ final class PocketLink: NSObject, ObservableObject {
     /// One pairing try at a time, and automatic ones no closer than 8 s apart.
     private var pairing = false
     private var lastPairTryAt = Date.distantPast
+    /// One handshake at a time, whichever path started it.
+    private var handshaking = false
+    /// Advertising payloads seen, so each distinct one is logged once.
+    private var advSeen: Set<String> = []
     /// Looks at a key the Pocket may have taken while the link was dropping, a few times.
     private var triedChecks = 0
     /// Called when a key was accepted, with the device that now holds it.
@@ -334,6 +338,9 @@ final class PocketLink: NSObject, ObservableObject {
     /// foreground loop keeps trying every few seconds (`AppModel.setActive`).
     private func handshake() async throws {
         guard let d = device else { throw PocketError.notReady }
+        guard !handshaking else { return }
+        handshaking = true
+        defer { handshaking = false }
         let key = d.sessionKey
         if !key.isEmpty, !keyRejected {
             do { try await sendKey(key) } catch PocketError.rejected {
@@ -618,6 +625,16 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
         let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? p.name ?? ""
         MainActor.assumeIsolated {
             guard name.hasPrefix(PocketUUID.namePrefix) else { return }
+            let mfr = (advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data).map { $0.map { String(format: "%02x", $0) }.joined() } ?? "-"
+            let services = (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID])?.map(\.uuidString).joined(separator: ",") ?? "-"
+            let serviceData = (advertisementData[CBAdvertisementDataServiceDataKey] as? [CBUUID: Data])?
+                .map { "\($0.key.uuidString)=\($0.value.map { String(format: "%02x", $0) }.joined())" }.joined(separator: ",") ?? "-"
+            let connectable = (advertisementData[CBAdvertisementDataIsConnectable] as? Bool).map { $0 ? "yes" : "no" } ?? "?"
+            let signature = "\(name) mfr=\(mfr) svc=\(services) data=\(serviceData) connectable=\(connectable)"
+            if !advSeen.contains(signature) {
+                advSeen.insert(signature)
+                note("adv \(signature)")
+            }
             if discoveryMode {
                 if let i = discovered.firstIndex(where: { $0.id == p.identifier }) {
                     discovered[i].rssi = RSSI.intValue

@@ -170,8 +170,9 @@ final class AppModel: ObservableObject {
         if case .busy = link.phase { return }   // never on top of another command
         pairTicks += 1
         // Holding the button makes the Pocket drop the link, and that drop triggers a try
-        // at once (`handshake`). This is only the safety net, once a minute, and quiet.
-        guard pairTicks % 4 == 0 else { return }
+        // at once (`handshake`). This is the safety net: every tick for the first two
+        // minutes, then once a minute, quietly; the screen stays steady through the bounce.
+        guard pairTicks <= 8 || pairTicks % 4 == 0 else { return }
         try? await link.tryPairing(quiet: true)
     }
 

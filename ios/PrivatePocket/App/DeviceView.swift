@@ -222,27 +222,45 @@ struct PocketView: View {
         .buttonStyle(.glass)
     }
 
+    /// Unpaired: the two steps, a Pair button that works whether or not the link is up,
+    /// and what the link is doing meanwhile.
     private var pairCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 12) {
                 LightDot(state: .pairing).frame(width: 12, height: 12)
-                Text(link.keyRejected ? "Pair again" : "Pair your Pocket").font(.headline)
+                Text(link.keyRejected ? "Pair your Pocket again" : "Pair your Pocket").font(.headline)
             }
-            Text("Hold the side button for 5 seconds, until the light blinks blue. The app pairs the moment it sees that, the light turns solid, and this card goes away.")
-                .font(.subheadline).foregroundStyle(Brand.muted)
-            Text(link.keyRejected
-                 ? "Your Pocket no longer accepts this phone's key, which happens after a reset. Recordings started with the side button still stream in meanwhile."
-                 : "Until then, recordings started with the side button already stream in. Pairing adds recording from here, getting recordings made while the phone was away, and battery and storage.")
-                .font(.footnote).foregroundStyle(Brand.dim)
-            HStack {
-                Button("Pair now") { Task { await model.pairSelected() } }
-                    .buttonStyle(.glass).disabled(busy)
-                Button("Show me") { showWalkthrough = true }.buttonStyle(.glass)
+            VStack(alignment: .leading, spacing: 10) {
+                step(1, "Hold the side button for five seconds, until the light blinks blue.")
+                step(2, "Tap Pair while it blinks. The light goes solid once it's done.")
             }
+            Button { Task { await model.pairSelected() } } label: {
+                Text(busy ? "Pairing…" : "Pair").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(Brand.act)
+            .disabled(busy)
+            Text(isConnected
+                 ? "Connected to your Pocket, without a key yet. Recordings started with its button still stream here meanwhile, and the app keeps trying to pair by itself."
+                 : "Not connected right now; Pair connects first.")
+                .font(.footnote).foregroundStyle(Brand.muted)
+            if link.keyRejected {
+                Text("Your Pocket no longer accepts this phone's key, which happens after a reset or when another app paired it.")
+                    .font(.footnote).foregroundStyle(Brand.dim)
+            }
+            Button("Show me") { showWalkthrough = true }.font(.footnote.weight(.semibold))
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(panel, in: panelShape)
+    }
+
+    private func step(_ n: Int, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(n)").font(.caption.weight(.bold)).foregroundStyle(Brand.act)
+                .frame(width: 20, height: 20).background(Brand.act.opacity(0.18), in: Circle())
+            Text(text).font(.subheadline).foregroundStyle(Brand.textSecondary)
+        }
     }
 
     private var buttonHint: some View {
