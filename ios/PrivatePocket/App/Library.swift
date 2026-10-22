@@ -17,6 +17,8 @@ struct Recording: Identifiable, Hashable {
         meta.title ?? meta.place?.name ?? startedAt?.formatted(date: .omitted, time: .shortened) ?? name
     }
     var size: Int { (try? audioURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0 }
+    /// Made with the switch on call: the contact mic, with the card on the phone.
+    var isCall: Bool { meta.mode == "CALL" || name.hasPrefix("PH") }
 }
 
 extension Recording {
@@ -65,6 +67,8 @@ struct RecordingMeta: Codable, Hashable {
     var pocket: PocketID?
     var place: Place?
     var seconds: Int?
+    /// The Pocket's side switch when it was made: `CON` (audio) or `CALL` (phone call).
+    var mode: String?
     /// Locale the transcript was made in, e.g. fr-FR.
     var locale: String?
     /// The transcript was made live while recording (quicker, a little less accurate).

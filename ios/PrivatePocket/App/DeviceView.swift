@@ -60,7 +60,8 @@ struct PocketView: View {
                     } else {
                         PocketCard(name: devices.selected?.name ?? "Pocket", advertised: devices.selected?.advertisedName ?? "",
                                    light: light, status: statusText, detail: detailText,
-                                   battery: isConnected ? link.status.battery : nil)
+                                   battery: isConnected ? link.status.battery : nil,
+                                   mode: isConnected ? link.status.mode : nil)
                         if let other = unknownNearby, !isConnected { nearbyPrompt(other) }
                         if !paired { pairCard }
                         if recording || live.isActive {
@@ -102,7 +103,7 @@ struct PocketView: View {
 
     private var setup: some View {
         VStack(spacing: 18) {
-            PocketCard(name: "Your Pocket", advertised: "", light: .off, status: "Not added yet", detail: nil, battery: nil)
+            PocketCard(name: "Your Pocket", advertised: "", light: .off, status: "Not added yet", detail: nil, battery: nil, mode: nil)
             Text("Have it nearby and switched on. Nothing leaves this iPhone.")
                 .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
             Button { adding = true } label: {
@@ -331,6 +332,8 @@ struct PocketCard: View {
     let status: String
     let detail: String?
     let battery: Int?
+    /// The side switch: `CON` or `CALL`.
+    let mode: String?
 
     var body: some View {
         let look = PocketLook(advertised: advertised)
@@ -339,6 +342,15 @@ struct PocketCard: View {
                 LightDot(state: light).frame(width: 12, height: 12)
                     .padding(8)
                     .glassEffect(.regular, in: .circle)
+                if let mode {
+                    // The switch position, as a small glass toggle beside the light.
+                    Label(mode == "CALL" ? "Call" : "Audio", systemImage: mode == "CALL" ? "phone.fill" : "waveform")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(look.ink)
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .glassEffect(.regular, in: .capsule)
+                        .padding(.leading, 8)
+                }
                 Spacer()
                 Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(look.ink.opacity(0.8))
             }
@@ -430,6 +442,7 @@ struct PocketDetails: View {
                     LabeledContent("Storage") {
                         if let f = s.freeMiB, let t = s.totalMiB { Text("\(gb(f)) free of \(gb(t))") } else { Text("–") }
                     }
+                    LabeledContent("Switch", value: s.mode.map { $0 == "CALL" ? "Call (contact mic)" : "Audio" } ?? "–")
                     LabeledContent("Firmware", value: fw.isEmpty ? "–" : fw)
                     LabeledContent("Bluetooth name", value: devices.selected?.advertisedName ?? "–")
                     LabeledContent("MAC", value: s.mac ?? "–")

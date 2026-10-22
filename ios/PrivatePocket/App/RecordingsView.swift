@@ -108,7 +108,7 @@ struct RecordingRow: View {
             }
             HStack(spacing: 10) {
                 if let s = recording.meta.seconds { Label(PocketFacts.length(s), systemImage: "clock") }
-                if recording.name.hasPrefix("PH") { Label("Call", systemImage: "phone") }
+                if recording.isCall { Label("Call", systemImage: "phone") }
                 if recording.meta.title != nil, let p = recording.meta.place?.name {
                     Label(p, systemImage: "mappin").lineLimit(1)
                 }
@@ -170,6 +170,7 @@ struct RecordingDetail: View {
                         LabeledContent("Length", value: Duration.seconds(s).formatted(.time(pattern: .hourMinuteSecond)))
                     }
                     LabeledContent("Pocket", value: r.pocketName(devices.devices))
+                    LabeledContent("Switch", value: r.isCall ? "Call (contact mic)" : "Audio")
                     if let place = r.meta.place {
                         Link(destination: place.mapsURL) {
                             VStack(alignment: .leading, spacing: 2) {

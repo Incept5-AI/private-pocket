@@ -26,6 +26,11 @@ struct DeviceStatus: Equatable {
     /// The device's file name for the recording in progress (`yyyyMMddHHmmss`, or
     /// `PH…` for call mode), as announced by `MCU&STA&`.
     var recordingName: String?
+    /// The side switch: `CON` (audio) or `CALL` (phone call, contact mic). Read on
+    /// connect with `REC&SECEN` and announced before every recording start.
+    var mode: String?
+
+    var isCallMode: Bool { mode == "CALL" }
 }
 
 struct RemoteFile: Hashable {
@@ -338,6 +343,7 @@ final class PocketLink: NSObject, ObservableObject {
         let spa = try await value("SPACE", reply: "MCU&SPA&").split(separator: "&")
         if spa.count == 2 { status.freeMiB = Int(spa[0]); status.totalMiB = Int(spa[1]) }
         status.webSync = try await value("GET&USB", reply: "MCU&USB&") == "1"
+        status.mode = try await value("REC&SECEN", reply: "MCU&REC&")
     }
 
     func setWebSync(_ on: Bool) async throws {
@@ -471,6 +477,8 @@ final class PocketLink: NSObject, ObservableObject {
             status.recordingSince = nil
             status.recordingName = nil
             if let name, !stoppingFromApp { onRecordingStopped?(name) }
+        } else if l.hasPrefix("MCU&REC&") {
+            status.mode = String(l.dropFirst("MCU&REC&".count))   // the switch, before a start and on request
         }
         lines.append(l)
     }

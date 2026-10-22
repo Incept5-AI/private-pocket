@@ -316,6 +316,8 @@ final class AppModel: ObservableObject {
         let place = await locator.place(for: name, seconds: remote.seconds)
         var r = try library.save(device: d.id, day: remote.day, name: name, audio: audio, seconds: remote.seconds, place: place,
                                  pocket: pocketID(d))
+        r.meta.mode = name.hasPrefix("PH") ? "CALL" : link.status.mode
+        library.update(r)
         if let s = streamed, let t = s.transcript {
             r.meta.transcript = t
             r.meta.words = s.words.isEmpty ? nil : s.words

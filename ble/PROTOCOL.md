@@ -41,7 +41,7 @@ Verified by replaying from a Mac with `pocket.py`.
 | `APP&USB&0` / `APP&USB&1` | `MCU&USB&0` / `1` | **set** Web Sync off / on |
 | `APP&T&YYYYMMDDhhmmss` | `MCU&T&OK` | set device clock |
 | `APP&STE` | `MCU&STE&0` | unknown state query |
-| `APP&REC&SECEN` | `MCU&REC&CON` | unknown ("secure enable"?) |
+| `APP&REC&SECEN` | `MCU&REC&CON` / `MCU&REC&CALL` | the **side switch**: audio (`CON`) or phone call (`CALL`, contact mic) |
 | `APP&LIST_DIRS` | `MCU&DIRS&<date>` … then `MCU&DIRS_SUM&<count>` | list day folders that hold recordings |
 | `APP&LIST&YYYY-MM-DD` | `MCU&F&<date>&<file>&<secs>` … then `MCU&LIST&<count>` | list recordings for a day (`MCU&LIST&0` = none) |
 | `APP&U&<date>&<file>` | `MCU&U&<bytes>`, MP3 on `…a1`, then `MCU&OFF` | **download** a recording |
@@ -55,10 +55,10 @@ unpaired link. Keep it in `.env` (`POCKET_SK`), never in this file.
 
 Unsolicited events: `MCU&REC&CON` + `MCU&STA&<timestamp>` when recording starts
 (button press), live MP3 streamed on `…a1` while recording, `MCU&STO` on stop. These
-arrive **with or without a session key**. A recording started by the button with the
-card sitting on the back of the phone announced `MCU&REC&CALL` and a file named
-`PH<YYMMDDhhmmss>` instead (the contact-mic "call" mode), and `LIST_DIRS` did not list
-it afterwards, so those files live outside the dated folders.
+arrive **with or without a session key**. The `MCU&REC&…` line before the start is the
+side switch: `CON` for audio, `CALL` for a phone call through the contact mic. A call
+recording is named `PH<YYMMDDhhmmss>` instead, and `LIST_DIRS` does not list it
+afterwards, so those files live outside the dated folders.
 
 ## Observed sync flow
 
