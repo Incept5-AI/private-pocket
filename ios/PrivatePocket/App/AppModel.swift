@@ -79,6 +79,11 @@ final class AppModel: ObservableObject {
             self?.link.note("connected in the background")
             Task { await self?.autoSync() }
         }
+        link.onPaired = { [weak self] d in
+            guard let self else { return }
+            devices.update(d)   // the key lives in the Keychain; this refreshes the views
+            Task { await self.autoSync(d) }
+        }
         link.onRecordingStopped = { [weak self] name in
             guard let self, let d = self.connectedDevice else { return }
             Task { await self.link.run("Saving") { try await self.completeRecording(name: name, device: d) } }
@@ -104,8 +109,12 @@ final class AppModel: ObservableObject {
     }
 
     private var wantsConnection: DeviceConfig? {
-        guard Prefs.stayConnected, !userDisconnected, !link.isDiscovering, !link.keyRejected else { return nil }
+        guard Prefs.stayConnected, !userDisconnected, !link.isDiscovering else { return nil }
         return devices.selected
+    }
+
+    /// The selected Pocket answers commands: it has a key the Pocket still accepts.
+    var canCommand: Bool { (devices.selected?.isPaired ?? false) && !link.keyRejected
     }
 
     func ensureConnected() async {
@@ -121,7 +130,7 @@ final class AppModel: ObservableObject {
     /// Fetch whatever the phone is missing, quietly, once the Pocket is connected and
     /// not recording. Runs after every connection, foreground or background.
     func autoSync(_ device: DeviceConfig? = nil) async {
-        guard let d = device ?? devices.selected, d.isPaired, d.syncsAutomatically, !autoSyncing,
+        guard let d = device ?? devices.selected, d.isPaired, !link.keyRejected, d.syncsAutomatically, !autoSyncing,
               link.isReady, link.connectedDeviceID == d.id, link.status.recordingSince == nil else { return }
         autoSyncing = true
         defer { autoSyncing = false }
@@ -168,7 +177,7 @@ final class AppModel: ObservableObject {
     /// Fetch every recording on the device that is not on the phone yet.
     func sync(quiet: Bool = false) async {
         guard let d = devices.selected else { return }
-        guard d.isPaired else {
+        guard d.isPaired, !link.keyRejected else {
             if !quiet { link.lastError = "Pair the Pocket to fetch recordings from it." }
             return
         }
@@ -188,7 +197,7 @@ final class AppModel: ObservableObject {
     }
 
     func toggleRecording() async {
-        guard let d = devices.selected, d.isPaired else { return }
+        guard let d = devices.selected, canCommand else { return }
         await link.run(link.status.recordingSince == nil ? "Starting" : "Stopping") {
             try await link.connect(d)
             if link.status.recordingSince == nil {

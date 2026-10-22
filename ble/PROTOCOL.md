@@ -89,12 +89,16 @@ Tested 2026-10-22 on firmware 1.8 from a Mac with `bleak`:
 - **Pairing mode sets the key.** Hold the side button for 5 s until the light blinks
   blue (the official app's "Pair your Pocket" step). The device then accepts
   **whatever 16-character key the next connection sends**, answers `MCU&SK&OK`, and
-  requires that key from then on. There is no challenge, pairing prompt or account
-  check on the device; the "already assigned" check the official app shows lives in
-  Pocket's cloud. Nothing else is needed: with the connection kept open and no further
-  command, the light went from blinking to solid blue within the first minute. Right
-  after the key the device sends `MCU&WIFIO`, and `MCU&WIFIC` about 15 s later (its
-  Wi-Fi coming up and giving up, it seems).
+  that key works from then on. There is no challenge, pairing prompt or account check
+  on the device; the "already assigned" check the official app shows lives in Pocket's
+  cloud. Nothing else is needed: with the connection kept open and no further command,
+  the light went from blinking to solid blue within the first minute. Right after the
+  key the device sends `MCU&WIFIO`, and `MCU&WIFIC` about 15 s later (its Wi-Fi coming
+  up and giving up, it seems).
+- **Keys accumulate.** A phone's key set in pairing mode kept working after a Mac had
+  set a different key the same way, so pairing adds a key rather than replacing the
+  previous one (the official app supports several phones per account). A reset
+  (triple-press, then hold, blinking red) presumably clears them; not tested.
 - **Outside pairing mode a wrong key drops the connection** immediately, with no reply.
   The key set in pairing mode kept working across later connections.
 - **No key still gets the live stream.** A central that only enables notifications on
@@ -104,8 +108,9 @@ Tested 2026-10-22 on firmware 1.8 from a Mac with `bleak`:
   12 s after `MCU&STO`.
 
 So a third-party app pairs exactly as the official one does: hold the button, send a
-key of its own. That is what Private Pocket's **Pair** button does, and the official app
-simply needs to pair again afterwards. The Mac tools take the key from `.env`.
+key of its own. Private Pocket does that by itself on every connection made without a
+key, so holding the button is all the user does, and the official app's key keeps
+working. The Mac tools take their key from `.env`.
 
 ### Reading the official app's key instead
 

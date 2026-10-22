@@ -30,7 +30,8 @@ struct DeviceView: View {
     private var isConnected: Bool { link.connectedDeviceID != nil && link.connectedDeviceID == devices.selectedID }
     private var busy: Bool { if case .busy = link.phase { true } else { link.phase == .scanning || link.phase == .connecting } }
     private var recording: Bool { link.status.recordingSince != nil }
-    private var paired: Bool { devices.selected?.isPaired ?? false }
+    /// Has a key the Pocket accepts, so commands work. A rejected key counts as unpaired.
+    private var paired: Bool { model.canCommand }
 
     var body: some View {
         NavigationStack {
@@ -45,7 +46,7 @@ struct DeviceView: View {
                     }
                 } else {
                     deviceSection
-                    if !paired || link.keyRejected { pairSection }
+                    if !paired { pairSection }
                     recordSection
                     if recording || live.isActive { liveSection }
                     if paired { syncSection }
@@ -105,17 +106,17 @@ struct DeviceView: View {
 
     private var pairSection: some View {
         Section {
-            Text("Hold the Pocket's side button for 5 seconds until its light blinks blue, then tap Pair. The light keeps blinking for a short while afterwards, then turns solid.")
+            Text("Hold the Pocket's side button for 5 seconds until its light blinks blue. The app pairs by itself, and the light turns solid a little later. If it keeps blinking, tap Pair.")
             Button { Task { await model.pairSelected() } } label: {
-                Label(link.keyRejected ? "Pair again" : "Pair", systemImage: "link")
+                Label("Pair", systemImage: "link")
             }
-            .disabled(busy)
+            .disabled(busy || !isConnected)
         } header: {
-            Text(link.keyRejected ? "Key rejected" : "Not paired")
+            Text(link.keyRejected ? "Pair again" : "Not paired")
         } footer: {
             Text(link.keyRejected
-                 ? "The Pocket dropped this phone's key, which happens after another app pairs it. Pairing gives it a new key."
-                 : "Recordings started with the Pocket's button already stream to this phone. Pairing adds start and stop from here, downloading recordings made while the phone was away, and battery and storage details.")
+                 ? "The Pocket no longer accepts this phone's key, which happens after it was reset. Recordings started with its button still stream in meanwhile."
+                 : "Recordings started with the Pocket's button already stream to this phone. Pairing adds start and stop from here, fetching recordings made while the phone was away, and battery and storage details.")
         }
     }
 

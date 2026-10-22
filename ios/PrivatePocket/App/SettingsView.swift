@@ -439,6 +439,13 @@ struct AddDeviceSheet: View {
                     .disabled(chosen == nil || name.isEmpty)
                 }
             }
+            .onChange(of: link.discovered) {
+                // One Pocket nearby and none chosen yet: pick it, so Add is one tap.
+                guard chosen == nil, link.discovered.count == 1, let d = link.discovered.first,
+                      !devices.devices.contains(where: { $0.advertisedName == d.name }) else { return }
+                chosen = d
+                if name.isEmpty { name = defaultName(d.name) }
+            }
             .onAppear { link.disconnect(); link.startDiscovery() }
             .onDisappear { link.stopDiscovery() }
         }

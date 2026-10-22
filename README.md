@@ -56,7 +56,7 @@ software.
 |---|---|
 | "Audio is written to encrypted storage the moment it leaves the microphone. Pull the device apart and there is nothing readable on it without your account." | With USB access (Web Sync) on, the card mounts on any computer as an ordinary drive of **plain, unencrypted MP3 files**. No account is involved. Over Bluetooth, the same plain MP3s can be downloaded by anyone who has the session key. |
 | "The recording is never in the clear on the wire, on your network or on ours." | From card to phone, recordings travel over Bluetooth as **plain MP3 frames**, with no Bluetooth pairing or link encryption, so the audio is in the clear over the air. **While a recording is being made, the card streams it to any device that has connected, with no key at all.** *(We didn't examine the Wi-Fi or cloud upload path.)* |
-| "Built on rigorous security standards, strong encryption…", "security at every layer" | **The Bluetooth link has no cryptography.** The card accepts connections from any device without pairing, and anyone in range can read its battery level or receive the live recording. The only access control is a 16-character key sent **in clear text** at every connection, which unlocks listing, downloading and starting or stopping recordings. The key is set by **whoever connects while the card is in pairing mode** (side button held for 5 seconds), with no check of who that is, and it never changes otherwise. |
+| "Built on rigorous security standards, strong encryption…", "security at every layer" | **The Bluetooth link has no cryptography.** The card accepts connections from any device without pairing, and anyone in range can read its battery level or receive the live recording. The only access control is a 16-character key sent **in clear text** at every connection, which unlocks listing, downloading and starting or stopping recordings. Keys are added by **whoever connects while the card is in pairing mode** (side button held for 5 seconds), with no check of who that is, and earlier keys stay valid. |
 
 To Pocket's credit, USB access has been **off by default** since firmware 1.2.
 
@@ -68,8 +68,9 @@ notice. Until then, Private Pocket keeps your recordings on your own phone.
 ## What it does
 
 - **Pairs like the official app.** Hold the Pocket's side button for 5 seconds until it
-  blinks blue, tap Pair, and the light goes solid a little later. No account, nothing to
-  type. Even before pairing, every recording started with the button streams to the phone.
+  blinks blue; the app pairs by itself and the light goes solid a little later. No
+  account, nothing to type, nothing to tap. Even before pairing, every recording started
+  with the button streams to the phone.
 - **Record and stream.** Start and stop the Pocket from the phone, or use its button.
   The phone stays connected, also with the app in the background, so every recording
   streams in live and is saved and transcribed as you speak, with no download afterwards.
@@ -118,16 +119,16 @@ cd ios/PrivatePocket
 ./gen-defaults.sh && xcodegen generate && open PrivatePocket.xcodeproj   # set your team, run on your phone
 ```
 
-You can skip `.env`: open the app, tap **Add Pocket** and pick yours, then hold the
-Pocket's side button for 5 seconds until it blinks blue and tap **Pair** (the light keeps
+You can skip `.env`: open the app, tap **Add Pocket**, then hold the Pocket's side
+button for 5 seconds until it blinks blue; the app pairs by itself (the light keeps
 blinking for a short while, then turns solid). If Xcode has no
 Apple ID signed in, `sign-install.sh` builds unsigned and signs with an existing
 development profile (see `signing.env.example`).
 
 **Important:** the Pocket talks to one phone at a time. If the official app is installed
 with Bluetooth on, it may connect first and sync recordings to its cloud as designed. Use
-one app or the other. Pairing here gives the Pocket a new key, so the official app will
-ask you to pair again (the same button press) if you go back to it.
+one app or the other. Pairing here adds a key of this app's own; the official app's key
+keeps working if you go back to it.
 
 ## Using your own server
 

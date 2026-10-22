@@ -7,8 +7,9 @@ goes to Pocket's cloud. See the [top-level README](../../README.md) for the over
 ## Tabs
 
 - **Recorder.** Stays connected while the app is open. If the Pocket is not paired yet, a
-  **Pair** section shows the one step (hold the side button for 5 s until it blinks blue,
-  tap Pair); recordings started with the button already stream in before that. It has a
+  **Pair** section shows the one step (hold the side button for 5 s until it blinks blue;
+  the app pairs by itself, and Pair tries at once); recordings started with the button
+  already stream in before that, and keep doing so if the Pocket ever rejects the key. It has a
   record button with a timer, and while recording a **Live** panel shows the streaming
   state and the transcript as it arrives (on-device `SpeechAnalyzer`, or server Whisper in
   15 s slices). At stop, the streamed copy becomes the recording if its length matches

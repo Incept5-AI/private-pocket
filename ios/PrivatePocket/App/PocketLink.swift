@@ -67,7 +67,9 @@ final class PocketLink: NSObject, ObservableObject {
     @Published private(set) var progress: (label: String, done: Int, total: Int)?
     @Published private(set) var log: [String] = []
     @Published var lastError: String?
-    /// The Pocket dropped the connection on the stored key: another app has paired it since.
+    /// The Pocket dropped the connection on the stored key (it was reset, most likely).
+    /// The link then carries on without a key, so recordings still stream, and tries
+    /// to pair afresh on each new connection until the user holds the button.
     @Published private(set) var keyRejected = false
 
     private var central: CBCentralManager!
@@ -82,6 +84,14 @@ final class PocketLink: NSObject, ObservableObject {
     /// device to arm it for once Bluetooth is powered on.
     private var standingBy = false
     private var standbyDevice: DeviceConfig?
+    /// Try a fresh key on the next connection made without one (see `handshake`): at
+    /// start, and after any link loss the Pocket caused on its own, which is what it
+    /// may do when put into pairing mode. A try outside pairing mode just costs a
+    /// reconnect, so the stream carries on.
+    private var pairAttemptPending = true
+    private var lastKeySentAt = Date.distantPast
+    /// Called when a key was accepted, with the device that now holds it.
+    var onPaired: ((DeviceConfig) -> Void)?
 
     private var lines: [String] = []
     private var audio = Data()
@@ -137,19 +147,34 @@ final class PocketLink: NSObject, ObservableObject {
         try await handshake()
     }
 
+    /// Pair now, on request: the same fresh-key try `handshake` makes by itself, but
+    /// with an error if the Pocket is not in pairing mode.
+    func pair(_ d: DeviceConfig) async throws {
+        if !(connectedDeviceID == d.id && isReady) { try await establish(d) }
+        try await tryNewKey(d, quiet: false)
+    }
+
     /// Pairs the way the official app does. With the Pocket in pairing mode (side
     /// button held for 5 s, light blinking blue) it accepts whatever key is sent next
-    /// and requires that key from then on. Makes a key, sets it and stores it for `d`.
-    func pair(_ d: DeviceConfig) async throws {
+    /// and that key works from then on; outside pairing mode it drops the link instead.
+    /// `quiet` swallows that drop: the reconnect then carries on without a key.
+    private func tryNewKey(_ d: DeviceConfig, quiet: Bool) async throws {
         let key = Self.newKey()
-        if !(connectedDeviceID == d.id && isReady) { try await establish(d) }
+        note("trying to pair")
         do { try await sendKey(key) } catch {
+            if quiet { return }
             disconnect()
             throw PocketError.notPairing
         }
         d.sessionKey = key   // Keychain; the struct itself is unchanged
-        keyRejected = false
         note("paired: the Pocket took a new key")
+        try await afterKey(d)
+        onPaired?(d)
+    }
+
+    /// Clock and status, once a key was accepted.
+    private func afterKey(_ d: DeviceConfig) async throws {
+        keyRejected = false
         if d.setClockOnConnect {
             _ = try await send("T&\(PocketTime.now())", until: { $0.hasPrefix("MCU&T&") })
         }
@@ -261,28 +286,37 @@ final class PocketLink: NSObject, ObservableObject {
         }
     }
 
+    /// After the link is up. With a key the Pocket has accepted before: send it and
+    /// read the status. Without one, or after a rejection: stay connected for events
+    /// and live audio, and once per connection try a fresh key in case the Pocket is
+    /// in pairing mode.
     private func handshake() async throws {
         guard let d = device else { throw PocketError.notReady }
-        guard !d.sessionKey.isEmpty else {
-            note("not paired: recording events and live audio only")
-            status = DeviceStatus(battery: status.battery)
+        let key = d.sessionKey
+        if !key.isEmpty, !keyRejected {
+            do { try await sendKey(key) } catch {
+                // The Pocket drops the link on a wrong key. AppModel reconnects, and
+                // this runs again on the keyless path below.
+                keyRejected = true
+                note("key rejected: carrying on without one")
+                throw PocketError.rejected
+            }
+            try await afterKey(d)
             return
         }
-        do { try await sendKey(d.sessionKey) } catch {
-            keyRejected = true
-            disconnect()
-            throw error
+        note(key.isEmpty ? "not paired: recording events and live audio only"
+                         : "key rejected earlier: recording events and live audio only")
+        status = DeviceStatus(battery: status.battery)
+        if pairAttemptPending, status.recordingSince == nil {
+            pairAttemptPending = false
+            try await tryNewKey(d, quiet: true)
         }
-        keyRejected = false
-        if d.setClockOnConnect {
-            _ = try await send("T&\(PocketTime.now())", until: { $0.hasPrefix("MCU&T&") })
-        }
-        try await refreshStatus()
     }
 
     /// `APP&SK&<key>`: the Pocket answers `MCU&SK&OK`, or drops the connection at once
     /// when the key is wrong (outside pairing mode).
     private func sendKey(_ key: String) async throws {
+        lastKeySentAt = Date()
         do {
             let r = try await send("SK&\(key)", until: { $0.hasPrefix("MCU&SK&") }, timeout: 5)
             guard r.last == "MCU&SK&OK" else { throw PocketError.rejected }
@@ -510,6 +544,9 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
         MainActor.assumeIsolated {
             guard p == peripheral else { return }
             note("disconnected")
+            // A drop the Pocket made on its own, not on a key just sent, may mean it was
+            // put into pairing mode: worth a fresh key on the next connection.
+            if Date().timeIntervalSince(lastKeySentAt) > 3 { pairAttemptPending = true }
             disconnect()
             onLinkLost?()
         }
