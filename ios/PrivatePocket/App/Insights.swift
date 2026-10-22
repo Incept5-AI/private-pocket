@@ -1,9 +1,10 @@
-import Foundation
+import SwiftUI
 
 /// What a span of moments adds up to, worked out from their readings: the days, the
 /// commitments either way, what was decided, asked and counted, the threads, the
-/// people, and what needs you now. All counted on the phone; the briefing in
-/// `Briefings` is the one part a model writes, from the briefs, never the transcripts.
+/// people, and what needs you now. All counted on the phone; the findings in
+/// `Findings` are drawn from it, and the briefing in `Briefings` is the one part a
+/// model writes, from the findings and the readings, never the transcripts.
 struct Digest {
     struct Need: Identifiable {
         let recording: Recording
@@ -58,18 +59,20 @@ struct Digest {
     let figures: [Line]
     let yours: [(Recording, NextItem)]
     let theirs: [(Recording, NextItem)]
-    let calls: Int
-    let meetings: Int
+    let callCount: Int
+    let meetingCount: Int
 
     var workSeconds: Int { days.map(\.work).reduce(0, +) }
     var lifeSeconds: Int { days.map(\.life).reduce(0, +) }
     var otherSeconds: Int { days.map(\.other).reduce(0, +) }
     var totalSeconds: Int { workSeconds + lifeSeconds + otherSeconds }
     var busiestDay: Day? { days.max { $0.total < $1.total }.flatMap { $0.total > 0 ? $0 : nil } }
+    var meetings: [Recording] { moments.filter { [.businessMeeting, .personalMeeting, .meeting].contains($0.kind) } }
     var unread: [Recording] { moments.filter { $0.meta.transcript != nil && $0.meta.insight?.readByModel != true } }
     var outdated: [Recording] { moments.filter { $0.meta.insight?.readByModel == true && ($0.meta.insight?.version ?? 1) < MomentInsight.readerVersion } }
     var yoursOpen: [(Recording, NextItem)] { yours.filter { !$0.1.isDone } }
     var yoursDone: [(Recording, NextItem)] { yours.filter { $0.1.isDone } }
+    var theirsOpen: [(Recording, NextItem)] { theirs.filter { !$0.1.isDone } }
     var theirsOverdue: [(Recording, NextItem)] { theirs.filter { $0.1.date.map { $0 < Date() } ?? false } }
 
     /// Changes when the briefing should be written again.
@@ -78,6 +81,10 @@ struct Digest {
             let items = r.meta.insight?.items ?? []
             return "\(r.id)@\(Int(r.meta.analysedAt?.timeIntervalSince1970 ?? 0))/\(items.filter(\.isDone).count)"
         }.joined(separator: ",")
+    }
+
+    static func hours(_ s: Int) -> String {
+        s >= 3600 ? "\(s / 3600) h \((s % 3600) / 60)" : "\(max(1, s / 60)) min"
     }
 
     static func make(_ all: [Recording], window: DateInterval) -> Digest {
@@ -115,7 +122,7 @@ struct Digest {
         return Digest(window: window, moments: moments, days: days,
                       needs: needs(all), threads: threads(moments, people: names), people: people(moments),
                       decisions: decisions, questions: questions, figures: figures,
-                      yours: yours, theirs: theirs, calls: calls, meetings: meetings)
+                      yours: yours, theirs: theirs, callCount: calls, meetingCount: meetings)
     }
 
     /// Open items across every moment, not just the span: what needs you now.
@@ -146,6 +153,7 @@ struct Digest {
         "Today", "Tomorrow", "Yesterday", "Tonight", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
         "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December",
         "Speaker", "Call", "Meeting", "Note", "Business", "Personal", "Conversation", "After", "Before", "Once", "While", "Because",
+        "Venue", "Date", "Dates", "Time", "Location", "Agenda",
     ]
 
     /// Capitalised terms, joined into phrases, that run through two or more moments.
@@ -223,8 +231,393 @@ struct Digest {
     }
 }
 
+/// The lists under the findings, one at a time.
+enum RecordTab: String, CaseIterable, Identifiable {
+    case commitments = "Commitments", decided = "Decided", open = "Still open", figures = "Figures", threads = "Threads", people = "People"
+    var id: String { rawValue }
+}
+
+/// Something only adding up many conversations shows: a sentence the user would not
+/// have arrived at alone, a picture of it, and what to do about it.
+struct Finding: Identifiable {
+    enum Visual {
+        /// Work's share of recorded time, this span against the last.
+        case balance(before: Double?, after: Double, beforeLabel: String, afterLabel: String)
+        case ring(done: Int, total: Int, previous: (done: Int, total: Int)?)
+        /// Open commitments per day, so far.
+        case growth(open: [Int], labels: [String])
+        /// Commitments taken on per day, with the day that stands out.
+        case spike(intake: [Int], labels: [String], peak: Int)
+        case timeline(dates: [Date], window: DateInterval, settledAt: Date?)
+        case waiting([(name: String, days: Int)])
+        case lapse(said: Date, due: Date?, now: Date)
+        case pair(a: Int, b: Int, aLabel: String, bLabel: String)
+        case step(fromValue: String, fromLabel: String, toValue: String, toLabel: String, up: Bool)
+        case presence([Bool], labels: [String])
+        case hours(seconds: Int, decisions: Int)
+    }
+
+    enum Action {
+        case open(ids: [String], title: String)
+        case remind(title: String, due: Date?, note: String)
+        case chase(Recording, NextItem)
+        case place(Recording, NextItem)
+        case placeAll([(Recording, NextItem)])
+        case record(RecordTab)
+    }
+
+    struct Choice: Identifiable {
+        let label: String
+        let action: Action
+        var id: String { label }
+    }
+
+    let id: String
+    let tag: String
+    let tint: Color
+    let text: String
+    let visual: Visual?
+    let choices: [Choice]
+    let weight: Int
+}
+
+enum Findings {
+    typealias Choice = Finding.Choice
+
+    /// The findings for a span, strongest first, at most six.
+    static func make(_ d: Digest, previous: Digest?, history: [Digest], all: [Recording], spanName: String) -> [Finding] {
+        let now = Date()
+        let cal = Calendar.current
+        let thisSpan = "this \(spanName)", lastSpan = "last \(spanName)"
+        var out: [Finding] = []
+        let recent = all.filter { ($0.startedAt ?? .distantPast) > now.addingTimeInterval(-30 * 86_400) }
+        let names = Set(all.flatMap(\.people))
+
+        out += goneQuiet(recent, all: all, now: now, cal: cal)
+        if let f = waitingOnYou(recent, names: names, now: now) { out.append(f) }
+        out += threads(d, now: now)
+        if let f = meetings(d, thisSpan: thisSpan) { out.append(f) }
+        if let f = followThrough(d, previous: previous, thisSpan: thisSpan, lastSpan: lastSpan) { out.append(f) }
+        if let f = load(d, thisSpan: thisSpan, cal: cal) { out.append(f) }
+        if let f = questions(d, thisSpan: thisSpan) { out.append(f) }
+        if let f = figureMoved(d, previous: previous) { out.append(f) }
+        if let f = balance(d, previous: previous, thisSpan: thisSpan, lastSpan: lastSpan) { out.append(f) }
+        out += outOfTouch(d, history: history, all: all, spanName: spanName, thisSpan: thisSpan, now: now)
+
+        if out.isEmpty, d.moments.count < 3, all.count < 5 {
+            out.append(Finding(id: "early", tag: "Early days", tint: Brand.muted,
+                               text: "Insights builds up as the Pocket records. Within a week or so there is enough here to show your balance of work and life, your follow-through, what has stalled, and who is waiting on you.",
+                               visual: nil, choices: [], weight: 1))
+        }
+        return Array(out.sorted { $0.weight > $1.weight }.prefix(6))
+    }
+
+    // MARK: The rules
+
+    /// A promise that fell due, or is a week old, with nothing recorded with that person since.
+    private static func goneQuiet(_ recent: [Recording], all: [Recording], now: Date, cal: Calendar) -> [Finding] {
+        var out: [Finding] = []
+        for r in recent {
+            guard let said = r.startedAt else { continue }
+            for item in r.meta.insight?.items ?? [] where item.isPromise && !item.isDone && !item.isDismissed {
+                guard let who = item.who, !who.isEmpty else { continue }
+                let overdue = item.date.map { $0 < now } ?? false
+                let old = item.date == nil && now.timeIntervalSince(said) > 5 * 86_400
+                guard overdue || old else { continue }
+                let after = max(said, item.date ?? said)
+                let since = all.contains { ($0.startedAt ?? .distantPast) > after && $0.people.contains { $0.caseInsensitiveCompare(who) == .orderedSame } }
+                guard !since else { continue }
+                let days = Int(now.timeIntervalSince(item.date ?? said) / 86_400)
+                let text: String
+                if let due = item.date {
+                    let past = days == 0 ? "due today" : "\(days) day\(days == 1 ? "" : "s") past due"
+                    text = "\(who) said “\(item.text)”, due \(dayName(due, cal)). It is \(past), and nothing with \(who) has been recorded since."
+                } else {
+                    text = "\(who) said “\(item.text)” \(days) days ago, and nothing with \(who) has been recorded since."
+                }
+                out.append(Finding(id: "quiet/\(r.id)/\(item.id)", tag: "Gone quiet", tint: Brand.record, text: text,
+                                   visual: .lapse(said: said, due: item.date, now: now),
+                                   choices: [Choice(label: item.reminderID == nil ? "Remind me to chase" : "Reminder set", action: .chase(r, item)),
+                                             Choice(label: "Open", action: .open(ids: [r.id], title: r.displayTitle))],
+                                   weight: 100 - min(days, 20)))
+            }
+        }
+        return Array(out.sorted { $0.weight > $1.weight }.prefix(2))
+    }
+
+    /// Open commitments that name someone, two days old or more, by who has waited longest.
+    private static func waitingOnYou(_ recent: [Recording], names: Set<String>, now: Date) -> Finding? {
+        var waiting: [(name: String, days: Int, r: Recording, item: NextItem)] = []
+        for r in recent {
+            guard let said = r.startedAt else { continue }
+            for item in r.meta.insight?.items ?? [] where item.isAction && !item.isDone && !item.isDismissed {
+                let named = item.who ?? names.first { item.text.range(of: $0, options: .caseInsensitive) != nil }
+                guard let who = named, !who.isEmpty else { continue }
+                let days = Int(now.timeIntervalSince(said) / 86_400)
+                guard days >= 2 else { continue }
+                if let i = waiting.firstIndex(where: { $0.name == who }) {
+                    if days > waiting[i].days { waiting[i] = (who, days, r, item) }
+                } else {
+                    waiting.append((who, days, r, item))
+                }
+            }
+        }
+        guard let longest = waiting.max(by: { $0.days < $1.days }) else { return nil }
+        let text = waiting.count == 1
+            ? "\(longest.name) has been waiting \(longest.days) days on you: “\(longest.item.text)”."
+            : "\(waiting.count) people are waiting on you. \(longest.name) longest, \(longest.days) days: “\(longest.item.text)”."
+        let rows = waiting.sorted { $0.days > $1.days }.prefix(5).map { (name: $0.name, days: $0.days) }
+        return Finding(id: "waiting", tag: "Waiting on you", tint: Brand.record, text: text, visual: .waiting(rows),
+                       choices: [Choice(label: longest.item.reminderID == nil ? "Add to Reminders" : "In Reminders", action: .place(longest.r, longest.item)),
+                                 Choice(label: "Open", action: .open(ids: [longest.r.id], title: longest.r.displayTitle))],
+                       weight: 95)
+    }
+
+    /// Threads that keep coming up without a decision, and one that got settled.
+    private static func threads(_ d: Digest, now: Date) -> [Finding] {
+        var stalled: [Finding] = [], settled: [Finding] = []
+        for t in d.threads {
+            let dates = t.dates.sorted()
+            guard let first = dates.first, let last = dates.last else { continue }
+            let days = Int(last.timeIntervalSince(first) / 86_400)
+            let decidedAt = t.moments.compactMap { r -> Date? in
+                (r.meta.insight?.decisions ?? []).contains { $0.range(of: t.term, options: .caseInsensitive) != nil } ? r.startedAt : nil
+            }.max()
+            let open = Choice(label: "Open", action: .open(ids: t.moments.map(\.id), title: t.term))
+            if decidedAt == nil, t.moments.count >= 3 || (t.moments.count >= 2 && days >= 5) {
+                let span = days == 0 ? "today" : "over \(days) days"
+                stalled.append(Finding(id: "stalled/\(t.term)", tag: "Stalled", tint: Brand.record,
+                                       text: "“\(t.term)” has come up in \(t.moments.count) conversations \(span) without a decision.",
+                                       visual: .timeline(dates: dates, window: d.window, settledAt: nil),
+                                       choices: [Choice(label: "Settle it", action: .remind(title: "Decide: \(t.term)", due: tomorrowMorning(now),
+                                                                                             note: "Came up in \(t.moments.count) conversations without a decision. From Private Pocket.")), open],
+                                       weight: 88 + min(t.moments.count, 5)))
+            } else if let decidedAt, t.moments.count >= 3 {
+                settled.append(Finding(id: "settled/\(t.term)", tag: "Settled", tint: Brand.good,
+                                       text: "“\(t.term)” ran through \(t.moments.count) conversations and was settled \(dayName(decidedAt)).",
+                                       visual: .timeline(dates: dates, window: d.window, settledAt: decidedAt), choices: [open], weight: 40))
+            }
+        }
+        return Array(stalled.prefix(2)) + Array(settled.prefix(1))
+    }
+
+    /// Meetings that produced no decision.
+    private static func meetings(_ d: Digest, thisSpan: String) -> Finding? {
+        let ms = d.meetings
+        let seconds = ms.map { $0.meta.seconds ?? 0 }.reduce(0, +)
+        let decided = ms.map { ($0.meta.insight?.decisions ?? []).count }.reduce(0, +)
+        guard ms.allSatisfy({ $0.meta.insight?.readByModel == true }) else { return nil }
+        if ms.count >= 2, decided == 0 {
+            return Finding(id: "meetings", tag: "Meetings", tint: Brand.work,
+                           text: "\(ms.count) meetings \(thisSpan), \(Digest.hours(seconds)) between them, and not one decision recorded in any of them.",
+                           visual: .hours(seconds: seconds, decisions: 0),
+                           choices: [Choice(label: "Open them", action: .open(ids: ms.map(\.id), title: "Meetings"))], weight: 85)
+        }
+        if seconds >= 2 * 3600, decided <= 1 {
+            return Finding(id: "meetings", tag: "Meetings", tint: Brand.work,
+                           text: "\(Digest.hours(seconds)) of meetings \(thisSpan) produced \(decided == 0 ? "no decision" : "one decision").",
+                           visual: .hours(seconds: seconds, decisions: decided),
+                           choices: [Choice(label: "Open them", action: .open(ids: ms.map(\.id), title: "Meetings"))], weight: 85)
+        }
+        return nil
+    }
+
+    private static func followThrough(_ d: Digest, previous: Digest?, thisSpan: String, lastSpan: String) -> Finding? {
+        let total = d.yours.count, done = d.yoursDone.count
+        guard total >= 3 else { return nil }
+        let prev: (done: Int, total: Int)? = previous.flatMap { $0.yours.count >= 2 ? ($0.yoursDone.count, $0.yours.count) : nil }
+        var text = "You have done \(done) of the \(total) things you took on \(thisSpan)."
+        if let prev { text += " \(lastSpan.capitalizedFirst): \(prev.done) of \(prev.total)." }
+        if done * 3 < total, let oldest = d.yoursOpen.compactMap({ $0.0.startedAt }).min() { text += " The oldest still open is from \(dayName(oldest))." }
+        let open = d.yoursOpen.filter { $0.1.reminderID == nil }
+        var choices = [Choice(label: "See them", action: .record(.commitments))]
+        if !open.isEmpty { choices.insert(Choice(label: open.count == 1 ? "Add it to Reminders" : "Add the open ones to Reminders", action: .placeAll(open)), at: 0) }
+        return Finding(id: "follow", tag: "Follow-through", tint: Brand.act, text: text,
+                       visual: .ring(done: done, total: total, previous: prev), choices: choices, weight: 80)
+    }
+
+    /// Open commitments growing through the span, or one day that brought most of them.
+    private static func load(_ d: Digest, thisSpan: String, cal: Calendar) -> Finding? {
+        guard !d.days.isEmpty else { return nil }
+        var taken = [Int](repeating: 0, count: d.days.count), closed = taken
+        for (r, item) in d.yours {
+            guard let s = r.startedAt, let i = d.days.firstIndex(where: { cal.isDate($0.date, inSameDayAs: s) }) else { continue }
+            taken[i] += 1
+            if item.isDone {
+                let c = item.doneAt ?? s
+                let j = d.days.firstIndex { cal.isDate($0.date, inSameDayAs: c) } ?? i
+                closed[min(max(i, j), d.days.count - 1)] += 1
+            }
+        }
+        let today = d.days.firstIndex { cal.isDateInToday($0.date) } ?? d.days.count - 1
+        var open: [Int] = [], run = 0
+        for i in 0...today { run += taken[i] - closed[i]; open.append(run) }
+        let labels = d.days.prefix(today + 1).map { d.days.count <= 10 ? $0.date.formatted(.dateTime.weekday(.narrow)) : $0.date.formatted(.dateTime.day()) }
+        let total = taken.reduce(0, +)
+        if let firstNZ = open.firstIndex(where: { $0 > 0 }), let last = open.last, last >= 4, open.count - firstNZ >= 3, last >= 2 * max(1, open[firstNZ]) {
+            let closedTotal = closed.reduce(0, +)
+            let tail = closedTotal == 0 ? "and none has been closed yet" : "with \(closedTotal) closed along the way"
+            return Finding(id: "load", tag: "Load", tint: Brand.act,
+                           text: "Open commitments have grown from \(open[firstNZ]) on \(dayName(d.days[firstNZ].date)) to \(last) now, \(tail).",
+                           visual: .growth(open: open, labels: Array(labels)),
+                           choices: [Choice(label: "See them", action: .record(.commitments))], weight: 75)
+        }
+        if total >= 4, let peak = (0...today).max(by: { taken[$0] < taken[$1] }), taken[peak] * 2 >= total, taken[peak] >= 3 {
+            return Finding(id: "spike", tag: "Load", tint: Brand.act,
+                           text: "\(d.days[peak].date.formatted(.dateTime.weekday(.wide))) alone added \(taken[peak]) of the \(total) things you took on \(thisSpan).",
+                           visual: .spike(intake: Array(taken.prefix(today + 1)), labels: Array(labels), peak: peak),
+                           choices: [Choice(label: "See them", action: .record(.commitments))], weight: 72)
+        }
+        return nil
+    }
+
+    private static func questions(_ d: Digest, thisSpan: String) -> Finding? {
+        let q = d.questions.count, dec = d.decisions.count
+        if q >= 4, q * 2 > dec * 3 {
+            var text = "\(thisSpan.capitalizedFirst) raised \(q) questions and settled \(dec)."
+            let by = Dictionary(grouping: d.questions, by: { $0.recording.id })
+            if let top = by.max(by: { $0.value.count < $1.value.count }), top.value.count >= 2, let r = top.value.first?.recording {
+                text += " \(top.value.count) of them are from \(r.displayTitle)."
+            }
+            return Finding(id: "questions", tag: "Open questions", tint: Brand.act, text: text,
+                           visual: .pair(a: q, b: dec, aLabel: "raised", bLabel: "settled"),
+                           choices: [Choice(label: "See what is open", action: .record(.open))], weight: 70)
+        }
+        if dec >= 4, dec >= q {
+            return Finding(id: "decided", tag: "Decided", tint: Brand.good,
+                           text: "\(thisSpan.capitalizedFirst) settled \(dec) things and left \(q) open.",
+                           visual: .pair(a: dec, b: q, aLabel: "settled", bLabel: "open"),
+                           choices: [Choice(label: "See them", action: .record(.decided))], weight: 35)
+        }
+        return nil
+    }
+
+    // MARK: Figures
+
+    private struct Fig {
+        let amount: Double
+        let shown: String
+        let money: Bool
+        let subject: Set<String>
+        let about: String
+        let recording: Recording
+    }
+
+    private static let figureStop: Set<String> = ["the", "and", "for", "with", "per", "about", "around", "roughly", "each", "from", "that", "this", "was", "were", "are", "will", "would", "been", "have", "has", "had", "they", "them", "their", "you", "your", "our", "its", "all", "than", "more", "less", "over", "under", "just", "only", "some", "into", "onto"]
+    private static let months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+    private static func parse(_ line: Digest.Line) -> Fig? {
+        let lower = line.text.lowercased()
+        if lower.contains("o'clock") || lower.contains("oclock") { return nil }
+        if lower.range(of: #"\b\d{1,2}(:\d{2})?\s?(am|pm)\b"#, options: .regularExpression) != nil { return nil }
+        if lower.range(of: #"\b\d{1,2}(st|nd|rd|th)\b"#, options: .regularExpression) != nil { return nil }
+        if months.contains(where: { lower.contains($0) }) { return nil }
+        guard let m = line.text.range(of: #"([£$€]\s?)?\d[\d,]*(\.\d+)?\s?(k|K|m|M|bn|%)?"#, options: .regularExpression) else { return nil }
+        let shown = String(line.text[m]).trimmingCharacters(in: .whitespaces)
+        guard var amount = Double(shown.filter { "0123456789.".contains($0) }) else { return nil }
+        let tail = shown.lowercased()
+        if tail.hasSuffix("bn") { amount *= 1e9 } else if tail.hasSuffix("m") { amount *= 1e6 } else if tail.hasSuffix("k") { amount *= 1e3 }
+        let rest = line.text.replacingCharacters(in: m, with: " ")
+        let subject = Set(rest.lowercased().split { !$0.isLetter }.map(String.init).filter { $0.count >= 3 && !figureStop.contains($0) })
+        guard !subject.isEmpty else { return nil }
+        var about = rest.trimmingCharacters(in: CharacterSet.whitespaces.union(.punctuationCharacters))
+        for lead in ["for ", "of ", "on ", "at ", "to ", "in "] where about.lowercased().hasPrefix(lead) { about = String(about.dropFirst(lead.count)); break }
+        return Fig(amount: amount, shown: shown, money: shown.first.map { "£$€".contains($0) } ?? false, subject: subject, about: about, recording: line.recording)
+    }
+
+    /// The same thing counted differently in two conversations.
+    private static func figureMoved(_ d: Digest, previous: Digest?) -> Finding? {
+        let figs = (d.figures + (previous?.figures ?? [])).compactMap(parse)
+        var best: (Fig, Fig, Int)?
+        for i in figs.indices {
+            for j in figs.indices where j > i {
+                let a = figs[i], b = figs[j]
+                guard a.recording.id != b.recording.id, a.money == b.money, a.amount != b.amount else { continue }
+                let shared = a.subject.intersection(b.subject).count
+                let needed = min(a.subject.count, b.subject.count) >= 3 ? 2 : 1
+                guard shared >= needed, shared > (best?.2 ?? 0) else { continue }
+                best = (a, b, shared)
+            }
+        }
+        guard let (x, y, _) = best else { return nil }
+        let (from, to) = (x.recording.startedAt ?? .distantPast) <= (y.recording.startedAt ?? .distantPast) ? (x, y) : (y, x)
+        let fromDay = from.recording.startedAt.map { dayName($0) } ?? "earlier", toDay = to.recording.startedAt.map { dayName($0) } ?? "later"
+        return Finding(id: "figure/\(to.recording.id)", tag: "A figure moved", tint: Brand.act,
+                       text: "\(to.about.capitalizedFirst): \(from.shown) on \(fromDay), \(to.shown) by \(toDay).",
+                       visual: .step(fromValue: from.shown, fromLabel: fromDay, toValue: to.shown, toLabel: toDay, up: to.amount > from.amount),
+                       choices: [Choice(label: "Open both", action: .open(ids: [from.recording.id, to.recording.id], title: to.about.capitalizedFirst))], weight: 65)
+    }
+
+    private static func balance(_ d: Digest, previous: Digest?, thisSpan: String, lastSpan: String) -> Finding? {
+        let wl = d.workSeconds + d.lifeSeconds
+        guard wl >= 600 else { return nil }
+        let w = Double(d.workSeconds) / Double(wl)
+        if let p = previous, p.workSeconds + p.lifeSeconds >= 600 {
+            let pw = Double(p.workSeconds) / Double(p.workSeconds + p.lifeSeconds)
+            guard abs(w - pw) >= 0.15 else { return nil }
+            return Finding(id: "balance", tag: "Balance", tint: Brand.life,
+                           text: "Work took \(pct(w)) of your recorded time \(thisSpan), \(w > pw ? "up" : "down") from \(pct(pw)) \(lastSpan).",
+                           visual: .balance(before: pw, after: w, beforeLabel: lastSpan, afterLabel: thisSpan), choices: [], weight: 60)
+        }
+        if w >= 0.85 || w <= 0.15 {
+            return Finding(id: "balance", tag: "Balance", tint: Brand.life,
+                           text: w >= 0.85 ? "Nearly everything you recorded \(thisSpan) was work: \(pct(w))." : "Nearly everything you recorded \(thisSpan) was life: \(pct(1 - w)).",
+                           visual: .balance(before: nil, after: w, beforeLabel: lastSpan, afterLabel: thisSpan), choices: [], weight: 50)
+        }
+        return nil
+    }
+
+    /// Someone who was in the last spans and is not in this one.
+    private static func outOfTouch(_ d: Digest, history: [Digest], all: [Recording], spanName: String, thisSpan: String, now: Date) -> [Finding] {
+        guard history.count >= 2, d.window.start.addingTimeInterval(d.window.duration / 2) < now else { return [] }
+        let here = Set(d.people.map(\.name))
+        let past = history.reversed().map { Set($0.people.map(\.name)) }   // oldest first
+        let names = past.reduce(Set<String>()) { $0.union($1) }
+        var out: [Finding] = []
+        for name in names.sorted() where !here.contains(name) {
+            let presence = past.map { $0.contains(name) }
+            guard presence.last == true, presence.filter({ $0 }).count >= 2 else { continue }
+            let count = presence.filter { $0 }.count
+            let text = count == past.count
+                ? "You had spoken with \(name) every \(spanName) for \(count) \(spanName)s; not \(thisSpan)."
+                : "You had spoken with \(name) in \(count) of the last \(past.count) \(spanName)s; not \(thisSpan)."
+            var labels = (1...past.count).reversed().map { $0 == 1 ? "last" : "\($0) ago" }
+            labels.append("this")
+            let ids = all.filter { $0.people.contains(name) }.map(\.id)
+            out.append(Finding(id: "touch/\(name)", tag: "Out of touch", tint: Brand.life, text: text,
+                               visual: .presence(presence + [false], labels: labels),
+                               choices: [Choice(label: "Remind me to call \(name)", action: .remind(title: "Call \(name)", due: tomorrowMorning(now), note: "Not spoken \(thisSpan). From Private Pocket.")),
+                                         Choice(label: "Open", action: .open(ids: ids, title: name))],
+                               weight: 55))
+        }
+        return Array(out.prefix(2))
+    }
+
+    // MARK: Words
+
+    static func dayName(_ d: Date, _ cal: Calendar = .current) -> String {
+        if cal.isDateInToday(d) { return "today" }
+        if cal.isDateInYesterday(d) { return "yesterday" }
+        if cal.isDateInTomorrow(d) { return "tomorrow" }
+        if abs(d.timeIntervalSinceNow) < 6 * 86_400 { return d.formatted(.dateTime.weekday(.wide)) }
+        return d.formatted(.dateTime.day().month(.abbreviated))
+    }
+
+    static func pct(_ x: Double) -> String { "\(Int((x * 100).rounded()))%" }
+
+    static func tomorrowMorning(_ now: Date) -> Date? {
+        let cal = Calendar.current
+        guard let t = cal.date(byAdding: .day, value: 1, to: now) else { return nil }
+        return cal.date(bySettingHour: 9, minute: 0, second: 0, of: t)
+    }
+}
+
+extension String {
+    var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+}
+
 /// The span in a few sentences, written by the configured language model from the
-/// moments' briefs, and kept until the moments change.
+/// findings and the moments' readings, and kept until they change.
 @MainActor
 final class Briefings: ObservableObject {
     struct Briefing: Codable {
@@ -246,15 +639,16 @@ final class Briefings: ObservableObject {
     }
 
     static let instructions = """
-    You write a short briefing for the person who made these recordings, from the notes on each one. \
+    You write a short briefing for the person who made these recordings, from the app's observations and its notes on each moment. \
     Four to six sentences, addressed to them as "you", no lists and no headings. \
-    Say what dominated the period, what moved forward, what was decided, what is still unresolved, \
-    and who is waiting on them or they on others, naming people. Use only the notes. Write in the notes' language.
+    Lead with what they would not have noticed themselves: the observations, in your own words, with the numbers. \
+    Then what moved forward, what was decided, what is unresolved, and who is waiting on them or they on others, naming people. \
+    Use only the observations and the notes. Write in the notes' language.
     """
 
-    /// Writes the briefing for `key` if the moments changed since the last one.
-    func ensure(key: String, digest: Digest) async {
-        let stamp = digest.stamp
+    /// Writes the briefing for `key` if the moments or the findings changed since the last one.
+    func ensure(key: String, digest: Digest, findings: [Finding]) async {
+        let stamp = digest.stamp + "|" + findings.map(\.id).joined(separator: ",")
         guard !digest.moments.isEmpty, texts[key]?.stamp != stamp, !writing.contains(key) else { return }
         await ServerStatus.shared.check()
         guard LLM.availability == nil else { return }
@@ -262,7 +656,7 @@ final class Briefings: ObservableObject {
         defer { writing.remove(key) }
         let c = LLM.config
         do {
-            let text = try await Self.write(digest, config: c)
+            let text = try await Self.write(digest, findings: findings, config: c)
             texts[key] = Briefing(stamp: stamp, text: text, at: Date(), remote: c.remote)
             if let data = try? JSONEncoder().encode(texts) { UserDefaults.standard.set(data, forKey: "briefings") }
         } catch {
@@ -270,17 +664,18 @@ final class Briefings: ObservableObject {
         }
     }
 
-    private static func write(_ d: Digest, config c: LLMConfig) async throws -> String {
+    private static func write(_ d: Digest, findings: [Finding], config c: LLMConfig) async throws -> String {
         let span = "\(d.window.start.formatted(date: .abbreviated, time: .omitted)) to \(d.window.end.addingTimeInterval(-1).formatted(date: .abbreviated, time: .omitted))"
+        let observations = findings.isEmpty ? "" : "Observations from the numbers:\n" + findings.map { "- \($0.text)" }.joined(separator: "\n") + "\n\n"
         let chunks = Summariser.split(d.text, max: c.chunkChars)
         if chunks.count == 1 {
-            return try await LLM.complete(c, instructions: instructions, prompt: "Notes on \(d.moments.count) moments, \(span):\n\n\(d.text)")
+            return try await LLM.complete(c, instructions: instructions, prompt: "\(observations)Notes on \(d.moments.count) moments, \(span):\n\n\(d.text)")
         }
         var partials: [String] = []
         for (i, chunk) in chunks.enumerated() {
-            partials.append(try await LLM.complete(c, instructions: instructions, prompt: "Notes, part \(i + 1) of \(chunks.count), \(span):\n\n\(chunk)"))
+            partials.append(try await LLM.complete(c, instructions: instructions, prompt: "\(observations)Notes, part \(i + 1) of \(chunks.count), \(span):\n\n\(chunk)"))
         }
         return try await LLM.complete(c, instructions: instructions,
-                                      prompt: "These are briefings on consecutive parts of the same period, \(span). Combine them into one.\n\n" + partials.joined(separator: "\n\n"))
+                                      prompt: "\(observations)These are briefings on consecutive parts of the same period, \(span). Combine them into one.\n\n" + partials.joined(separator: "\n\n"))
     }
 }

@@ -69,6 +69,8 @@ struct NextItem: Codable, Hashable, Identifiable {
     var reminderID: String?
     var eventID: String?
     var done: Bool?
+    /// When it was ticked, here or in Reminders, for the week's shape.
+    var doneAt: Date?
     var dismissed: Bool?
 
     var isAction: Bool { kind == "action" }
@@ -102,7 +104,7 @@ struct MomentInsight: Codable, Hashable {
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 3
+    static let readerVersion = 4
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -232,9 +234,9 @@ struct InsightDraft {
     var speakers: [DraftSpeaker]
     @Guide(description: "Decisions made, each one short sentence; empty if none")
     var decisions: [String]
-    @Guide(description: "Questions raised and left unanswered, each one short sentence; empty if none")
+    @Guide(description: "Questions that still had no answer when the conversation ended, each one short sentence; never a question that was answered later in it; empty if none")
     var questions: [String]
-    @Guide(description: "Figures that came up, money, quantities or counts, each as the figure and what it was for, like '£3,000 for the offsite'; empty if none")
+    @Guide(description: "Amounts that matter, money, quantities or counts, each written as the amount and what it is for, like '£3,000 for the offsite' or '30 people at the workshop'; never a date, a day of the month or a clock time; empty if none")
     var figures: [String]
 }
 
@@ -280,6 +282,8 @@ enum Analyst {
     Speaker labels like Speaker 1 are not names and are never people; if the conversation reveals a label's name, give it under speakers. \
     Write each action as a short imperative without naming who does it; things other people said they would do are promises, not actions. \
     Title each date the way it should appear in a calendar: what it is and with whom or where, specific to this conversation, with the date and time kept out of the title and given under when. \
+    Note what was decided. List only the questions still unanswered when the conversation ended. \
+    Give figures as the amount and what it is for, never dates, days of the month or clock times. \
     For every item and every sentence of the brief, quote the exact words from the transcript it rests on, verbatim, ten words or fewer.
     """
 
@@ -305,7 +309,10 @@ enum Analyst {
             "\"kind\" (one of business_call, personal_call, business_meeting, personal_meeting, note, other); \"title\" (a string); " +
             "\"brief\" (an array of {\"text\", \"quote\"}); \"next\" (an array of {\"kind\": action|date|promise, \"text\", \"who\", \"place\", \"when\", \"quote\"}); " +
             "\"keyLines\" (an array of strings); \"people\" (an array of strings); \"speakers\" (an array of {\"label\", \"name\"}); " +
-            "\"decisions\", \"questions\", \"figures\" (each an array of strings)."
+            "\"decisions\" (an array of strings: what was decided); " +
+            "\"questions\" (an array of strings: questions that still had no answer when the conversation ended, never ones answered later in it); " +
+            "\"figures\" (an array of strings: amounts that matter, money, quantities or counts, each as the amount and what it is for, " +
+            "like '£3,000 for the offsite' or '30 people at the workshop', never a date, a day of the month or a clock time)."
         let reply = try await LLM.complete(c, instructions: json, prompt: prompt)
         guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close else { throw LLMError.empty }
         return try JSONDecoder().decode(Draft.self, from: Data(reply[open...close].utf8))

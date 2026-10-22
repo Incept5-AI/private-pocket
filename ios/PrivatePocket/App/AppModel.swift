@@ -597,7 +597,7 @@ final class AppModel: ObservableObject {
     /// Ticked here, done in Reminders too.
     func setDone(_ r: Recording, item: NextItem, done: Bool) {
         if let id = item.reminderID { Planner.setReminder(id, completed: done) }
-        change(r, item) { $0.done = done }
+        change(r, item) { $0.done = done; $0.doneAt = done ? Date() : nil }
     }
 
     /// "Not mine": gone from the list, and from Reminders or Calendar.
@@ -621,11 +621,22 @@ final class AppModel: ObservableObject {
     }
 
     /// Reads completion back from Reminders, so a tick there shows here.
+    /// A reminder that stands on its own, from Insights: settle something, call someone.
+    func quickReminder(_ title: String, due: Date?, note: String) async -> Bool {
+        do {
+            _ = try await Planner.addReminder(title, due: due, note: note)
+            return true
+        } catch {
+            aiError = error.localizedDescription
+            return false
+        }
+    }
+
     func refreshDone(_ r: Recording) {
         guard let items = r.meta.insight?.next else { return }
         for item in items where item.isAction {
             if let id = item.reminderID, let c = Planner.reminderCompleted(id), c != item.isDone {
-                change(r, item) { $0.done = c }
+                change(r, item) { $0.done = c; $0.doneAt = c ? Date() : nil }
             }
         }
     }
