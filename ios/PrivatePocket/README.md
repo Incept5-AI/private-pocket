@@ -112,7 +112,7 @@ the speakers, identified where they named themselves; a summary written to you; 
 each with Add to Reminders; events, each with Add to Calendar; the transcript, following
 the audio from the player pinned at the bottom; and a field to ask anything about it.
 Tap any sentence or item to hear the words behind it. Nothing needs starting: every
-recording is transcribed and read as it lands. **Insights**: the week or month across moments: a briefing in a few sentences, what needs you now, the threads running through the conversations and where each got to, the people and what stands between you, and the time. **Ask**: questions across
+recording is transcribed and read as it lands. **Insights**: the week or month across moments: a briefing in a few sentences, your days as a chart of work and life, the commitments either way with done against open and overdue in red, what needs you now, what was decided, what was asked and left open, the figures that came up, the threads running through the conversations and where each got to, and the people with when you last spoke and what stands between you. **Ask**: questions across
 recordings. Settings is behind the gear on the Pocket tab, and holds **Your own
 server**: one address and key, used when it answers and left alone when it does not.
 The first launch opens a swipe-only walkthrough of the card itself.
