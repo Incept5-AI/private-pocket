@@ -161,6 +161,13 @@ enum Prefs {
     }
 
     /// Reconnect to the selected Pocket whenever the app is open, so recordings stream.
+    /// Keep the Pocket in the Dynamic Island while connected, so a recording started
+    /// with the side button shows there even with the phone locked.
+    @MainActor static var islandPresence: Bool {
+        get { UserDefaults.standard.object(forKey: "islandPresence") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "islandPresence") }
+    }
+
     @MainActor static var stayConnected: Bool {
         get { UserDefaults.standard.object(forKey: "stayConnected") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "stayConnected") }

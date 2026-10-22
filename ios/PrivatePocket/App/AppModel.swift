@@ -83,9 +83,11 @@ final class AppModel: ObservableObject {
             }
         }
         link.onLiveAudio = { [weak self] data in self?.live.append(data) }
+        activity.note = { [weak self] s in self?.link.note(s) }
         link.onLinkLost = { [weak self] in
             guard let self else { return }
             live.markGap()
+            activity.showWaiting()
             if active {
                 Task { try? await Task.sleep(for: .seconds(2)); await self.ensureConnected() }
             } else {
@@ -93,12 +95,15 @@ final class AppModel: ObservableObject {
             }
         }
         link.onConnected = { [weak self] in
-            self?.link.note("connected in the background")
-            Task { await self?.autoSync() }
+            guard let self else { return }
+            link.note("connected in the background")
+            refreshPresence()
+            Task { await self.autoSync() }
         }
         link.onPaired = { [weak self] d in
             guard let self else { return }
             devices.update(d)   // the key lives in the Keychain; this refreshes the views
+            refreshPresence()
             Task { await self.autoSync(d) }
         }
         link.onRecordingStopped = { [weak self] name in
@@ -123,9 +128,22 @@ final class AppModel: ObservableObject {
         keepAlive = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.ensureConnected()
+                self?.refreshPresence()
                 try? await Task.sleep(for: .seconds(15))
             }
         }
+    }
+
+    /// Keep the Dynamic Island in step with the Pocket: light and battery while
+    /// connected (started only while the app is open, which is iOS's rule), gone when
+    /// the user turns it off or disconnects. Recording is handled by `startActivity`.
+    func refreshPresence() {
+        guard Prefs.islandPresence, let d = connectedDevice, link.isReady else {
+            if !Prefs.islandPresence, !activity.isRecording { activity.end() }
+            return
+        }
+        activity.showReady(device: d, battery: link.status.battery,
+                           hoursFree: link.status.freeMiB.map { PocketFacts.hours(mib: $0) })
     }
 
     private var wantsConnection: DeviceConfig? {
@@ -142,6 +160,7 @@ final class AppModel: ObservableObject {
         guard active else { link.standby(d); return }
         guard link.phase == .idle else { return }
         await link.run("Connecting", quiet: true) { try await link.connect(d) }
+        refreshPresence()
         await autoSync(d)
     }
 
@@ -179,6 +198,7 @@ final class AppModel: ObservableObject {
     func userDisconnect() {
         userDisconnected = true
         link.disconnect()
+        activity.end()
     }
 
     /// Identity to save with a recording; the MAC is known while connected to it.
@@ -233,23 +253,24 @@ final class AppModel: ObservableObject {
 
     private func startActivity(name: String) {
         guard let d = connectedDevice else { return }
-        activity.start(device: d, startedAt: PocketTime.parse(name) ?? Date(), paired: canCommand)
+        activity.showRecording(device: d, startedAt: PocketTime.parse(name) ?? Date(), paired: canCommand)
         activityTicker?.cancel()
         activityTicker = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled else { return }
-                self.activity.update(line: String(self.live.text.suffix(140)), streaming: self.live.isActive,
-                                     gap: self.live.gap, paired: self.canCommand)
+                self.activity.updateRecording(line: String(self.live.text.suffix(140)), streaming: self.live.isActive,
+                                              gap: self.live.gap, paired: self.canCommand)
             }
         }
     }
 
-    /// Ends the activity, showing the saved length if the recording made it to the phone.
+    /// Shows the saved length for a moment, then the Pocket's light and battery again.
     private func endActivity(name: String) {
         activityTicker?.cancel()
         activityTicker = nil
-        activity.end(savedSeconds: library.recordings.first { $0.name == name }?.meta.seconds)
+        activity.showStopped(savedSeconds: library.recordings.first { $0.name == name }?.meta.seconds,
+                             keepPresence: Prefs.islandPresence && connectedDevice != nil)
     }
 
     /// After a stop: keep the streamed copy if it is the whole recording, else

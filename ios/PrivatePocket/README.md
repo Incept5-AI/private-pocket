@@ -23,10 +23,14 @@ goes to Pocket's cloud. See the [top-level README](../../README.md) for the over
   Disconnect, and Add another Pocket. The light, the status pill and the buttons use
   Liquid Glass.
 - **While recording, everywhere.** A bar above the tab bar (an iOS 26 tab accessory) shows
-  the light, the timer, the latest words and Stop on every tab. Outside the app the same
+  the light, the timer, the latest words and Stop on every tab. Outside the app the Pocket
   lives in the Dynamic Island and on the Lock Screen as a Live Activity
-  (`PrivatePocketWidgets`), whose Stop button runs `StopRecordingIntent` in the app.
-  "Start recording on Private Pocket" is an App Shortcut for Siri and the Action button.
+  (`PrivatePocketWidgets`): light and battery while connected, amber with the timer and
+  words while recording, "Saved · 2 min" for a moment after. iOS only lets an app start a
+  Live Activity in the foreground, which is why it is kept while connected rather than
+  started at each recording; it can be turned off in Settings. Its Stop button runs
+  `StopRecordingIntent` in the app. "Start recording on Private Pocket" is an App
+  Shortcut for Siri and the Action button.
 - **Recordings.** Named by place and time, searchable, and filterable by Pocket. Each
   recording has a player, a title, a location, a transcript in a chosen language (with speakers if
   enabled, which you can rename), a summary, and "Ask about this recording".

@@ -15,6 +15,7 @@ struct SettingsView: View {
     @AppStorage("llmModel") private var llmModel = LLMConfig.defaultModel
     @AppStorage("sttRemote") private var sttRemote = LLMConfig.hasDefault
     @State private var stayConnected = Prefs.stayConnected
+    @State private var islandPresence = Prefs.islandPresence
     @AppStorage("sttModel") private var sttModel = RemoteSTT.defaultModel
 
     var body: some View {
@@ -32,11 +33,13 @@ struct SettingsView: View {
                     Button { adding = true } label: { Label("Add device", systemImage: "plus") }
                     Toggle("Stay connected", isOn: $stayConnected)
                         .onChange(of: stayConnected) { Prefs.stayConnected = stayConnected }
+                    Toggle("Show in the Dynamic Island", isOn: $islandPresence)
+                        .onChange(of: islandPresence) { Prefs.islandPresence = islandPresence }
                     NavigationLink { USBView() } label: {
                         Label("USB drive: free up space", systemImage: "externaldrive")
                     }
                 } header: { Text("Pockets") } footer: {
-                    Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected keeps the link up, also in the background, so every recording streams in as it is made. Deleting recordings from a Pocket needs the USB cable.")
+                    Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected keeps the link up, also in the background, so every recording streams in as it is made. The Dynamic Island shows the Pocket's light and battery while connected and turns amber when it records; iOS only lets that start while the app is open, so without it a recording made with the phone locked shows up only once the app is opened. Deleting recordings from a Pocket needs the USB cable.")
                 }
 
                 Section {
