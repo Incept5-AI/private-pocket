@@ -480,27 +480,31 @@ struct MomentCard: View {
         let when = [showTime ? r.startedAt?.formatted(date: .omitted, time: .shortened) : nil,
                     r.meta.seconds.map { PocketFacts.length($0) }].compactMap { $0 }.joined(separator: " · ")
         let foot = [r.subline, device].compactMap { $0 }.joined(separator: " · ")
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                KindChip(kind: r.kind)
-                Spacer(minLength: 6)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                KindChip(kind: r.kind).layoutPriority(1)
+                Spacer(minLength: 8)
                 if model.working.contains(r.id) { ProgressView().controlSize(.small) }
-                Text(when).font(.caption).foregroundStyle(Brand.muted).fixedSize()
+                Text(when).font(.caption.monospacedDigit()).foregroundStyle(Brand.muted).lineLimit(1)
             }
             Text(r.quote)
                 .font(.body.weight(.medium))
                 .lineLimit(2)
                 .foregroundStyle(r.meta.transcript == nil && r.meta.title == nil ? Brand.muted : Brand.text)
             if !foot.isEmpty || verdict != nil {
-                HStack(spacing: 8) {
+                HStack(alignment: .center, spacing: 10) {
                     if !foot.isEmpty { Text(foot).font(.caption).foregroundStyle(Brand.muted).lineLimit(1) }
-                    Spacer(minLength: 6)
+                    Spacer(minLength: 8)
                     if let v = verdict {
-                        Label(v.text, systemImage: v.ok ? "checkmark" : "xmark")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(v.ok ? Brand.good : Brand.bad)
-                            .lineLimit(1)
-                            .fixedSize()
+                        HStack(spacing: 4) {
+                            Image(systemName: v.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            Text(v.text)
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(v.ok ? Brand.good : Brand.bad)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .layoutPriority(1)
                     }
                 }
             }

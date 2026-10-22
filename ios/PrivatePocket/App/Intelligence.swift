@@ -96,18 +96,21 @@ extension Recording {
     }
 }
 
-/// The kind as a small chip, in the kind's colour.
+/// The kind as a small chip, in the kind's colour. Built from an icon and a text rather
+/// than a Label, which drops its title when given a fixed size inside a list row.
 struct KindChip: View {
     let kind: MomentKind
 
     var body: some View {
-        Label(kind.label, systemImage: kind.symbol)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(kind.colour)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .padding(.horizontal, 9).padding(.vertical, 4)
-            .background(kind.colour.opacity(0.14), in: Capsule())
+        HStack(spacing: 5) {
+            Image(systemName: kind.symbol).font(.caption2.weight(.semibold))
+            Text(kind.label).font(.caption.weight(.semibold))
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .foregroundStyle(kind.colour)
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(kind.colour.opacity(0.14), in: Capsule())
     }
 }
 
