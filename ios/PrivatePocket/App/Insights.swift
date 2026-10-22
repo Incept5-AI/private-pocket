@@ -316,7 +316,7 @@ enum Findings {
 
     /// A promise that fell due, or is a week old, with nothing recorded with that person since.
     private static func goneQuiet(_ recent: [Recording], all: [Recording], now: Date, cal: Calendar) -> [Finding] {
-        var out: [Finding] = []
+        var lapsed: [(who: String, days: Int, said: Date, r: Recording, item: NextItem)] = []
         for r in recent {
             guard let said = r.startedAt else { continue }
             for item in r.meta.insight?.items ?? [] where item.isPromise && !item.isDone && !item.isDismissed {
@@ -327,20 +327,27 @@ enum Findings {
                 let after = max(said, item.date ?? said)
                 let since = all.contains { ($0.startedAt ?? .distantPast) > after && $0.people.contains { $0.caseInsensitiveCompare(who) == .orderedSame } }
                 guard !since else { continue }
-                let days = Int(now.timeIntervalSince(item.date ?? said) / 86_400)
-                let text: String
-                if let due = item.date {
-                    let past = days == 0 ? "due today" : "\(days) day\(days == 1 ? "" : "s") past due"
-                    text = "\(who) said “\(item.text)”, due \(dayName(due, cal)). It is \(past), and nothing with \(who) has been recorded since."
-                } else {
-                    text = "\(who) said “\(item.text)” \(days) days ago, and nothing with \(who) has been recorded since."
-                }
-                out.append(Finding(id: "quiet/\(r.id)/\(item.id)", tag: "Gone quiet", tint: Brand.record, text: text,
-                                   visual: .lapse(said: said, due: item.date, now: now),
-                                   choices: [Choice(label: item.reminderID == nil ? "Remind me to chase" : "Reminder set", action: .chase(r, item)),
-                                             Choice(label: "Open", action: .open(ids: [r.id], title: r.displayTitle))],
-                                   weight: 100 - min(days, 20)))
+                lapsed.append((who, Int(now.timeIntervalSince(item.date ?? said) / 86_400), said, r, item))
             }
+        }
+        // One card per person: the oldest lapse leads, the rest are counted.
+        var out: [Finding] = []
+        let byWho = Dictionary(grouping: lapsed) { $0.who.lowercased() }
+        for group in byWho.values {
+            guard let lead = group.max(by: { $0.days < $1.days }) else { continue }
+            let more = group.count > 1 ? ", with \(group.count - 1) more promise\(group.count == 2 ? "" : "s") open" : ""
+            let text: String
+            if let due = lead.item.date {
+                let past = lead.days == 0 ? "due today" : "\(lead.days) day\(lead.days == 1 ? "" : "s") past due"
+                text = "\(lead.who) said “\(lead.item.text)”, due \(dayName(due, cal)). It is \(past)\(more), and nothing with \(lead.who) has been recorded since."
+            } else {
+                text = "\(lead.who) said “\(lead.item.text)” \(lead.days) days ago\(more), and nothing with \(lead.who) has been recorded since."
+            }
+            out.append(Finding(id: "quiet/\(lead.who.lowercased())", tag: "Gone quiet", tint: Brand.record, text: text,
+                               visual: .lapse(said: lead.said, due: lead.item.date, now: now),
+                               choices: [Choice(label: lead.item.reminderID == nil ? "Remind me to chase" : "Reminder set", action: .chase(lead.r, lead.item)),
+                                         Choice(label: "Open", action: .open(ids: [lead.r.id], title: lead.r.displayTitle))],
+                               weight: 100 - min(lead.days, 20)))
         }
         return Array(out.sorted { $0.weight > $1.weight }.prefix(2))
     }
@@ -506,7 +513,8 @@ enum Findings {
         let recording: Recording
     }
 
-    private static let figureStop: Set<String> = ["the", "and", "for", "with", "per", "about", "around", "roughly", "each", "from", "that", "this", "was", "were", "are", "will", "would", "been", "have", "has", "had", "they", "them", "their", "you", "your", "our", "its", "all", "than", "more", "less", "over", "under", "just", "only", "some", "into", "onto"]
+    private static let figureStop: Set<String> = ["the", "and", "for", "with", "per", "about", "around", "roughly", "each", "from", "that", "this", "was", "were", "are", "will", "would", "been", "have", "has", "had", "they", "them", "their", "you", "your", "our", "its", "all", "than", "more", "less", "over", "under", "just", "only", "some", "into", "onto",
+                                                  "people", "person", "persons", "hours", "hour", "days", "day", "weeks", "week", "months", "month", "years", "year", "minutes", "minute", "pounds", "dollars", "euros", "percent", "times", "units", "items", "things", "spaces", "seats", "places", "taken", "left"]
     private static let months = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
     private static func parse(_ line: Digest.Line) -> Fig? {

@@ -104,7 +104,7 @@ struct MomentInsight: Codable, Hashable {
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 4
+    static let readerVersion = 5
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -348,9 +348,10 @@ enum Analyst {
                 guard !seen.contains(key) else { continue }
                 seen.insert(key)
                 let when = clean(it.when).isEmpty ? nil : clean(it.when)
-                let who = clean(it.who).isEmpty || isLabel(clean(it.who)) ? nil : clean(it.who)
+                let who = cleanWho(it.who)
                 let place = clean(it.place).isEmpty ? nil : clean(it.place)
-                let found = when.flatMap(Planner.dateAndDuration(in:)) ?? (kind == "date" ? Planner.dateAndDuration(in: text) : nil)
+                let said = r.startedAt
+                let found = when.flatMap { Planner.dateAndDuration(in: $0, said: said) } ?? (kind == "date" ? Planner.dateAndDuration(in: text, said: said) : nil)
                 let title = kind == "date" ? eventTitle(text, place: place) : text
                 let quote = clean(it.quote).isEmpty ? nil : clean(it.quote)
                 items.append(NextItem(kind: kind, text: title, who: who, when: when, date: found?.date, at: anchor(quote), quote: quote,
@@ -365,7 +366,7 @@ enum Analyst {
         out.decisions = unique(drafts.flatMap { $0.decisions ?? [] }, cap: 6)
         out.questions = unique(drafts.flatMap { $0.questions ?? [] }, cap: 5)
         out.figures = unique(drafts.flatMap { $0.figures ?? [] }, cap: 8)
-        out.people = unique((drafts.flatMap { $0.people ?? [] } + out.people).filter { !isLabel($0) }, cap: 10)
+        out.people = unique((drafts.flatMap { $0.people ?? [] } + out.people).filter(isPerson), cap: 10)
 
         var inferred: [String: String] = [:]
         for d in drafts {
@@ -423,6 +424,25 @@ enum Analyst {
     static func isLabel(_ s: String) -> Bool {
         let t = s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
         return t.hasPrefix("speaker ") || t == "speaker" || t.hasPrefix("unknown speaker")
+    }
+
+    private static let selfWords: Set<String> = ["you", "me", "i", "myself", "recorder", "the recorder", "user", "the user", "speaker", "everyone", "everybody", "team", "the team", "the board", "all"]
+
+    /// A name: capitalised, not a label, not the user, not a group.
+    static func isPerson(_ s: String) -> Bool {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let f = t.first, f.isUppercase, !isLabel(t) else { return false }
+        return !selfWords.contains(t.lowercased())
+    }
+
+    /// Who an item names, with the user and labels taken out: "Ravi and Recorder" is Ravi.
+    static func cleanWho(_ raw: String?) -> String? {
+        let parts = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: " & ", with: " and ").components(separatedBy: " and ")
+            .flatMap { $0.components(separatedBy: ", ") }
+            .map { $0.trimmingCharacters(in: CharacterSet.whitespaces) }
+            .filter(isPerson)
+        return parts.isEmpty ? nil : parts.joined(separator: " and ")
     }
 
     private static func unique(_ items: [String], cap: Int) -> [String] {
@@ -502,7 +522,9 @@ enum Planner {
         let ns = text as NSString
         var out: [Found] = []
         for m in detector.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-            guard let d = m.date, d > after else { continue }
+            guard let raw = m.date else { continue }
+            let d = rebase(raw, phrase: ns.substring(with: m.range), said: after)
+            guard d > after else { continue }
             let from = max(0, m.range.location - 36)
             let range = NSRange(location: from, length: min(ns.length - from, m.range.length + (m.range.location - from)))
             let words = ns.substring(with: range).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -516,12 +538,39 @@ enum Planner {
     static func date(in line: String) -> Date? { dateAndDuration(in: line)?.date }
 
     /// The first date in a line, and how long when a span like "nine till four" was said.
-    static func dateAndDuration(in line: String) -> (date: Date, duration: Double?)? {
+    static func dateAndDuration(in line: String, said: Date? = nil) -> (date: Date, duration: Double?)? {
         guard let detector else { return nil }
         for m in detector.matches(in: line, range: NSRange(location: 0, length: (line as NSString).length)) {
-            if let d = m.date { return (d, m.duration > 0 ? m.duration : nil) }
+            if let d = m.date { return (rebase(d, phrase: line, said: said), m.duration > 0 ? m.duration : nil) }
         }
         return nil
+    }
+
+    private static let absoluteDate = try? NSRegularExpression(
+        pattern: #"\b\d{1,2}(st|nd|rd|th)\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b|\b\d{1,2}\s+(of\s+)?(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|\b20\d{2}\b|\b\d{1,2}/\d{1,2}"#,
+        options: .caseInsensitive)
+    private static let weekdayNames = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+
+    /// The detector reads a phrase from today. One said on another day is moved back to
+    /// it: "tomorrow" in a call ten days ago was the day after the call. A phrase with a
+    /// day of the month, a month or a year stands as it is; a weekday keeps its weekday.
+    static func rebase(_ d: Date, phrase: String, said: Date?) -> Date {
+        guard let said else { return d }
+        let cal = Calendar.current
+        let delta = cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: said)).day ?? 0
+        guard delta != 0 else { return d }
+        let lower = phrase.lowercased()
+        if let re = absoluteDate, re.firstMatch(in: lower, range: NSRange(location: 0, length: (lower as NSString).length)) != nil { return d }
+        guard var moved = cal.date(byAdding: .day, value: delta, to: d) else { return d }
+        if weekdayNames.contains(where: { lower.contains($0) }) {
+            let want = cal.component(.weekday, from: d)
+            var k = 0
+            while cal.component(.weekday, from: moved) != want, k < 7 {
+                moved = cal.date(byAdding: .day, value: 1, to: moved) ?? moved
+                k += 1
+            }
+        }
+        return moved
     }
 
     // Reminders
