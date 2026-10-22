@@ -71,7 +71,7 @@ struct MomentView: View {
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom) { PlayerBar(player: player, envelope: envelope, marks: marks(r)) }
+            .safeAreaInset(edge: .bottom) { PlayerBar(player: player, envelope: envelope) }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -122,8 +122,6 @@ struct MomentView: View {
             ContentUnavailableView("Moment deleted", systemImage: "trash")
         }
     }
-
-    private func marks(_ r: Recording) -> [Double] { (r.meta.insight?.keyLines ?? []).compactMap(\.at) }
 
     /// What is happening, by itself, until the moment is ready.
     @ViewBuilder private func stage(_ r: Recording) -> some View {
@@ -474,12 +472,10 @@ struct NextRow: View {
 
 // MARK: - The recording
 
-/// Play, the shape of the audio with the lines that mattered marked on it, and the way
-/// into listening and finding.
+/// Play, and the shape of the audio: grey until played, amber once played; drag to seek.
 struct PlayerBar: View {
     @ObservedObject var player: Player
     let envelope: [Float]
-    let marks: [Double]
 
     var body: some View {
         let total = max(player.duration, 0.1)
@@ -491,7 +487,7 @@ struct PlayerBar: View {
             }
             .buttonStyle(.plain)
             VStack(spacing: 4) {
-                WaveformView(envelope: envelope, progress: player.position / total, marks: marks.map { $0 / total }) { player.seek($0 * total) }
+                WaveformView(envelope: envelope, progress: player.position / total) { player.seek($0 * total) }
                     .frame(height: 26)
                 HStack {
                     Text(Speakers.stamp(player.position))
@@ -510,7 +506,6 @@ struct PlayerBar: View {
 struct WaveformView: View {
     let envelope: [Float]
     let progress: Double
-    let marks: [Double]
     let seek: (Double) -> Void
 
     var body: some View {
@@ -529,13 +524,10 @@ struct WaveformView: View {
                         let j = min(envelope.count - 1, i * envelope.count / n)
                         v = CGFloat(max(envelope[j], 0.06))
                     }
-                    let h = max(3, v * (size.height - 6))
+                    let h = max(4, v * (size.height - 4))
                     let x = CGFloat(i) * (bw + gap)
                     ctx.fill(Path(roundedRect: CGRect(x: x, y: (size.height - h) / 2, width: bw, height: h), cornerRadius: bw / 2),
-                             with: .color(i < lit ? Brand.record : Brand.hairline))
-                }
-                for m in marks where m >= 0 && m <= 1 {
-                    ctx.fill(Path(ellipseIn: CGRect(x: size.width * CGFloat(m) - 2.5, y: 0, width: 5, height: 5)), with: .color(Brand.record))
+                             with: .color(i < lit ? Brand.record : Color.white.opacity(0.3)))
                 }
             }
             .contentShape(Rectangle())
