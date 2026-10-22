@@ -228,7 +228,7 @@ struct PocketView: View {
                 LightDot(state: .pairing).frame(width: 12, height: 12)
                 Text(link.keyRejected ? "Pair again" : "Pair your Pocket").font(.headline)
             }
-            Text("Hold the side button for 5 seconds, until the light blinks blue. The app tries to pair every few seconds while it is open, so within a moment the light turns solid and this card goes away.")
+            Text("Hold the side button for 5 seconds, until the light blinks blue. The app pairs the moment it sees that, the light turns solid, and this card goes away.")
                 .font(.subheadline).foregroundStyle(Brand.muted)
             Text(link.keyRejected
                  ? "Your Pocket no longer accepts this phone's key, which happens after a reset. Recordings started with the side button still stream in meanwhile."
@@ -315,11 +315,12 @@ struct PocketView: View {
 
     private var light: LightState {
         if recording { return .recording }
-        guard isConnected else { return .off }
+        guard isConnected || (link.bouncingAfterKey && !paired) else { return .off }
         return paired ? .on : .pairing
     }
 
     private var statusText: String {
+        if link.bouncingAfterKey, !paired { return "Connected, not paired yet" }   // a refused key bounces the link; it is back in a moment
         switch link.phase {
         case .idle: return model.userDisconnected ? "Disconnected" : "Not connected"
         case .waiting: return "Waiting for your Pocket"

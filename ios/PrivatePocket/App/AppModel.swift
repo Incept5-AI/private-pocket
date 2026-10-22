@@ -169,8 +169,10 @@ final class AppModel: ObservableObject {
         guard link.isReady, !canCommand, link.status.recordingSince == nil else { return }
         if case .busy = link.phase { return }   // never on top of another command
         pairTicks += 1
-        guard pairTicks <= 8 || pairTicks % 4 == 0 else { return }
-        await link.run("Pairing", quiet: true) { try await link.tryPairing(quiet: true) }
+        // Holding the button makes the Pocket drop the link, and that drop triggers a try
+        // at once (`handshake`). This is only the safety net, once a minute, and quiet.
+        guard pairTicks % 4 == 0 else { return }
+        try? await link.tryPairing(quiet: true)
     }
 
     /// Keep the Dynamic Island in step with the Pocket: light and battery while

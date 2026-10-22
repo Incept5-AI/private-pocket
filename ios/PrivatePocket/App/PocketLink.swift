@@ -89,6 +89,9 @@ final class PocketLink: NSObject, ObservableObject {
     /// The link then carries on without a key, so recordings still stream, and tries
     /// to pair afresh on each new connection until the user holds the button.
     @Published private(set) var keyRejected = false
+    /// The Pocket dropped the link right after refusing a key: the reconnect that follows
+    /// is housekeeping, so the screen need not flicker through it.
+    @Published private(set) var bouncingAfterKey = false
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -265,6 +268,7 @@ final class PocketLink: NSObject, ObservableObject {
         }
         phase = .ready
         connectedDeviceID = d.id
+        bouncingAfterKey = false
     }
 
     func disconnect() {
@@ -311,6 +315,7 @@ final class PocketLink: NSObject, ObservableObject {
         standbyDevice = nil
         phase = .ready
         connectedDeviceID = d.id
+        bouncingAfterKey = false
         Task {
             await run("Connecting", quiet: true) { try await handshake() }
             if isReady { onConnected?() }
@@ -343,7 +348,7 @@ final class PocketLink: NSObject, ObservableObject {
         status = DeviceStatus(battery: status.battery)
         if pairAttemptPending {
             pairAttemptPending = false
-            try await tryPairing(quiet: true)
+            try await tryPairing(quiet: true, force: true)
         }
     }
 
@@ -354,9 +359,9 @@ final class PocketLink: NSObject, ObservableObject {
     /// Outside pairing mode a wrong key drops the link, which costs a reconnect and
     /// nothing else: the link had no key anyway. Skipped while the Pocket records, so a
     /// stream started with the button is never cut.
-    func tryPairing(quiet: Bool) async throws {
+    func tryPairing(quiet: Bool, force: Bool = false) async throws {
         guard let d = device, isReady, status.recordingSince == nil, !pairing,
-              !quiet || Date().timeIntervalSince(lastPairTryAt) > 8 else { return }
+              force || !quiet || Date().timeIntervalSince(lastPairTryAt) > 8 else { return }
         pairing = true
         defer { pairing = false }
         lastPairTryAt = Date()
@@ -619,8 +624,10 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
             note("disconnected")
             // A drop the Pocket made on its own, not on a key just sent, may mean it was
             // put into pairing mode: worth a fresh key on the next connection.
-            if Date().timeIntervalSince(lastKeySentAt) > 3 { pairAttemptPending = true }
+            let afterKey = Date().timeIntervalSince(lastKeySentAt) <= 3
+            if !afterKey { pairAttemptPending = true }
             disconnect()
+            bouncingAfterKey = afterKey
             onLinkLost?()
         }
     }
