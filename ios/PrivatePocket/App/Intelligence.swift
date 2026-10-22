@@ -155,7 +155,8 @@ enum Analyst {
     You read the transcript of one recorded conversation, phone call or voice note, and say what it was and what came out of it. \
     The transcript may be in any language; write the title and the items in that language. \
     Use only what is in the text. Do not invent names, dates or tasks. Keep every item short. \
-    People are real names only: never list labels like Speaker 1 or Speaker 2 as people.
+    People are real names only: never list labels like Speaker 1 or Speaker 2 as people. \
+    Write each action as a short imperative without naming who does it; things other people said they would do go under promises, not actions.
     """
 
     /// The whole transcript, in parts if it is long, merged into one reading.
@@ -192,12 +193,22 @@ enum Analyst {
         for k in kinds { tally[k, default: 0] += 1 }
         if let k = tally.max(by: { $0.value < $1.value })?.key { out.kind = k.rawValue }
         out.title = drafts.compactMap { $0.title?.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty }
-        out.actions = unique(drafts.flatMap { $0.actions ?? [] }, cap: 10)
-        out.promises = unique(drafts.flatMap { $0.promises ?? [] }, cap: 8)
-        out.upcoming = unique(drafts.flatMap { $0.upcoming ?? [] } + base.upcoming, cap: 8)
+        out.actions = unique(drafts.flatMap { $0.actions ?? [] }.map(unlabelled), cap: 10)
+        out.promises = unique(drafts.flatMap { $0.promises ?? [] }.map(unlabelled), cap: 8)
+        // The model's own dates when it found any; the date detector's only as a fallback.
+        let upcoming = unique(drafts.flatMap { $0.upcoming ?? [] }, cap: 8)
+        out.upcoming = upcoming.isEmpty ? base.upcoming : upcoming
         out.people = unique((drafts.flatMap { $0.people ?? [] } + base.people).filter { !isLabel($0) }, cap: 10)
         out.source = "model"
         return out
+    }
+
+    /// "Speaker 2 to bring a tube" → "Bring a tube".
+    static func unlabelled(_ s: String) -> String {
+        let pattern = #"^\s*speaker\s+\w+\s+(to|will|should|is to|needs to|has to)\s+"#
+        guard let r = s.range(of: pattern, options: [.regularExpression, .caseInsensitive]) else { return s }
+        let rest = String(s[r.upperBound...])
+        return rest.prefix(1).uppercased() + rest.dropFirst()
     }
 
     /// "Speaker 2", "speaker one": a transcript label, not a person.

@@ -58,6 +58,11 @@ struct SamplesView: View {
                         Task { await model.rerunSamples(); running = false }
                     } label: { Label("Transcribe and read again", systemImage: "arrow.clockwise") }
                         .disabled(running)
+                    Button {
+                        running = true
+                        Task { await model.rereadSamples(); running = false }
+                    } label: { Label("Read again, keeping the transcripts", systemImage: "text.magnifyingglass") }
+                        .disabled(running)
                     Button("Remove sample moments", role: .destructive) { model.removeSamples() }
                         .disabled(running)
                 } footer: {

@@ -71,6 +71,13 @@ extension AppModel {
         }
     }
 
+    /// Reads every sample again, keeping the transcripts: for trying a change to the reader.
+    func rereadSamples() async {
+        for s in SampleMoments.all() {
+            if let r = sampleRecording(s), r.meta.transcript != nil { await analyse(r, quiet: true) }
+        }
+    }
+
     func removeSamples() {
         library.recordings.filter { $0.meta.sampleID != nil }.forEach(library.delete)
     }
