@@ -161,23 +161,21 @@ struct HoldRing: View {
 
 struct PairPage: View {
     @EnvironmentObject var model: AppModel
-    @State private var paired = false
+    @State private var waited = false
 
     var body: some View {
-        let done = model.canCommand || paired
+        let done = model.canCommand
         WalkPage(glow: Lamp.ready,
                  headline: done ? "Paired. Solid blue." : "Pairing. Keep it close…",
-                 line: model.canCommand ? "Your Pocket is paired with this iPhone. Nothing to type, ever."
-                     : done ? "Pocket and your iPhone know each other now. Nothing to type, ever." : "The app does it by itself, while this is open.") {
+                 line: done ? "Pocket and your iPhone know each other now. Nothing to type, ever."
+                     : waited ? "The app does it by itself while it is open. If the light has stopped blinking, hold the side button again for five seconds."
+                              : "The app does it by itself while it is open.") {
             PocketIllustration(light: Lamp.ready, blink: !done)
         }
+        .animation(.easeInOut(duration: 0.4), value: done)
         .task {
-            while !Task.isCancelled {
-                withAnimation { paired = false }
-                guard await hold(2.6) else { return }
-                withAnimation { paired = true }
-                guard await hold(3.2) else { return }
-            }
+            guard await hold(12) else { return }
+            withAnimation { waited = true }
         }
     }
 }

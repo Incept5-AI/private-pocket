@@ -110,6 +110,9 @@ final class PocketLink: NSObject, ObservableObject {
     private var lastKeySentAt = Date.distantPast
     /// When the stored key was last refused, so it can be tried again after a while.
     private var rejectedAt = Date.distantPast
+    /// One pairing try at a time, and automatic ones no closer than 8 s apart.
+    private var pairing = false
+    private var lastPairTryAt = Date.distantPast
     /// Called when a key was accepted, with the device that now holds it.
     var onPaired: ((DeviceConfig) -> Void)?
 
@@ -171,6 +174,10 @@ final class PocketLink: NSObject, ObservableObject {
     /// with an error if the Pocket is not in pairing mode.
     func pair(_ d: DeviceConfig) async throws {
         if !(connectedDeviceID == d.id && isReady) { try await establish(d) }
+        guard !pairing else { return }
+        pairing = true
+        defer { pairing = false }
+        lastPairTryAt = Date()
         try await tryNewKey(d, quiet: false)
     }
 
@@ -344,7 +351,11 @@ final class PocketLink: NSObject, ObservableObject {
     /// nothing else: the link had no key anyway. Skipped while the Pocket records, so a
     /// stream started with the button is never cut.
     func tryPairing(quiet: Bool) async throws {
-        guard let d = device, isReady, status.recordingSince == nil else { return }
+        guard let d = device, isReady, status.recordingSince == nil, !pairing,
+              !quiet || Date().timeIntervalSince(lastPairTryAt) > 8 else { return }
+        pairing = true
+        defer { pairing = false }
+        lastPairTryAt = Date()
         let key = d.sessionKey
         if !key.isEmpty, !keyRejected || Date().timeIntervalSince(rejectedAt) > 45 {
             do { try await sendKey(key) } catch PocketError.rejected {
@@ -526,6 +537,7 @@ final class PocketLink: NSObject, ObservableObject {
 
     func note(_ s: String) {
         log.append("\(Date().formatted(date: .omitted, time: .standard))  \(s)")
+        DiskLog.append(s)
         if log.count > 300 { log.removeFirst(log.count - 300) }
     }
 }

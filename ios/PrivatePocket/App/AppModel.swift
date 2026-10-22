@@ -158,6 +158,7 @@ final class AppModel: ObservableObject {
     /// which `ensureConnected` restores a moment later.
     private func keepPairing() async {
         guard link.isReady, !canCommand, link.status.recordingSince == nil else { return }
+        if case .busy = link.phase { return }   // never on top of another command
         pairTicks += 1
         guard pairTicks <= 8 || pairTicks % 4 == 0 else { return }
         await link.run("Pairing", quiet: true) { try await link.tryPairing(quiet: true) }

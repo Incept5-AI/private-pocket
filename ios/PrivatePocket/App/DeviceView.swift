@@ -436,6 +436,7 @@ struct PocketDetails: View {
                     Text("Recording time assumes the Pocket's 32 kbps audio, about 14 MB an hour.")
                 }
                 Section("Protocol log") {
+                    ShareLink(item: DiskLog.url) { Label("Share the full log", systemImage: "square.and.arrow.up") }
                     ForEach(Array(link.log.suffix(80).reversed().enumerated()), id: \.offset) { _, line in
                         Text(line).font(.caption.monospaced())
                     }
