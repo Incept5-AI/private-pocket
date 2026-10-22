@@ -428,7 +428,9 @@ enum Findings {
         let prev: (done: Int, total: Int)? = previous.flatMap { $0.yours.count >= 2 ? ($0.yoursDone.count, $0.yours.count) : nil }
         var text = "You have done \(done) of the \(total) things you took on \(thisSpan)."
         if let prev { text += " \(lastSpan.capitalizedFirst): \(prev.done) of \(prev.total)." }
-        if done * 3 < total, let oldest = d.yoursOpen.compactMap({ $0.0.startedAt }).min() { text += " The oldest still open is from \(dayName(oldest))." }
+        if done * 3 < total, let oldest = d.yoursOpen.compactMap({ $0.0.startedAt }).min(), !Calendar.current.isDateInToday(oldest) {
+            text += " The oldest still open is from \(dayName(oldest))."
+        }
         let open = d.yoursOpen.filter { $0.1.reminderID == nil }
         var choices = [Choice(label: "See them", action: .record(.commitments))]
         if !open.isEmpty { choices.insert(Choice(label: open.count == 1 ? "Add it to Reminders" : "Add the open ones to Reminders", action: .placeAll(open)), at: 0) }
@@ -462,7 +464,8 @@ enum Findings {
                            visual: .growth(open: open, labels: Array(labels)),
                            choices: [Choice(label: "See them", action: .record(.commitments))], weight: 75)
         }
-        if total >= 4, let peak = (0...today).max(by: { taken[$0] < taken[$1] }), taken[peak] * 2 >= total, taken[peak] >= 3 {
+        let busyDays = taken.filter { $0 > 0 }.count
+        if total >= 4, busyDays >= 2, let peak = (0...today).max(by: { taken[$0] < taken[$1] }), taken[peak] * 2 >= total, taken[peak] >= 3 {
             return Finding(id: "spike", tag: "Load", tint: Brand.act,
                            text: "\(d.days[peak].date.formatted(.dateTime.weekday(.wide))) alone added \(taken[peak]) of the \(total) things you took on \(thisSpan).",
                            visual: .spike(intake: Array(taken.prefix(today + 1)), labels: Array(labels), peak: peak),

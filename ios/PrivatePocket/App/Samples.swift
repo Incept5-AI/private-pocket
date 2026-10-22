@@ -47,7 +47,9 @@ extension AppModel {
         var added: [Recording] = []
         for (i, s) in samples.enumerated() where sampleRecording(s) == nil {
             guard let url = SampleMoments.audioURL(s), let audio = try? Data(contentsOf: url) else { continue }
-            let start = Date().addingTimeInterval(-Double(samples.count - i) * 50 * 60)
+            // Spread over the last eleven days, a day and a half apart, so Insights has a
+            // week to compare with and promises that have had time to fall due.
+            let start = Date().addingTimeInterval(-Double(samples.count - 1 - i) * 36 * 3600 - 2 * 3600)
             let name = s.mode == "CALL" ? "PH" + PocketTime.shortName.string(from: start) : PocketTime.fileName.string(from: start)
             do {
                 var r = try library.save(device: deviceID, day: PocketTime.day.string(from: start), name: name, audio: audio,
@@ -79,7 +81,22 @@ extension AppModel {
     }
 
     func removeSamples() {
-        library.recordings.filter { $0.meta.sampleID != nil }.forEach(library.delete)
+        for r in library.recordings where r.meta.sampleID != nil {
+            for item in r.meta.insight?.next ?? [] {
+                if let id = item.reminderID { Planner.removeReminder(id) }
+                if let id = item.eventID { Planner.removeEvent(id) }
+            }
+            library.delete(r)
+        }
+    }
+
+    /// Samples added before they were spread over eleven days are added again, once.
+    func respreadSamples() async {
+        guard !UserDefaults.standard.bool(forKey: "samplesSpread") else { return }
+        UserDefaults.standard.set(true, forKey: "samplesSpread")
+        guard library.recordings.contains(where: { $0.meta.sampleID != nil }) else { return }
+        removeSamples()
+        await addSamples()
     }
 
     /// Your correction of what a moment was; nil goes back to the model's reading.

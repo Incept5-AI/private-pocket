@@ -676,6 +676,7 @@ final class AppModel: ObservableObject {
     /// nothing should need a tap to become a moment. Each is tried once per session.
     func transcribeWhatLanded() async {
         await ServerStatus.shared.check()
+        await respreadSamples()
         for r in library.recordings where r.meta.transcript == nil && !working.contains(r.id) && !sweptThisSession.contains(r.id) {
             sweptThisSession.insert(r.id)
             await transcribe(r, quiet: true)
