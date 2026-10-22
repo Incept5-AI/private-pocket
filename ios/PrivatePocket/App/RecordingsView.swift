@@ -76,7 +76,7 @@ struct RecordingsView: View {
                 .background(Brand.ground)
                 .scrollIndicators(.hidden)
                 .overlay(alignment: .trailing) {
-                    if grouped.count >= 3, search.isEmpty {
+                    if shown.count >= 2, search.isEmpty {
                         TimeRail(moments: shown.compactMap { r in r.startedAt.map { (id: r.id, at: $0) } }) { id in
                             withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .top) }
                         }
