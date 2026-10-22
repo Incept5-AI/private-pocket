@@ -97,7 +97,7 @@ App sources are in `App/`. `Shared/` is compiled into both the app and the `Priv
 ## Server defaults and gotchas
 
 - **No hard-coded servers.** Defaults come from `ble/.env` via `gen-defaults.sh`, into the generated `DefaultServer` enum: `SERVER_URL`, models, `DIARIZE_URLS` and the key. If `SERVER_URL` is empty, `LLMConfig.hasDefault` is false: STT, the LLM and speakers default to off/on-device and the "Reset to …" buttons are hidden. Never put a real URL, hostname or key in Swift.
-- **Testing a key:** many gateways serve `/models` without auth, so the STT test sends a real 1 s silent WAV instead.
+- **Testing a key:** many gateways serve `/models` without auth, so the STT test sends a real 1 s silent WAV instead. That same `/models` answer is where the model pickers come from: `ServerStatus.check` keeps the list (`ModelList.parse`), `ServerFields` fetches it for its own URL and key, and `ModelList.ordered` puts speech models first for speech to text. A server that lists nothing leaves a text field.
 - **Whisper input:** whisper.cpp accepts mp3 and wav, but not m4a.
 - **Diarisation contract:** `POST <base>/audio/diarize`, multipart `file` + `preset`, returning `{segments:[{start,end,speaker}]}`. Several base URLs are tried in order; 404/5xx/unreachable moves to the next.
 - **Plain http:** `NSAllowsArbitraryLoads` is on so private-network `http://` servers work.

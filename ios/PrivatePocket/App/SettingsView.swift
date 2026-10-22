@@ -124,27 +124,55 @@ struct SettingsView: View {
     }
 }
 
-/// URL, model and key for an OpenAI-compatible server, with a reset to the build's default server.
+/// URL, model and key for an OpenAI-compatible server. The model is picked from the
+/// list the server gives (GET /models) once it answers, typed until then; and a reset
+/// to the build's default server.
 struct ServerFields: View {
     @Binding var url: String
     @Binding var model: String
     @Binding var key: String
+    /// Build-time suggestions, offered until the server lists its own.
     var models: [String] = []
     var modelExample = "model name"
     var keyPrompt = "API key"
+    /// The speech-to-text page: speech models first.
+    var speech = false
+    /// Lists models with this key when the page's own is blank (the language model's).
+    var fallbackKey = ""
     let reset: () -> Void
     @State private var showKey = false
+    @State private var listed: [String] = []
+    @State private var listing = false
+
+    private var options: [String] { ModelList.ordered(listed, speech: speech, keeping: model) }
 
     var body: some View {
         TextField("URL, e.g. https://llm.example.com/v1", text: $url)
             .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-        HStack {
-            TextField("Model, e.g. \(modelExample)", text: $model).textInputAutocapitalization(.never).autocorrectionDisabled()
-            if !models.isEmpty {
-                Menu {
-                    ForEach(models, id: \.self) { m in Button(m) { model = m } }
-                } label: { Image(systemName: "chevron.up.chevron.down") }
+            .task(id: "\(url)|\(key)|\(fallbackKey)") {
+                try? await Task.sleep(for: .seconds(0.7))
+                guard !Task.isCancelled else { return }
+                listing = true
+                listed = (try? await ModelList.fetch(url: url, key: key.isEmpty ? fallbackKey : key)) ?? []
+                listing = false
+                if model.isEmpty, let first = options.first { model = first }
             }
+        if listed.isEmpty {
+            HStack {
+                TextField("Model, e.g. \(modelExample)", text: $model).textInputAutocapitalization(.never).autocorrectionDisabled()
+                if listing {
+                    ProgressView().controlSize(.small)
+                } else if !models.isEmpty {
+                    Menu {
+                        ForEach(models, id: \.self) { m in Button(m) { model = m } }
+                    } label: { Image(systemName: "chevron.up.chevron.down") }
+                }
+            }
+        } else {
+            Picker("Model", selection: $model) {
+                ForEach(options, id: \.self) { Text($0).tag($0) }
+            }
+            .pickerStyle(.navigationLink)
         }
         HStack {
             Group {
@@ -212,7 +240,7 @@ struct STTSettingsView: View {
                 Section {
                     ServerFields(url: $url, model: $model, key: $key,
                                  models: DefaultServer.sttModels, modelExample: "whisper-large-v3",
-                                 keyPrompt: "API key (blank: language model's)") {
+                                 keyPrompt: "API key (blank: language model's)", speech: true, fallbackKey: LLM.key) {
                         url = LLMConfig.defaultURL
                         model = RemoteSTT.defaultModel
                     }
