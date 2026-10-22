@@ -29,6 +29,8 @@ struct QA: Identifiable {
     var answer: String?
     var error: String?
     var progress: String?
+    /// The moments it was read from.
+    var sources: [String] = []
 }
 
 /// Ties the BLE link, the device list and the local library together.
@@ -490,7 +492,7 @@ final class AppModel: ObservableObject {
 
     func ask(_ question: String, scope: String, recordings: [Recording]) async {
         await ServerStatus.shared.check()
-        let qa = QA(question: question, scopeCount: recordings.count)
+        let qa = QA(question: question, scopeCount: recordings.count, sources: recordings.map(\.id))
         conversations[scope, default: []].append(qa)
         func set(_ change: (inout QA) -> Void) {
             guard let i = conversations[scope]?.firstIndex(where: { $0.id == qa.id }) else { return }
