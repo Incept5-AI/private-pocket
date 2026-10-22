@@ -56,7 +56,7 @@ There are no tests and no linter. To exercise app logic without the phone, copy 
 
 ## iOS architecture
 
-Every source file is in `App/`.
+App sources are in `App/`. `Shared/` is compiled into both the app and the `PrivatePocketWidgets` extension (`Widgets/`), which hosts the Live Activity: `RecordingAttributes` and `StopRecordingIntent` (a `LiveActivityIntent`, performed in the app through a static `handler`) plus `PocketLook`, `LightDot` and `PocketFacts`. Keep app-only types out of `Shared/`. `App/LiveActivity.swift` (`RecordingActivity`) starts, updates and ends the activity from `AppModel`; `App/Intents.swift` has `StartRecordingIntent` and the App Shortcuts. `sign-install.sh` signs the `.appex` with its own entitlements before the app.
 
 - **`PocketLink`** is the CoreBluetooth central. It handles scan, connect, the command/reply exchange, downloads and status, and exposes the hooks `onLiveAudio`, `onRecordingStarted` and `onLinkLost`.
 - **`AppModel`** is the orchestrator:

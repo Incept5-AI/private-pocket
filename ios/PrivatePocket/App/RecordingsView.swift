@@ -107,7 +107,7 @@ struct RecordingRow: View {
                 }
             }
             HStack(spacing: 10) {
-                if let s = recording.meta.seconds { Label(Self.length(s), systemImage: "clock") }
+                if let s = recording.meta.seconds { Label(PocketFacts.length(s), systemImage: "clock") }
                 if recording.meta.title != nil, let p = recording.meta.place?.name {
                     Label(p, systemImage: "mappin").lineLimit(1)
                 }
@@ -131,12 +131,6 @@ struct RecordingRow: View {
             }
         }
         .padding(.vertical, 2)
-    }
-
-    /// "40 sec", "12 min", "1 hr 5 min".
-    static func length(_ seconds: Int) -> String {
-        seconds < 60 ? "\(seconds) sec"
-            : Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
     }
 }
 

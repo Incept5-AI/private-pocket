@@ -25,20 +25,31 @@ done
 
 PREFIX=$APP_ID_PREFIX
 BUNDLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")
-ENT=$(mktemp -t ent).plist
-cat > "$ENT" <<PLIST
+
+# Entitlements for a bundle id, as Xcode writes them for a development build.
+entitlements() {
+  local f=$(mktemp -t ent).plist
+  cat > "$f" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>application-identifier</key><string>$PREFIX.$BUNDLE</string>
+  <key>application-identifier</key><string>$PREFIX.$1</string>
   <key>com.apple.developer.team-identifier</key><string>$TEAM_ID</string>
   <key>get-task-allow</key><true/>
-  <key>keychain-access-groups</key><array><string>$PREFIX.$BUNDLE</string></array>
+  <key>keychain-access-groups</key><array><string>$PREFIX.$1</string></array>
 </dict></plist>
 PLIST
+  echo "$f"
+}
 
 find "$APP" -name '*.dylib' -o -name '*.framework' | while read f; do codesign -f -s $IDENTITY "$f"; done
-codesign -f -s $IDENTITY --entitlements "$ENT" "$APP"
+# App extensions (the Live Activity) get the same profile and their own entitlements,
+# and are signed before the app, whose seal covers them.
+for x in "$APP"/PlugIns/*.appex(N); do
+  cp "$APP/embedded.mobileprovision" "$x/embedded.mobileprovision"
+  codesign -f -s $IDENTITY --entitlements "$(entitlements "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$x/Info.plist")")" "$x"
+done
+codesign -f -s $IDENTITY --entitlements "$(entitlements "$BUNDLE")" "$APP"
 codesign -v "$APP"
 xcrun devicectl device install app --device $DEVICE "$APP"
 xcrun devicectl device process launch --device $DEVICE "$BUNDLE" || true

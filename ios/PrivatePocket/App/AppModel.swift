@@ -38,6 +38,9 @@ final class AppModel: ObservableObject {
     let drive = USBDrive()
     let locator = Locator()
     let live = LiveSession()
+    /// Dynamic Island and Lock Screen while the Pocket records.
+    let activity = RecordingActivity()
+    private var activityTicker: Task<Void, Never>?
     /// The user tapped Disconnect: do not reconnect until they tap Connect.
     @Published var userDisconnected = false
     private var keepAlive: Task<Void, Never>?
@@ -64,6 +67,20 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.locator.recordingStarted(name)
             if let d = self.connectedDevice { self.live.begin(name: name, device: d.id) }
+            self.startActivity(name: name)
+        }
+        StopRecordingIntent.handler = { [weak self] in
+            guard let self, self.canCommand, self.link.status.recordingSince != nil else { return }
+            await self.toggleRecording()
+        }
+        StartRecordingIntent.handler = { [weak self] in
+            guard let self else { return }
+            guard self.canCommand else { throw PocketIntentError(message: "Pair your Pocket in the app first.") }
+            guard self.link.status.recordingSince == nil else { return }
+            await self.toggleRecording()
+            if self.link.status.recordingSince == nil {
+                throw PocketIntentError(message: self.link.lastError ?? "Could not reach your Pocket.")
+            }
         }
         link.onLiveAudio = { [weak self] data in self?.live.append(data) }
         link.onLinkLost = { [weak self] in
@@ -85,8 +102,11 @@ final class AppModel: ObservableObject {
             Task { await self.autoSync(d) }
         }
         link.onRecordingStopped = { [weak self] name in
-            guard let self, let d = self.connectedDevice else { return }
-            Task { await self.link.run("Saving") { try await self.completeRecording(name: name, device: d) } }
+            guard let self, let d = self.connectedDevice else { self?.endActivity(name: name); return }
+            Task {
+                await self.link.run("Saving") { try await self.completeRecording(name: name, device: d) }
+                self.endActivity(name: name)
+            }
         }
     }
 
@@ -203,9 +223,33 @@ final class AppModel: ObservableObject {
             if link.status.recordingSince == nil {
                 try await link.startRecording()
             } else if let name = try await link.stopRecording() {
+                defer { endActivity(name: name) }
                 try await completeRecording(name: name, device: d)
             }
         }
+    }
+
+    // MARK: - Live Activity
+
+    private func startActivity(name: String) {
+        guard let d = connectedDevice else { return }
+        activity.start(device: d, startedAt: PocketTime.parse(name) ?? Date(), paired: canCommand)
+        activityTicker?.cancel()
+        activityTicker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard let self, !Task.isCancelled else { return }
+                self.activity.update(line: String(self.live.text.suffix(140)), streaming: self.live.isActive,
+                                     gap: self.live.gap, paired: self.canCommand)
+            }
+        }
+    }
+
+    /// Ends the activity, showing the saved length if the recording made it to the phone.
+    private func endActivity(name: String) {
+        activityTicker?.cancel()
+        activityTicker = nil
+        activity.end(savedSeconds: library.recordings.first { $0.name == name }?.meta.seconds)
     }
 
     /// After a stop: keep the streamed copy if it is the whole recording, else

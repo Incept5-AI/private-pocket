@@ -2,7 +2,11 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var link: PocketLink
+    @EnvironmentObject var live: LiveSession
     @Environment(\.scenePhase) private var scenePhase
+
+    private var recording: Bool { link.status.recordingSince != nil }
 
     var body: some View {
         TabView {
@@ -11,6 +15,12 @@ struct RootView: View {
             Tab("Ask", systemImage: "questionmark.bubble") { AskTab() }
             Tab("Settings", systemImage: "gear") { SettingsView() }
         }
+        .tabBarMinimizeBehavior(.onScrollDown)
+        .tabViewBottomAccessory {
+            if recording || live.isActive { NowRecordingBar() }
+        }
+        .sensoryFeedback(trigger: recording) { _, now in now ? .start : .stop }
+        .sensoryFeedback(.success, trigger: model.canCommand) { was, now in !was && now }
         .alert("Error", isPresented: Binding(get: { model.aiError != nil }, set: { if !$0 { model.aiError = nil } })) {
             Button("OK") {}
         } message: { Text(model.aiError ?? "") }
@@ -87,7 +97,7 @@ struct PocketView: View {
                 PocketCard(name: "Your Pocket", advertised: "", light: .off, status: "Not added yet", detail: nil)
                 Text("Have it nearby and switched on. Nothing leaves this iPhone.")
                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                Button("Find my Pocket") { adding = true }.buttonStyle(.borderedProminent)
+                Button("Find my Pocket") { adding = true }.buttonStyle(.glassProminent)
             }
             .frame(maxWidth: .infinity)
             .listRowBackground(Color.clear)
@@ -125,7 +135,7 @@ struct PocketView: View {
                         .font(.subheadline).foregroundStyle(.secondary)
                     if isConnected {
                         Button("Pair now") { Task { await model.pairSelected() } }
-                            .buttonStyle(.bordered).disabled(busy).padding(.top, 4)
+                            .buttonStyle(.glass).disabled(busy).padding(.top, 4)
                     }
                 }
             }
@@ -143,12 +153,13 @@ struct PocketView: View {
         Section {
             VStack(spacing: 10) {
                 Button { Task { await model.toggleRecording() } } label: {
-                    ZStack {
-                        Circle().fill(Color.orange.opacity(0.15)).frame(width: 104, height: 104)
-                        Circle().fill(.orange).frame(width: 72, height: 72)
-                    }
+                    Circle().fill(.orange)
+                        .shadow(color: .orange.opacity(0.5), radius: 8)
+                        .frame(width: 64, height: 64)
+                        .padding(18)
                 }
                 .buttonStyle(.plain)
+                .glassEffect(.regular.tint(.orange.opacity(0.3)).interactive(), in: .circle)
                 .disabled(busy || !isConnected)
                 .accessibilityLabel("Start recording")
                 Text(isConnected ? "Record" : "Connect to record from here")
@@ -188,7 +199,7 @@ struct PocketView: View {
                     Spacer()
                     if paired, recording {
                         Button { Task { await model.toggleRecording() } } label: { Label("Stop", systemImage: "stop.fill") }
-                            .buttonStyle(.borderedProminent).tint(.orange).disabled(busy)
+                            .buttonStyle(.glassProminent).tint(.orange).disabled(busy)
                     }
                 }
                 Text(streamText).font(.footnote).foregroundStyle(live.gap ? .orange : .secondary)
@@ -326,17 +337,24 @@ struct PocketCard: View {
     var body: some View {
         let look = PocketLook(advertised: advertised)
         VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top) {
+            HStack(alignment: .center) {
+                // The light sits under a small glass lens, as it does on the card.
                 LightDot(state: light).frame(width: 14, height: 14)
+                    .padding(9)
+                    .glassEffect(.regular, in: .circle)
                 Spacer()
                 Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(look.ink.opacity(0.85))
             }
-            Spacer(minLength: 28)
-            Text(status).font(.title3.weight(.semibold)).foregroundStyle(look.ink)
-            Text(detail ?? " ").font(.footnote).foregroundStyle(look.ink.opacity(0.7)).padding(.top, 2)
+            Spacer(minLength: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(status).font(.title3.weight(.semibold)).foregroundStyle(look.ink)
+                Text(detail ?? " ").font(.footnote).foregroundStyle(look.ink.opacity(0.75))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .glassEffect(.regular, in: .rect(cornerRadius: 16))
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, minHeight: 168, alignment: .leading)
+        .padding(16)
+        .frame(maxWidth: .infinity, minHeight: 172, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(look.fill.gradient)
@@ -346,74 +364,35 @@ struct PocketCard: View {
     }
 }
 
-enum LightState { case off, on, pairing, recording }
-
-/// Mirrors the Pocket's status light: solid blue when paired and ready, blinking blue
-/// when it needs pairing, pulsing amber while recording, dim when not connected.
-struct LightDot: View {
-    let state: LightState
-    @State private var phase = false
-
-    private var colour: Color {
-        switch state {
-        case .off: Color.white.opacity(0.35)
-        case .on, .pairing: .blue
-        case .recording: .orange
-        }
-    }
-    private var animated: Bool { state == .pairing || state == .recording }
+/// The bar above the tab bar while the Pocket records, on every tab: light, timer, the
+/// latest words, and Stop when the phone can stop it.
+struct NowRecordingBar: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var link: PocketLink
+    @EnvironmentObject var live: LiveSession
 
     var body: some View {
-        Circle()
-            .fill(colour)
-            .opacity(state == .pairing && phase ? 0.15 : 1)
-            .scaleEffect(state == .recording && phase ? 0.8 : 1)
-            .shadow(color: state == .off ? .clear : colour.opacity(0.7), radius: 5)
-            .animation(animated ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true) : .default, value: phase)
-            .onAppear { phase = animated }
-            .onChange(of: state) {
-                phase = false
-                if animated { Task { @MainActor in phase = true } }
+        HStack(spacing: 10) {
+            LightDot(state: .recording).frame(width: 10, height: 10)
+            if let since = link.status.recordingSince {
+                Text(timerInterval: since...Date.distantFuture, countsDown: false)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+            } else {
+                Text("Saving…").font(.subheadline)
             }
-    }
-}
-
-/// Colour from the advertised name (`PKT01_GREY_…`), so the card on screen matches
-/// the one in hand. Unknown colours fall back to grey.
-struct PocketLook {
-    let fill: Color
-    let ink: Color
-
-    init(advertised: String) {
-        let colour = advertised.split(separator: "_").dropFirst().first.map { $0.uppercased() } ?? ""
-        let pair: (Color, Color) = switch colour {
-        case "BLACK": (Color(white: 0.13), .white)
-        case "WHITE": (Color(white: 0.93), Color(white: 0.12))
-        case "SILVER": (Color(white: 0.78), Color(white: 0.1))
-        case "BLUE", "NAVY": (Color(red: 0.16, green: 0.33, blue: 0.62), .white)
-        case "GREEN": (Color(red: 0.2, green: 0.45, blue: 0.33), .white)
-        case "RED": (Color(red: 0.66, green: 0.2, blue: 0.2), .white)
-        case "PINK": (Color(red: 0.93, green: 0.7, blue: 0.76), Color(white: 0.12))
-        case "ORANGE": (Color(red: 0.87, green: 0.47, blue: 0.2), .white)
-        case "YELLOW", "GOLD": (Color(red: 0.9, green: 0.78, blue: 0.4), Color(white: 0.12))
-        case "PURPLE": (Color(red: 0.42, green: 0.3, blue: 0.6), .white)
-        default: (Color(red: 0.4, green: 0.42, blue: 0.45), .white)
+            Text(live.text.isEmpty ? (live.isActive ? "Streaming to this iPhone" : "Recording on the Pocket")
+                                   : String(live.text.suffix(80)))
+                .font(.footnote).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+            Spacer(minLength: 0)
+            if model.canCommand, link.status.recordingSince != nil {
+                Button { Task { await model.toggleRecording() } } label: {
+                    Image(systemName: "stop.fill")
+                }
+                .tint(.orange)
+                .accessibilityLabel("Stop recording")
+            }
         }
-        fill = pair.0
-        ink = pair.1
-    }
-}
-
-enum PocketFacts {
-    /// The Pocket records 32 kbps MP3: about 4,000 bytes a second, 14 MB an hour.
-    static let bytesPerSecond = 4_000.0
-
-    /// Storage as recording time, which is what it means on a card this size.
-    static func hours(mib: Int) -> String {
-        let h = Double(mib) * 1_048_576 / bytesPerSecond / 3_600
-        let rounded: Double = h >= 1_000 ? (h / 100).rounded() * 100 : h >= 100 ? (h / 10).rounded() * 10 : h.rounded()
-        if rounded < 1 { return "under an hour" }
-        return "about \(Int(rounded).formatted()) hours"
+        .padding(.horizontal, 14)
     }
 }
 

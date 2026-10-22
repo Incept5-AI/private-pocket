@@ -74,6 +74,11 @@ notice. Until then, Private Pocket keeps your recordings on your own phone.
 - **Record and stream.** Start and stop the Pocket from the phone, or use its button.
   The phone stays connected, also with the app in the background, so every recording
   streams in live and is saved and transcribed as you speak, with no download afterwards.
+- **Lives in the Dynamic Island.** While the Pocket records, the Dynamic Island and the
+  Lock Screen show its amber light, the timer and the words as they arrive, with a Stop
+  button. Inside the app a bar above the tabs shows the same on every screen.
+- **Siri, Shortcuts and the Action button.** "Start recording on Private Pocket" and
+  "Stop recording on Private Pocket" work wherever Shortcuts do.
 - **Fetches by itself.** Anything recorded while the phone was away comes over
   Bluetooth as soon as the Pocket reconnects, at about 40–60 KB/s (an hour of audio in
   about five minutes). No tap, cable, Wi-Fi or account needed.

@@ -20,7 +20,13 @@ goes to Pocket's cloud. See the [top-level README](../../README.md) for the over
   copy is kept as is). Recordings made while the phone was away are fetched by themselves
   on every connection (per-device setting). Then today's recordings. The ⋯ menu has Get
   recordings now, Pocket details (battery, storage, firmware, protocol log), Connect or
-  Disconnect, and Add another Pocket.
+  Disconnect, and Add another Pocket. The light, the status pill and the buttons use
+  Liquid Glass.
+- **While recording, everywhere.** A bar above the tab bar (an iOS 26 tab accessory) shows
+  the light, the timer, the latest words and Stop on every tab. Outside the app the same
+  lives in the Dynamic Island and on the Lock Screen as a Live Activity
+  (`PrivatePocketWidgets`), whose Stop button runs `StopRecordingIntent` in the app.
+  "Start recording on Private Pocket" is an App Shortcut for Siri and the Action button.
 - **Recordings.** Named by place and time, searchable, and filterable by Pocket. Each
   recording has a player, a title, a location, a transcript in a chosen language (with speakers if
   enabled, which you can rename), a summary, and "Ask about this recording".
@@ -50,6 +56,10 @@ and server keys are kept in the Keychain.
 # or, without an Apple ID in Xcode:
 cp signing.env.example signing.env && ./sign-install.sh
 ```
+
+Two targets: the app (`App/`) and the widget extension (`Widgets/`), with `Shared/`
+compiled into both (the Live Activity's attributes and intent, and how a Pocket looks).
+`sign-install.sh` signs the extension with its own entitlements before the app.
 
 `gen-defaults.sh` runs before each build. It turns `../../ble/.env` (see
 `.env.example`) into the gitignored `Generated/DefaultDevice.swift`: the first Pocket
