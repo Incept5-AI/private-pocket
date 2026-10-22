@@ -23,6 +23,14 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Adds events found in your recordings to Calendar, only when you tap Add.</string>
+	<key>NSCalendarsUsageDescription</key>
+	<string>Adds events found in your recordings to Calendar, only when you tap Add.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Adds actions found in your recordings to Reminders, only when you tap Add.</string>
+	<key>NSRemindersUsageDescription</key>
+	<string>Adds actions found in your recordings to Reminders, only when you tap Add.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

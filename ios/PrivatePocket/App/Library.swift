@@ -84,6 +84,9 @@ struct RecordingMeta: Codable, Hashable {
     var transcribedAt: Date?
     var summary: String?
     var summarisedAt: Date?
+    /// What the conversation was and what came out of it (see `MomentInsight`).
+    var insight: MomentInsight?
+    var analysedAt: Date?
 }
 
 enum PocketTime {

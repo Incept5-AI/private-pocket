@@ -93,3 +93,15 @@ The app is dark-only, in the palette `Shared/Brand.swift` defines: a graphite gr
 cyan for anything you can tap, the card's own amber for recording, blue for work and
 pink for life. The status light's colours are the device's and are never restyled. The
 app icon is the card with its light.
+
+## Screens
+
+Four tabs. **Pocket**: the card, drawn at its real proportions with the real light on
+it, the screen glowing in the light's colour, the timer and the live words while it
+records, the amber shutter, and today's moments. **Moments**: every recording as a
+card on a time rail, with what kind of conversation it was. Open one and the actions,
+promises, upcoming dates and people come first; Add sends an action to Reminders or a
+date to Calendar. **Insights**: the week or month added up. **Ask**: questions across
+recordings. Settings is behind the gear on the Pocket tab, and holds **Your own
+server**: one address and key, used when it answers and left alone when it does not.
+The first launch opens a swipe-only walkthrough of the card itself.

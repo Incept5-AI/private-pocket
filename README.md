@@ -79,6 +79,10 @@ notice. Until then, Private Pocket keeps your recordings on your own phone.
   that turns amber with the timer and the words as they arrive, with a Stop button, and
   shows the saved length for a moment after. Inside the app a bar above the tabs shows the
   recording on every screen.
+- **A walkthrough on first use.** Seven swipe screens, made the way the manufacturer would: wake it, pair, record, the switch, what the light means, reset. Again from Settings any time.
+- **Moments, not files.** Every recording is a card: what kind of conversation it was, the first thing said, who was there. A model reads each one for the actions, what others promised, what is coming up and who was mentioned; Add puts an action in Reminders or a date in Calendar.
+- **Insights.** The week or the month added up: time by work and life, open actions, promises, what is coming up, people. Counted on the phone.
+- **Your own server, when reachable.** A DGX Spark or any OpenAI-compatible server over Tailscale: bigger models, speakers, any language. Used while it answers, and everything falls back to the phone when it does not.
 - **Control Center, Siri, Shortcuts and the Action button.** A Pocket toggle in Control
   Center and on the Lock Screen starts and stops the card without unlocking, and shows
   whether it is recording; "Start recording on Private Pocket" works wherever Shortcuts do.

@@ -134,6 +134,7 @@ final class AppModel: ObservableObject {
     /// that means scanning every 15 s; in the background a pending connection that iOS
     /// completes whenever the Pocket is in range (an existing connection just stays up).
     func setActive(_ active: Bool) {
+        if active { Task { await ServerStatus.shared.check() } }
         self.active = active
         keepAlive?.cancel()
         guard active else { standby(); return }
@@ -336,11 +337,16 @@ final class AppModel: ObservableObject {
             r.meta.transcribedAt = Date()
             r.meta.liveTranscript = true
             library.update(r)
+            let rec = r
             if d.autoTranscribe {
-                Task { await transcribe(r) }
+                Task { await transcribe(rec) }
             } else if Prefs.diarize, !s.words.isEmpty {
-                let rec = r
-                Task { await findSpeakers(rec) }   // the whole recording, so ids hold throughout
+                Task {
+                    await findSpeakers(rec)   // the whole recording, so ids hold throughout
+                    await analyse(library.recordings.first { $0.id == rec.id } ?? rec, quiet: true)
+                }
+            } else {
+                Task { await analyse(rec, quiet: true) }
             }
         } else if d.autoTranscribe {
             Task { await transcribe(r) }
@@ -375,6 +381,7 @@ final class AppModel: ObservableObject {
     /// Transcribes in `localeID`, else the language last used for this recording,
     /// else the default from Settings.
     func transcribe(_ r: Recording, localeID: String? = nil) async {
+        await ServerStatus.shared.check()
         working.insert(r.id)
         defer { working.remove(r.id) }
         do {
@@ -395,6 +402,8 @@ final class AppModel: ObservableObject {
             r.meta.speakersError = nil
             if let speakers { applySpeakers(await speakers.result, to: &r) }
             library.update(r)
+            let read = r
+            Task { await self.analyse(read, quiet: true) }
         } catch {
             aiError = "Transcription failed: \(error.localizedDescription)"
         }
@@ -435,6 +444,7 @@ final class AppModel: ObservableObject {
     }
 
     func summarise(_ r: Recording) async {
+        await ServerStatus.shared.check()
         guard let transcript = r.transcriptForModel else { return }
         working.insert(r.id)
         defer { working.remove(r.id) }
@@ -450,6 +460,7 @@ final class AppModel: ObservableObject {
     }
 
     func ask(_ question: String, scope: String, recordings: [Recording]) async {
+        await ServerStatus.shared.check()
         let qa = QA(question: question, scopeCount: recordings.count)
         conversations[scope, default: []].append(qa)
         func set(_ change: (inout QA) -> Void) {
@@ -465,6 +476,59 @@ final class AppModel: ObservableObject {
         } catch {
             set { $0.error = error.localizedDescription; $0.progress = nil }
         }
+    }
+
+    /// Reads a transcript for what the conversation was and what came out of it. With a
+    /// language model available it reads it properly; without one the switch, the
+    /// speakers and the dates in the text still give the kind, the people and what is
+    /// coming up.
+    func analyse(_ r: Recording, quiet: Bool = false) async {
+        await ServerStatus.shared.check()
+        working.insert(r.id)
+        defer { working.remove(r.id) }
+        var r = r
+        if LLM.availability == nil {
+            do {
+                r.meta.insight = try await Analyst.analyse(r, config: LLM.config)
+            } catch {
+                if !quiet { aiError = "Could not read the conversation: \(error.localizedDescription)" }
+                if r.meta.insight == nil { r.meta.insight = Analyst.heuristic(r) }
+            }
+        } else if r.meta.insight == nil {
+            r.meta.insight = Analyst.heuristic(r)
+        }
+        r.meta.analysedAt = Date()
+        library.update(r)
+    }
+
+    func analyseMissing(_ rs: [Recording]) async {
+        for r in rs where r.meta.transcript != nil && !working.contains(r.id) { await analyse(r, quiet: true) }
+    }
+
+    func addToReminders(_ r: Recording, action: String) async {
+        do {
+            try await Planner.addReminder(action, note: "From \(r.sourceLabel), in Private Pocket.")
+            markAdded(r, action)
+        } catch {
+            aiError = error.localizedDescription
+        }
+    }
+
+    func addToCalendar(_ r: Recording, item: String) async {
+        guard let date = Planner.date(in: item) else { aiError = "No date found in “\(item)”."; return }
+        do {
+            try await Planner.addEvent(item, at: date, note: "From \(r.sourceLabel), in Private Pocket.")
+            markAdded(r, item)
+        } catch {
+            aiError = error.localizedDescription
+        }
+    }
+
+    private func markAdded(_ r: Recording, _ item: String) {
+        guard var r = library.recordings.first(where: { $0.id == r.id }), var i = r.meta.insight else { return }
+        i.added = Array(Set((i.added ?? []) + [item])).sorted()
+        r.meta.insight = i
+        library.update(r)
     }
 
     /// Transcribes, one at a time, recordings that have no transcript.

@@ -57,6 +57,11 @@ targets:
         # Dynamic Island and Lock Screen while the Pocket records (PrivatePocketWidgets).
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
+        # Reminders and Calendar, only when the user taps Add on an action or a date.
+        NSRemindersFullAccessUsageDescription: "Adds actions found in your recordings to Reminders, only when you tap Add."
+        NSCalendarsFullAccessUsageDescription: "Adds events found in your recordings to Calendar, only when you tap Add."
+        NSRemindersUsageDescription: "Adds actions found in your recordings to Reminders, only when you tap Add."
+        NSCalendarsUsageDescription: "Adds events found in your recordings to Calendar, only when you tap Add."
         # Lets the language model setting point at a plain-http server on a private network.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true

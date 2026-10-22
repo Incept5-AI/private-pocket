@@ -70,7 +70,7 @@ final class LiveSession: ObservableObject {
         let p = MP3Packetizer()
         parser = p
         localeID = Self.liveLocale()
-        if Prefs.sttRemote {
+        if Prefs.sttRemoteNow {
             let r = RemoteLiveTranscriber(localeID: localeID ?? Languages.auto)
             r.onText = { [weak self] t in self?.finalText = t }
             r.onError = { [weak self] e in self?.engineNote = "Live transcript paused: \(e)" }
@@ -166,7 +166,7 @@ final class LiveSession: ObservableObject {
     private static func liveLocale() -> String? {
         let def = Prefs.transcriptionLocale
         if def != Languages.auto { return def }
-        if Prefs.sttRemote { return Languages.auto }
+        if Prefs.sttRemoteNow { return Languages.auto }
         return Prefs.favouriteLocales.first { $0 != Languages.auto }
     }
 }

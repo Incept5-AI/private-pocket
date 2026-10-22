@@ -45,7 +45,7 @@ struct RecordingsView: View {
         NavigationStack {
             List {
                 if library.recordings.isEmpty {
-                    ContentUnavailableView("No recordings yet", systemImage: "waveform",
+                    ContentUnavailableView("No moments yet", systemImage: "waveform",
                                            description: Text("Press the side button on your Pocket. Recordings stream in as they are made, and ones made while the phone was away arrive when it reconnects."))
                 } else if shown.isEmpty {
                     ContentUnavailableView.search(text: search)
@@ -53,7 +53,10 @@ struct RecordingsView: View {
                 ForEach(grouped, id: \.0) { day, items in
                     Section(day) {
                         ForEach(items) { r in
-                            NavigationLink(value: r.id) { RecordingRow(recording: r, showDevice: pockets.count > 1) }
+                            NavigationLink(value: r.id) { MomentRow(recording: r, showDevice: pockets.count > 1) }
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                                .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                         }
                         .onDelete { idx in idx.map { items[$0] }.forEach(library.delete) }
                     }
@@ -61,7 +64,7 @@ struct RecordingsView: View {
             }
                 .scrollContentBackground(.hidden)
                 .background(Brand.ground)
-            .navigationTitle("Recordings")
+            .navigationTitle("Moments")
             .searchable(text: $search, prompt: "Titles, places, transcripts, speakers, Pockets")
             .toolbar {
                 if pockets.count > 1 {
@@ -86,54 +89,10 @@ extension RecordingDetail {
     /// The default language, the favourites, and whatever this recording used.
     func languageChoices(_ r: Recording) -> [String] {
         var out: [String] = []
-        let auto = Prefs.sttRemote ? [Languages.auto] : []
+        let auto = Prefs.sttRemoteNow ? [Languages.auto] : []
         for id in auto + [Prefs.transcriptionLocale] + Prefs.favouriteLocales + [r.meta.locale, language].compactMap({ $0 })
-        where !out.contains(id) && (Prefs.sttRemote || id != Languages.auto) { out.append(id) }
+        where !out.contains(id) && (Prefs.sttRemoteNow || id != Languages.auto) { out.append(id) }
         return out
-    }
-}
-
-struct RecordingRow: View {
-    @EnvironmentObject var model: AppModel
-    @EnvironmentObject var devices: DeviceStore
-    let recording: Recording
-    var showDevice = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(recording.displayTitle).font(.headline).lineLimit(1)
-                Spacer()
-                if recording.meta.title != nil || recording.meta.place?.name != nil, let t = recording.startedAt {
-                    Text(t.formatted(date: .omitted, time: .shortened)).font(.subheadline).foregroundStyle(.secondary)
-                }
-            }
-            HStack(spacing: 10) {
-                if let s = recording.meta.seconds { Label(PocketFacts.length(s), systemImage: "clock") }
-                if recording.isCall { Label("Call", systemImage: "phone") }
-                if recording.meta.title != nil, let p = recording.meta.place?.name {
-                    Label(p, systemImage: "mappin").lineLimit(1)
-                }
-                if let t = recording.meta.turns, Speakers.count(t) > 1 {
-                    Label("\(Speakers.count(t)) speakers", systemImage: "person.2")
-                }
-                if showDevice { Text(recording.pocketName(devices.devices)) }
-                Spacer()
-                if model.working.contains(recording.id) {
-                    ProgressView().controlSize(.small)
-                } else {
-                    if recording.meta.transcript != nil { Image(systemName: "text.quote") }
-                    if recording.meta.summary != nil { Image(systemName: "sparkles") }
-                }
-            }
-            .font(.caption).foregroundStyle(.secondary)
-            if let s = recording.meta.summary ?? recording.meta.transcript {
-                Text(s).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
-            } else {
-                Text("Not transcribed yet").font(.subheadline).foregroundStyle(.tertiary)
-            }
-        }
-        .padding(.vertical, 2)
     }
 }
 
@@ -160,6 +119,7 @@ struct RecordingDetail: View {
                 Section {
                     PlayerControls(player: player, url: r.audioURL)
                 }
+                MomentSections(recording: r)
                 Section("Details") {
                     TextField(r.meta.place?.name ?? r.startedAt?.formatted(date: .omitted, time: .shortened) ?? "Title",
                               text: $title)
@@ -221,7 +181,7 @@ struct RecordingDetail: View {
                         }
                         if let e = r.meta.speakersError { Text("Speakers: \(e)") }
                         if let turns = r.meta.turns, Speakers.count(turns) > 1 { Text("Tap a speaker's name to rename them.") }
-                        Text(Prefs.sttRemote
+                        Text(Prefs.sttRemoteNow
                              ? "Uses \(Prefs.sttModel) on \(URL(string: Prefs.sttURL)?.host() ?? "the server"); the audio is uploaded to it."
                              : "Apple's on-device speech recognition; the audio does not leave the phone.")
                     }
@@ -286,6 +246,12 @@ struct RecordingDetail: View {
                             Task { await model.summarise(r) }
                         } label: {
                             Label(r.meta.summary == nil ? "Summarise" : "Summarise again", systemImage: "sparkles")
+                        }
+                        .disabled(r.meta.transcript == nil || Summariser.availability != nil)
+                        Button {
+                            Task { await model.analyse(r) }
+                        } label: {
+                            Label(r.meta.insight?.readByModel == true ? "Read the conversation again" : "Read the conversation", systemImage: "text.magnifyingglass")
                         }
                         .disabled(r.meta.transcript == nil || Summariser.availability != nil)
                         Divider()
@@ -489,5 +455,141 @@ struct PlayerControls: View {
         }
         .padding(.vertical, 6)
         .onAppear { player.load(url) }
+    }
+}
+
+// MARK: - Moments
+
+/// A moment as a card: the kind, when and how long, the line that stands for it, who and where.
+struct MomentCard: View {
+    @EnvironmentObject var model: AppModel
+    let recording: Recording
+    var showTime = true
+
+    var body: some View {
+        let r = recording
+        let when = [showTime ? r.startedAt?.formatted(date: .omitted, time: .shortened) : nil,
+                    r.meta.seconds.map { PocketFacts.length($0) }].compactMap { $0 }.joined(separator: " · ")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                KindChip(kind: r.kind)
+                Spacer()
+                if model.working.contains(r.id) { ProgressView().controlSize(.small) }
+                Text(when).font(.caption).foregroundStyle(Brand.muted)
+            }
+            Text(r.quote)
+                .font(.body.weight(.medium))
+                .lineLimit(2)
+                .foregroundStyle(r.meta.transcript == nil && r.meta.title == nil ? Brand.muted : Brand.text)
+            if let s = r.subline { Text(s).font(.caption).foregroundStyle(Brand.muted).lineLimit(1) }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+/// A moment in the day's list: the time on a rail, the card beside it.
+struct MomentRow: View {
+    @EnvironmentObject var devices: DeviceStore
+    let recording: Recording
+    var showDevice = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(recording.startedAt?.formatted(date: .omitted, time: .shortened) ?? "–")
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(Brand.muted)
+                .frame(width: 50, alignment: .leading)
+                .padding(.top, 14)
+            VStack(alignment: .leading, spacing: 4) {
+                MomentCard(recording: recording, showTime: false)
+                if showDevice {
+                    Text(recording.pocketName(devices.devices)).font(.caption2).foregroundStyle(Brand.dim).padding(.leading, 4)
+                }
+            }
+        }
+    }
+}
+
+/// What the conversation was and what came out of it, above the details: the kind and
+/// the people; the actions, each with Add for Reminders; what was promised; what is
+/// coming up, each with Add for Calendar.
+struct MomentSections: View {
+    @EnvironmentObject var model: AppModel
+    let recording: Recording
+
+    var body: some View {
+        let r = recording
+        let i = r.meta.insight
+        Section {
+            HStack {
+                KindChip(kind: r.kind)
+                Spacer()
+                if r.meta.transcript != nil, i?.readByModel != true {
+                    Button("Read it") { Task { await model.analyse(r) } }
+                        .font(.subheadline.weight(.semibold))
+                        .disabled(model.working.contains(r.id) || Summariser.availability != nil)
+                }
+            }
+            if let p = i?.people, !p.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(p, id: \.self) { n in
+                            Text(n).font(.caption.weight(.semibold))
+                                .padding(.horizontal, 9).padding(.vertical, 4)
+                                .background(Brand.raised, in: Capsule())
+                        }
+                    }
+                }
+            }
+        } footer: {
+            if r.meta.transcript == nil {
+                Text("Transcribe it, and it can be read for what it was and what came out of it.")
+            } else if i?.readByModel != true, let why = Summariser.availability {
+                Text(why)
+            }
+        }
+        if let i, !i.actions.isEmpty {
+            Section {
+                ForEach(i.actions, id: \.self) { a in
+                    HStack(spacing: 10) {
+                        Image(systemName: i.isAdded(a) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(i.isAdded(a) ? Brand.good : Brand.act)
+                        Text(a)
+                        Spacer()
+                        if !i.isAdded(a) {
+                            Button("Add") { Task { await model.addToReminders(r, action: a) } }
+                                .font(.subheadline.weight(.semibold)).buttonStyle(.borderless)
+                        }
+                    }
+                }
+            } header: { Text("Actions") } footer: { Text("Add puts one in Reminders, with a note saying where it came from.") }
+        }
+        if let i, !i.promises.isEmpty {
+            Section("Promised to you") {
+                ForEach(i.promises, id: \.self) { Text($0) }
+            }
+        }
+        if let i, !i.upcoming.isEmpty {
+            Section {
+                ForEach(i.upcoming, id: \.self) { u in
+                    let date = Planner.date(in: u)
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(u)
+                            if let date { Text(date.formatted(date: .abbreviated, time: .shortened)).font(.caption).foregroundStyle(Brand.muted) }
+                        }
+                        Spacer()
+                        if i.isAdded(u) {
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.good)
+                        } else if date != nil {
+                            Button("Add") { Task { await model.addToCalendar(r, item: u) } }
+                                .font(.subheadline.weight(.semibold)).buttonStyle(.borderless)
+                        }
+                    }
+                }
+            } header: { Text("Coming up") } footer: { Text("Add puts one in Calendar, an hour long, at the time it mentions.") }
+        }
     }
 }

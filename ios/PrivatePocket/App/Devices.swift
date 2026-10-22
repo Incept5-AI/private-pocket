@@ -233,6 +233,22 @@ enum Prefs {
         set { UserDefaults.standard.set(newValue, forKey: "llmContextChars") }
     }
 
+    /// The first-use walkthrough has been seen, or skipped.
+    @MainActor static var walkthroughSeen: Bool {
+        get { UserDefaults.standard.bool(forKey: "walkthroughSeen") }
+        set { UserDefaults.standard.set(newValue, forKey: "walkthroughSeen") }
+    }
+
+    /// Use the user's own server only while it answers; otherwise run on the phone.
+    @MainActor static var serverWhenReachable: Bool {
+        get { UserDefaults.standard.bool(forKey: "serverWhenReachable") }
+        set { UserDefaults.standard.set(newValue, forKey: "serverWhenReachable") }
+    }
+
+    /// What will actually run now: the server only if it answered, when that gate is on.
+    @MainActor static var sttRemoteNow: Bool { sttRemote && ServerStatus.shared.allowsRemote }
+    @MainActor static var llmRemoteNow: Bool { llmRemote && ServerStatus.shared.allowsRemote }
+
     static let defaultSummaryInstructions = """
     You summarise transcripts of recorded conversations and voice notes. \
     Write a short summary paragraph, then "Key points:" as a bulleted list, \

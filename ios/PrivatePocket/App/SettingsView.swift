@@ -4,6 +4,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject var devices: DeviceStore
+    /// Shown as a sheet from the Pocket tab: a Done button that closes it.
+    var onDone: (() -> Void)? = nil
+    @State private var showWalkthrough = false
     @EnvironmentObject var locator: Locator
     @State private var adding = false
     @State private var locale = Prefs.transcriptionLocale
@@ -38,11 +41,15 @@ struct SettingsView: View {
                     NavigationLink { USBView() } label: {
                         Label("USB drive: free up space", systemImage: "externaldrive")
                     }
+                    Button { showWalkthrough = true } label: { Label("How the Pocket works", systemImage: "hand.tap") }
                 } header: { Text("Pockets") } footer: {
                     Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected keeps the link up, also in the background, so every recording streams in as it is made. The Dynamic Island shows the Pocket's light and battery while connected and turns amber when it records; iOS only lets that start while the app is open, so without it a recording made with the phone locked shows up only once the app is opened. Deleting recordings from a Pocket needs the USB cable.")
                 }
 
                 Section {
+                    NavigationLink { ServerView() } label: {
+                        LabeledContent("Your own server", value: Prefs.serverWhenReachable ? ServerStatus.shared.label : "Off")
+                    }
                     NavigationLink { STTSettingsView() } label: {
                         LabeledContent("Speech to text", value: sttRemote ? sttModel : "On this iPhone")
                     }
@@ -111,6 +118,8 @@ struct SettingsView: View {
                 .background(Brand.ground)
             .navigationTitle("Settings")
             .sheet(isPresented: $adding) { AddDeviceSheet() }
+            .toolbar { if let onDone { ToolbarItem(placement: .confirmationAction) { Button("Done", action: onDone) } } }
+            .fullScreenCover(isPresented: $showWalkthrough) { WalkthroughView() }
         }
     }
 }

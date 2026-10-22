@@ -7,7 +7,7 @@ import Speech
 /// assets are downloaded once by the OS; audio never leaves the phone.
 enum Transcriber {
     static func transcribe(_ url: URL, localeID: String) async throws -> TimedTranscript {
-        if await Prefs.sttRemote { return try await RemoteSTT.transcribe(url, localeID: localeID) }
+        if await Prefs.sttRemoteNow { return try await RemoteSTT.transcribe(url, localeID: localeID) }
         let transcriber = try await prepare(localeID: localeID, reporting: [])
         let file = try AVAudioFile(forReading: url)
         async let collected = transcriber.results.reduce(into: TimedTranscript(text: "", words: [])) { acc, result in

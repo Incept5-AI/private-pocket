@@ -28,7 +28,7 @@ struct LLMConfig: Sendable {
 
 enum LLM {
     @MainActor static var config: LLMConfig {
-        LLMConfig(remote: Prefs.llmRemote, url: Prefs.llmURL, model: Prefs.llmModel,
+        LLMConfig(remote: Prefs.llmRemoteNow, url: Prefs.llmURL, model: Prefs.llmModel,
                   key: Keychain.get("llm.key") ?? "", noThinking: Prefs.llmNoThinking,
                   contextChars: Prefs.llmContextChars)
     }

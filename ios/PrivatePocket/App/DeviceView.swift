@@ -5,15 +5,16 @@ struct RootView: View {
     @EnvironmentObject var link: PocketLink
     @EnvironmentObject var live: LiveSession
     @Environment(\.scenePhase) private var scenePhase
+    @State private var walkthrough = !Prefs.walkthroughSeen
 
     private var recording: Bool { link.status.recordingSince != nil }
 
     var body: some View {
         TabView {
             Tab("Pocket", systemImage: "creditcard") { PocketView() }
-            Tab("Recordings", systemImage: "waveform") { RecordingsView() }
+            Tab("Moments", systemImage: "quote.bubble") { RecordingsView() }
+            Tab("Insights", systemImage: "chart.bar.xaxis") { InsightsView() }
             Tab("Ask", systemImage: "questionmark.bubble") { AskTab() }
-            Tab("Settings", systemImage: "gear") { SettingsView() }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory(isEnabled: recording || live.isActive) { NowRecordingBar() }
@@ -24,12 +25,12 @@ struct RootView: View {
         } message: { Text(model.aiError ?? "") }
         .task { if Prefs.tagLocation { model.locator.requestPermission() } }
         .onChange(of: scenePhase, initial: true) { model.setActive(scenePhase == .active) }
+        .fullScreenCover(isPresented: $walkthrough) { WalkthroughView() }
     }
 }
 
-/// The home tab, one composition around the card itself: the card in its own colour
-/// with the light that mirrors the real one, the side button's twin, what is being
-/// recorded right now, and today's recordings.
+/// The home tab: the card itself, large, with the light that mirrors the real one and
+/// the atmosphere in that light's colour; what it is doing; the shutter; today's moments.
 struct PocketView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var devices: DeviceStore
@@ -38,12 +39,15 @@ struct PocketView: View {
     @EnvironmentObject var library: Library
     @State private var adding = false
     @State private var showDetails = false
+    @State private var showSettings = false
+    @State private var showWalkthrough = false
 
     private var isConnected: Bool { link.connectedDeviceID != nil && link.connectedDeviceID == devices.selectedID }
     private var busy: Bool { if case .busy = link.phase { true } else { link.phase == .scanning || link.phase == .connecting } }
     private var recording: Bool { link.status.recordingSince != nil }
     /// Has a key the Pocket accepts, so commands work. A rejected key counts as unpaired.
     private var paired: Bool { model.canCommand }
+    private var look: PocketLook { PocketLook(advertised: devices.selected?.advertisedName ?? "") }
 
     private var today: [Recording] {
         library.recordings
@@ -53,38 +57,47 @@ struct PocketView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    if devices.devices.isEmpty {
-                        setup
-                    } else {
-                        PocketCard(name: devices.selected?.name ?? "Pocket", advertised: devices.selected?.advertisedName ?? "",
-                                   light: light, status: statusText, detail: detailText,
-                                   battery: isConnected ? link.status.battery : nil,
-                                   mode: isConnected ? link.status.mode : nil)
-                        if let other = unknownNearby, !isConnected { nearbyPrompt(other) }
-                        if !paired { pairCard }
-                        if recording || live.isActive {
-                            liveCard
-                        } else if paired {
-                            recordButton
+            ZStack(alignment: .top) {
+                Brand.ground.ignoresSafeArea()
+                RadialGradient(colors: [atmosphere.opacity(0.22), .clear],
+                               center: UnitPoint(x: 0.5, y: 0.2), startRadius: 0, endRadius: 380)
+                    .ignoresSafeArea()
+                    .animation(.easeInOut(duration: 0.7), value: atmosphere)
+                ScrollView {
+                    VStack(spacing: 22) {
+                        if devices.devices.isEmpty {
+                            setup
                         } else {
-                            buttonHint
+                            hero
+                            if let other = unknownNearby, !isConnected { nearbyPrompt(other) }
+                            if !paired { pairCard }
+                            if paired, isConnected {
+                                shutter
+                            } else {
+                                buttonHint
+                            }
+                            todayList
                         }
-                        todayList
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 28)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, 24)
             }
-            .background(Brand.ground)
-            .navigationTitle("Pocket")
+            .navigationTitle(devices.selected?.name ?? "Pocket")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { if !devices.devices.isEmpty { toolbarMenu } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showSettings = true } label: { Image(systemName: "gearshape") }
+                        .accessibilityLabel("Settings")
+                }
+                if !devices.devices.isEmpty { toolbarMenu }
+            }
             .refreshable { await model.sync() }
             .sheet(isPresented: $adding) { AddDeviceSheet() }
             .sheet(isPresented: $showDetails) { PocketDetails() }
+            .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
+            .fullScreenCover(isPresented: $showWalkthrough) { WalkthroughView() }
             .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
             .onChange(of: devices.selectedID) {
                 link.disconnect()
@@ -99,18 +112,101 @@ struct PocketView: View {
     // MARK: Pieces
 
     private var panel: some ShapeStyle { Brand.surface }
-    private var panelShape: RoundedRectangle { RoundedRectangle(cornerRadius: 20, style: .continuous) }
+    private var panelShape: RoundedRectangle { RoundedRectangle(cornerRadius: 16, style: .continuous) }
+
+    /// The screen's glow: the light's colour while recording, the brand's when ready.
+    private var atmosphere: Color { recording ? Brand.record : (isConnected ? Brand.act : .clear) }
+
+    private var hero: some View {
+        VStack(spacing: 16) {
+            PocketIllustration(fill: look.fill, light: lampColour, blink: light == .pairing, pulse: light == .recording,
+                               switchDown: link.status.mode == "CALL")
+                .frame(height: 236)
+                .padding(.top, 6)
+                .onTapGesture { showDetails = true }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel("Pocket details")
+            VStack(spacing: 5) {
+                if recording, let since = link.status.recordingSince {
+                    Text(timerInterval: since...Date.distantFuture, countsDown: false)
+                        .font(.system(size: 54, weight: .semibold, design: .rounded).monospacedDigit())
+                } else {
+                    Text(statusText).font(.title2.weight(.bold))
+                }
+                if let detailText { Text(detailText).font(.subheadline).foregroundStyle(Brand.muted) }
+            }
+            .multilineTextAlignment(.center)
+            if recording || live.isActive { captions }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var lampColour: Color? {
+        switch light {
+        case .off: nil
+        case .on, .pairing: Lamp.ready
+        case .recording: Lamp.recording
+        }
+    }
+
+    /// The last two things said, following the recording as it streams.
+    private var captions: some View {
+        VStack(spacing: 6) {
+            if live.isActive, !live.text.isEmpty {
+                let (previous, current) = Captions.split(live.finalText, live.volatileText)
+                if !previous.isEmpty {
+                    Text(previous).font(.subheadline).foregroundStyle(Brand.muted).lineLimit(2)
+                }
+                Text(current).font(.title3.weight(.medium)).lineLimit(3)
+            } else if live.isActive, Prefs.liveTranscript {
+                Text("Listening…").font(.subheadline).foregroundStyle(Brand.muted)
+            }
+            Text(streamText).font(.caption).foregroundStyle(live.gap ? Brand.record : Brand.dim)
+            if let n = live.engineNote { Text(n).font(.caption2).foregroundStyle(Brand.dim) }
+            if let n = live.speakersNote { Text(n).font(.caption2).foregroundStyle(Brand.dim) }
+        }
+        .multilineTextAlignment(.center)
+        .padding(.horizontal, 8)
+        .animation(.easeInOut(duration: 0.2), value: live.text)
+    }
+
+    /// The side button, on the phone: amber, in a cyan ring; a square while recording.
+    private var shutter: some View {
+        VStack(spacing: 10) {
+            Button { Task { await model.toggleRecording() } } label: {
+                ZStack {
+                    Circle()
+                        .strokeBorder(recording ? Brand.record.opacity(0.7) : Brand.act.opacity(0.7), lineWidth: 3)
+                        .frame(width: 78, height: 78)
+                    RoundedRectangle(cornerRadius: recording ? 8 : 30, style: .continuous)
+                        .fill(Brand.record)
+                        .frame(width: recording ? 30 : 60, height: recording ? 30 : 60)
+                        .shadow(color: Brand.record.opacity(0.4), radius: 14, y: 6)
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(busy)
+            .animation(.spring(duration: 0.3), value: recording)
+            .accessibilityLabel(recording ? "Stop recording" : "Record")
+            Text(recording ? "Stop" : "Record").font(.caption.weight(.semibold)).foregroundStyle(Brand.muted)
+        }
+    }
 
     private var setup: some View {
         VStack(spacing: 18) {
-            PocketCard(name: "Your Pocket", advertised: "", light: .off, status: "Not added yet", detail: nil, battery: nil, mode: nil)
-            Text("Have it nearby and switched on. Nothing leaves this iPhone.")
-                .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            PocketIllustration().frame(height: 236).padding(.top, 6)
+            VStack(spacing: 5) {
+                Text("Your Pocket").font(.title2.weight(.bold))
+                Text("Have it nearby and switched on. Nothing leaves this iPhone.")
+                    .font(.subheadline).foregroundStyle(Brand.muted).multilineTextAlignment(.center)
+            }
             Button { adding = true } label: {
                 Label("Find my Pocket", systemImage: "magnifyingglass")
                     .font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
             }
             .buttonStyle(.glassProminent)
+            Button("Show me how it works") { showWalkthrough = true }
+                .font(.subheadline.weight(.semibold))
         }
     }
 
@@ -129,36 +225,22 @@ struct PocketView: View {
                 Text(link.keyRejected ? "Pair again" : "Pair your Pocket").font(.headline)
             }
             Text("Hold the side button for 5 seconds. When the light blinks blue, the app pairs by itself, and the light turns solid a little later.")
-                .font(.subheadline).foregroundStyle(.secondary)
+                .font(.subheadline).foregroundStyle(Brand.muted)
             Text(link.keyRejected
                  ? "Your Pocket no longer accepts this phone's key, which happens after a reset. Recordings started with the side button still stream in meanwhile."
                  : "Until then, recordings started with the side button already stream in. Pairing adds recording from here, getting recordings made while the phone was away, and battery and storage.")
-                .font(.footnote).foregroundStyle(.tertiary)
-            if isConnected {
-                Button("Pair now") { Task { await model.pairSelected() } }
-                    .buttonStyle(.glass).disabled(busy)
+                .font(.footnote).foregroundStyle(Brand.dim)
+            HStack {
+                if isConnected {
+                    Button("Pair now") { Task { await model.pairSelected() } }
+                        .buttonStyle(.glass).disabled(busy)
+                }
+                Button("Show me") { showWalkthrough = true }.buttonStyle(.glass)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(panel, in: panelShape)
-    }
-
-    private var recordButton: some View {
-        VStack(spacing: 8) {
-            Button { Task { await model.toggleRecording() } } label: {
-                Label("Record", systemImage: "record.circle.fill")
-                    .font(.title3.weight(.semibold))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-            }
-            .buttonStyle(.glassProminent)
-            .tint(Brand.record)
-            .disabled(busy || !isConnected)
-            Text(isConnected ? "Like the side button. It streams here as it records."
-                             : "Connect to record from here, or press the side button.")
-                .font(.caption).foregroundStyle(.secondary)
-        }
     }
 
     private var buttonHint: some View {
@@ -166,42 +248,7 @@ struct PocketView: View {
             Image(systemName: "record.circle").foregroundStyle(Brand.record)
             Text(isConnected ? "Press the side button on your Pocket to record. It streams here as it records."
                              : "Press the side button on your Pocket to record. It streams here once the phone connects.")
-                .font(.subheadline).foregroundStyle(.secondary)
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(panel, in: panelShape)
-    }
-
-    private var liveCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                LightDot(state: .recording).frame(width: 12, height: 12)
-                if let since = link.status.recordingSince {
-                    Text(timerInterval: since...Date.distantFuture, countsDown: false)
-                        .font(.system(size: 40, weight: .semibold, design: .rounded).monospacedDigit())
-                } else {
-                    Text("Finishing…").font(.title3)
-                }
-                Spacer()
-                if paired, recording {
-                    Button { Task { await model.toggleRecording() } } label: { Label("Stop", systemImage: "stop.fill") }
-                        .buttonStyle(.glassProminent).tint(Brand.record).disabled(busy)
-                }
-            }
-            Text(streamText).font(.footnote).foregroundStyle(live.gap ? Brand.record : .secondary)
-            if live.isActive {
-                if !live.turns.isEmpty, Speakers.count(live.turns) > 1 {
-                    ForEach(live.turns.suffix(8)) { t in TurnRow(turn: t, names: nil) }
-                } else if !live.text.isEmpty {
-                    Text(live.text.suffix(1_200)).font(.callout)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else if Prefs.liveTranscript {
-                    Text("Listening…").foregroundStyle(.secondary)
-                }
-            }
-            if let n = live.engineNote { Text(n).font(.caption).foregroundStyle(.tertiary) }
-            if let n = live.speakersNote { Text(n).font(.caption).foregroundStyle(.tertiary) }
+                .font(.subheadline).foregroundStyle(Brand.muted)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -209,32 +256,21 @@ struct PocketView: View {
     }
 
     private var todayList: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Today").font(.title3.weight(.semibold)).padding(.horizontal, 4)
             if today.isEmpty {
                 HStack(spacing: 12) {
-                    Image(systemName: "waveform").foregroundStyle(.secondary)
-                    Text("Nothing yet today.").font(.subheadline).foregroundStyle(.secondary)
+                    Image(systemName: "waveform").foregroundStyle(Brand.muted)
+                    Text("Nothing yet today.").font(.subheadline).foregroundStyle(Brand.muted)
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(panel, in: panelShape)
             } else {
-                VStack(spacing: 0) {
-                    ForEach(today) { r in
-                        NavigationLink(value: r.id) {
-                            HStack(spacing: 10) {
-                                RecordingRow(recording: r)
-                                Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
-                            }
-                            .padding(.horizontal, 16).padding(.vertical, 10)
-                            .contentShape(Rectangle())
-                        }
+                ForEach(today) { r in
+                    NavigationLink(value: r.id) { MomentCard(recording: r) }
                         .buttonStyle(.plain)
-                        if r.id != today.last?.id { Divider().padding(.leading, 16) }
-                    }
                 }
-                .background(panel, in: panelShape)
             }
         }
     }
@@ -264,6 +300,8 @@ struct PocketView: View {
                     }
                     .disabled(busy)
                 }
+                Divider()
+                Button { showWalkthrough = true } label: { Label("How the Pocket works", systemImage: "hand.tap") }
                 Button { adding = true } label: { Label("Add another Pocket", systemImage: "plus") }
             } label: {
                 Image(systemName: "ellipsis.circle")
@@ -280,9 +318,6 @@ struct PocketView: View {
     }
 
     private var statusText: String {
-        if let since = link.status.recordingSince {
-            return "Recording since \(since.formatted(date: .omitted, time: .shortened))"
-        }
         switch link.phase {
         case .idle: return model.userDisconnected ? "Disconnected" : "Not connected"
         case .waiting: return "Waiting for your Pocket"
@@ -300,7 +335,9 @@ struct PocketView: View {
         }
         guard isConnected else { return nil }
         var parts: [String] = []
+        if let b = link.status.battery { parts.append("\(b)%") }
         if let f = link.status.freeMiB { parts.append("\(PocketFacts.hours(mib: f)) free") }
+        if link.status.mode == "CALL" { parts.append("Call") }
         if link.status.webSync == true { parts.append("USB drive on") }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
@@ -321,72 +358,16 @@ struct PocketView: View {
     }
 }
 
-// MARK: - The card
-
-/// The card itself at its real proportions, in its own colour, with the light under a
-/// glass lens in the corner, the name, what it is doing, and its battery.
-struct PocketCard: View {
-    let name: String
-    let advertised: String
-    let light: LightState
-    let status: String
-    let detail: String?
-    let battery: Int?
-    /// The side switch: `CON` or `CALL`.
-    let mode: String?
-
-    var body: some View {
-        let look = PocketLook(advertised: advertised)
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center) {
-                LightDot(state: light).frame(width: 12, height: 12)
-                    .padding(8)
-                    .glassEffect(.regular, in: .circle)
-                if let mode {
-                    // The switch position, as a small glass toggle beside the light.
-                    Label(mode == "CALL" ? "Call" : "Audio", systemImage: mode == "CALL" ? "phone.fill" : "waveform")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(look.ink)
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .glassEffect(.regular, in: .capsule)
-                        .padding(.leading, 8)
-                }
-                Spacer()
-                Text(name).font(.subheadline.weight(.semibold)).foregroundStyle(look.ink.opacity(0.8))
-            }
-            Spacer(minLength: 0)
-            HStack(alignment: .lastTextBaseline) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(status).font(.title2.weight(.semibold)).foregroundStyle(look.ink)
-                    if let detail { Text(detail).font(.footnote).foregroundStyle(look.ink.opacity(0.75)) }
-                }
-                Spacer()
-                if let battery {
-                    Label("\(battery)%", systemImage: batteryGlyph(battery))
-                        .font(.subheadline.weight(.medium)).foregroundStyle(look.ink.opacity(0.9))
-                }
-            }
+/// The live transcript as two lines: the last complete sentence, and what is being said now.
+enum Captions {
+    static func split(_ final: String, _ volatile: String) -> (previous: String, current: String) {
+        var sentences: [String] = []
+        final.enumerateSubstrings(in: final.startIndex..., options: .bySentences) { s, _, _, _ in
+            if let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty { sentences.append(s) }
         }
-        .padding(18)
-        .frame(maxWidth: .infinity)
-        .aspectRatio(1.586, contentMode: .fit)
-        .background(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .fill(look.fill.gradient)
-                .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.18), lineWidth: 1))
-                .shadow(color: .black.opacity(0.25), radius: 14, y: 8)
-        )
-        .accessibilityElement(children: .combine)
-    }
-
-    private func batteryGlyph(_ level: Int) -> String {
-        switch level {
-        case 90...: "battery.100percent"
-        case 60...: "battery.75percent"
-        case 35...: "battery.50percent"
-        case 10...: "battery.25percent"
-        default: "battery.0percent"
-        }
+        let now = volatile.trimmingCharacters(in: .whitespacesAndNewlines)
+        if now.isEmpty { return (sentences.dropLast().last ?? "", sentences.last ?? "") }
+        return (sentences.last ?? "", now)
     }
 }
 
