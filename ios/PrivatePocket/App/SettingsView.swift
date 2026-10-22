@@ -19,6 +19,8 @@ struct SettingsView: View {
     @AppStorage("sttRemote") private var sttRemote = LLMConfig.hasDefault
     @State private var stayConnected = Prefs.stayConnected
     @State private var islandPresence = Prefs.islandPresence
+    @State private var autoReminders = Prefs.autoReminders
+    @State private var autoCalendar = Prefs.autoCalendar
     @AppStorage("sttModel") private var sttModel = RemoteSTT.defaultModel
 
     var body: some View {
@@ -104,6 +106,15 @@ struct SettingsView: View {
                     Button("Reset to default") { instructions = Prefs.defaultSummaryInstructions }
                 } header: { Text("Summary instructions") } footer: {
                     Text(Summariser.availability ?? "Sent with each transcript to \(LLM.whereLabel)")
+                }
+
+                Section {
+                    Toggle("Actions go to Reminders", isOn: $autoReminders)
+                        .onChange(of: autoReminders) { Prefs.autoReminders = autoReminders }
+                    Toggle("Dates go to Calendar", isOn: $autoCalendar)
+                        .onChange(of: autoCalendar) { Prefs.autoCalendar = autoCalendar }
+                } header: { Text("After each recording") } footer: {
+                    Text("Once a recording is read, what you agreed to do goes into a Pocket list in Reminders, with its due date when one was said, and meetings and deadlines go into Calendar. Tick one off in either place and the moment shows it done. Off, everything stays on the moment's page, with Add there instead.")
                 }
 
                 Section {

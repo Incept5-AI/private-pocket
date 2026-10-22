@@ -62,6 +62,14 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set(true, forKey: "seededServerKey")
         }
         library.backfillPockets(devices.devices)
+        // Everything is automatic now: Pockets added before that was the default transcribe what arrives too.
+        if !UserDefaults.standard.bool(forKey: "autoTranscribeOn") {
+            for var d in devices.devices where !d.autoTranscribe {
+                d.autoTranscribe = true
+                devices.update(d)
+            }
+            UserDefaults.standard.set(true, forKey: "autoTranscribeOn")
+        }
         link.onPeripheralLearned = { [weak self] deviceID, peripheralID in
             guard let self, var d = self.devices.devices.first(where: { $0.id == deviceID }) else { return }
             d.peripheralID = peripheralID
@@ -513,38 +521,121 @@ final class AppModel: ObservableObject {
         } else if r.meta.insight == nil {
             r.meta.insight = Analyst.heuristic(r)
         }
+        if let names = r.meta.insight?.inferredSpeakers, !names.isEmpty {
+            var current = r.meta.speakerNames ?? [:]
+            for (k, v) in names where (current[k] ?? "").isEmpty { current[k] = v }
+            r.meta.speakerNames = current
+        }
         r.meta.analysedAt = Date()
         library.update(r)
+        await placeNext(r)
     }
 
     func analyseMissing(_ rs: [Recording]) async {
         for r in rs where r.meta.transcript != nil && !working.contains(r.id) { await analyse(r, quiet: true) }
     }
 
-    func addToReminders(_ r: Recording, action: String) async {
+    /// Puts new actions in Reminders and new dates in Calendar, when those are on.
+    func placeNext(_ r: Recording) async {
+        guard var r = library.recordings.first(where: { $0.id == r.id }), var i = r.meta.insight, var items = i.next else { return }
+        var changed = false
+        for (idx, item) in items.enumerated() where !item.isDismissed {
+            if item.isAction, item.reminderID == nil, Prefs.autoReminders,
+               let id = try? await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.") {
+                items[idx].reminderID = id
+                changed = true
+            }
+            if item.isDate, item.eventID == nil, Prefs.autoCalendar, let d = item.date,
+               let id = try? await Planner.addEvent(item.text, at: d, note: "From \(r.sourceLabel), in Private Pocket.") {
+                items[idx].eventID = id
+                changed = true
+            }
+        }
+        if changed {
+            i.next = items
+            r.meta.insight = i
+            library.update(r)
+        }
+    }
+
+    /// Places one item by hand, whatever the settings.
+    func place(_ r: Recording, _ item: NextItem) async {
         do {
-            try await Planner.addReminder(action, note: "From \(r.sourceLabel), in Private Pocket.")
-            markAdded(r, action)
+            if item.isAction {
+                let id = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.")
+                change(r, item) { $0.reminderID = id }
+            } else if item.isDate, let d = item.date {
+                let id = try await Planner.addEvent(item.text, at: d, note: "From \(r.sourceLabel), in Private Pocket.")
+                change(r, item) { $0.eventID = id }
+            }
         } catch {
             aiError = error.localizedDescription
         }
     }
 
-    func addToCalendar(_ r: Recording, item: String) async {
-        guard let date = Planner.date(in: item) else { aiError = "No date found in “\(item)”."; return }
+    /// Ticked here, done in Reminders too.
+    func setDone(_ r: Recording, item: NextItem, done: Bool) {
+        if let id = item.reminderID { Planner.setReminder(id, completed: done) }
+        change(r, item) { $0.done = done }
+    }
+
+    /// "Not mine": gone from the list, and from Reminders or Calendar.
+    func dismiss(_ r: Recording, item: NextItem) {
+        if let id = item.reminderID { Planner.removeReminder(id) }
+        if let id = item.eventID { Planner.removeEvent(id) }
+        change(r, item) { $0.dismissed = true }
+    }
+
+    /// A reminder to chase a promise, on the day it was due, else tomorrow morning.
+    func remindMe(_ r: Recording, item: NextItem) async {
+        guard item.reminderID == nil else { return }
+        let due = item.date ?? Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date().addingTimeInterval(86_400)) ?? Date()
+        let who = item.who ?? "them"
         do {
-            try await Planner.addEvent(item, at: date, note: "From \(r.sourceLabel), in Private Pocket.")
-            markAdded(r, item)
+            let id = try await Planner.addReminder("Chase \(who): \(item.text)", due: due, note: "From \(r.sourceLabel), in Private Pocket.")
+            change(r, item) { $0.reminderID = id }
         } catch {
             aiError = error.localizedDescription
         }
     }
 
-    private func markAdded(_ r: Recording, _ item: String) {
+    /// Reads completion back from Reminders, so a tick there shows here.
+    func refreshDone(_ r: Recording) {
+        guard let items = r.meta.insight?.next else { return }
+        for item in items where item.isAction {
+            if let id = item.reminderID, let c = Planner.reminderCompleted(id), c != item.isDone {
+                change(r, item) { $0.done = c }
+            }
+        }
+    }
+
+    private func change(_ r: Recording, _ item: NextItem, _ edit: (inout NextItem) -> Void) {
         guard var r = library.recordings.first(where: { $0.id == r.id }), var i = r.meta.insight else { return }
-        i.added = Array(Set((i.added ?? []) + [item])).sorted()
+        var items = i.items
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
+        edit(&items[idx])
+        i.next = items
         r.meta.insight = i
         library.update(r)
+    }
+
+    /// The moment as a note to send: title, when, the brief, what's next.
+    func notes(for r: Recording) -> String {
+        var lines = [r.displayTitle,
+                     [r.startedAt?.formatted(date: .abbreviated, time: .shortened), r.meta.place?.name].compactMap { $0 }.joined(separator: " · ")]
+        if let b = r.meta.insight?.brief, !b.isEmpty {
+            lines.append("")
+            lines.append(b.map(\.text).joined(separator: " "))
+        }
+        let items = NextList.ordered(r.meta.insight?.items ?? []).filter { !$0.isDone }
+        if !items.isEmpty {
+            lines.append("")
+            lines.append("Next:")
+            for i in items { lines.append("• " + [i.text, i.when].compactMap { $0 }.joined(separator: ", ")) }
+        }
+        lines.append("")
+        lines.append("From Private Pocket.")
+        return lines.joined(separator: "\n")
     }
 
     /// Transcribes, one at a time, recordings that have no transcript.

@@ -23,21 +23,22 @@ struct InsightsView: View {
         }
         return (w, l, o)
     }
-    private var actions: [(Recording, String)] {
-        moments.flatMap { r in (r.meta.insight?.actions ?? []).filter { !(r.meta.insight?.isAdded($0) ?? false) }.map { (r, $0) } }
+    private func next(_ r: Recording) -> [NextItem] { (r.meta.insight?.items ?? []).filter { !$0.isDismissed } }
+    private var actions: [(Recording, NextItem)] {
+        moments.flatMap { r in next(r).filter { $0.isAction && !$0.isDone }.map { (r, $0) } }
     }
-    private var promises: [(Recording, String)] {
-        moments.flatMap { r in (r.meta.insight?.promises ?? []).map { (r, $0) } }
+    private var promises: [(Recording, NextItem)] {
+        moments.flatMap { r in next(r).filter(\.isPromise).map { (r, $0) } }
     }
-    private var upcoming: [(Recording, String, Date?)] {
-        moments.flatMap { r in (r.meta.insight?.upcoming ?? []).map { (r, $0, Planner.date(in: $0)) } }
-            .filter { $0.2.map { $0 > Date() } ?? true }
-            .sorted { ($0.2 ?? .distantFuture) < ($1.2 ?? .distantFuture) }
+    private var upcoming: [(Recording, NextItem)] {
+        moments.flatMap { r in next(r).filter { $0.isDate }.map { (r, $0) } }
+            .filter { $0.1.date.map { $0 > Date() } ?? true }
+            .sorted { ($0.1.date ?? .distantFuture) < ($1.1.date ?? .distantFuture) }
     }
     private var people: [(String, Int)] {
         var counts: [String: Int] = [:]
         for r in moments {
-            for p in Set(r.meta.insight?.people ?? Array((r.meta.speakerNames ?? [:]).values)) { counts[p, default: 0] += 1 }
+            for p in Set(r.people) { counts[p, default: 0] += 1 }
         }
         return counts.sorted { $0.value > $1.value || ($0.value == $1.value && $0.key < $1.key) }
             .prefix(12).map { ($0.key, $0.value) }
@@ -60,12 +61,16 @@ struct InsightsView: View {
                     } else {
                         timeCard
                         if !unread.isEmpty { readCard }
-                        listCard("Open actions", symbol: "checkmark.circle", items: actions, empty: "No open actions.") { r, a in
-                            Button("Add") { Task { await model.addToReminders(r, action: a) } }
-                                .font(.subheadline.weight(.semibold))
+                        listCard("To do", symbol: "checkmark.circle", items: actions, empty: "Nothing to do.") { r, item in
+                            if item.reminderID != nil {
+                                Text("In Reminders").font(.caption2.weight(.semibold)).foregroundStyle(Brand.good)
+                            } else {
+                                Button("Add") { Task { await model.place(r, item) } }.font(.subheadline.weight(.semibold))
+                            }
                         }
-                        listCard("Promised to you", symbol: "hand.raised", items: promises, empty: "Nothing promised yet.") { _, _ in
-                            EmptyView()
+                        listCard("Waiting on", symbol: "hand.raised", items: promises, empty: "Nothing promised yet.") { r, item in
+                            Button(item.reminderID == nil ? "Remind me" : "Set") { Task { await model.remindMe(r, item: item) } }
+                                .font(.subheadline.weight(.semibold)).disabled(item.reminderID != nil)
                         }
                         upcomingCard
                         peopleCard
@@ -152,8 +157,8 @@ struct InsightsView: View {
         }
     }
 
-    private func listCard<Trailing: View>(_ title: String, symbol: String, items: [(Recording, String)], empty: String,
-                                          @ViewBuilder trailing: @escaping (Recording, String) -> Trailing) -> some View {
+    private func listCard<Trailing: View>(_ title: String, symbol: String, items: [(Recording, NextItem)], empty: String,
+                                          @ViewBuilder trailing: @escaping (Recording, NextItem) -> Trailing) -> some View {
         card {
             VStack(alignment: .leading, spacing: 10) {
                 heading(title, symbol: symbol, count: items.count)
@@ -164,8 +169,8 @@ struct InsightsView: View {
                         HStack(alignment: .top, spacing: 10) {
                             NavigationLink(value: item.0.id) {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.1).font(.body)
-                                    Text(item.0.quote).font(.caption).foregroundStyle(Brand.muted).lineLimit(1)
+                                    Text(item.1.text).font(.body)
+                                    Text([item.1.when, item.0.quote].compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(Brand.muted).lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -190,17 +195,17 @@ struct InsightsView: View {
                         HStack(alignment: .top, spacing: 10) {
                             NavigationLink(value: item.0.id) {
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(item.1).font(.body)
-                                    Text(item.2.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? item.0.quote)
+                                    Text(item.1.text).font(.body)
+                                    Text(item.1.date.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? item.0.quote)
                                         .font(.caption).foregroundStyle(Brand.muted).lineLimit(1)
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.plain)
-                            if item.0.meta.insight?.isAdded(item.1) == true {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.good)
-                            } else if item.2 != nil {
-                                Button("Add") { Task { await model.addToCalendar(item.0, item: item.1) } }
+                            if item.1.eventID != nil {
+                                Text("In Calendar").font(.caption2.weight(.semibold)).foregroundStyle(Brand.good)
+                            } else if item.1.date != nil {
+                                Button("Add") { Task { await model.place(item.0, item.1) } }
                                     .font(.subheadline.weight(.semibold))
                             }
                         }

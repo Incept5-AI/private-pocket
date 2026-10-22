@@ -16,7 +16,7 @@ struct DeviceConfig: Codable, Identifiable, Hashable {
     /// After stopping a recording from this app, download it straight away.
     var downloadAfterStop = true
     /// Transcribe each recording as soon as it is downloaded.
-    var autoTranscribe = false
+    var autoTranscribe = true
     /// Fetch recordings made while the phone was away as soon as the Pocket connects.
     /// Optional so device lists saved before this field existed still decode.
     var autoSync: Bool?
@@ -243,6 +243,17 @@ enum Prefs {
     @MainActor static var serverWhenReachable: Bool {
         get { UserDefaults.standard.bool(forKey: "serverWhenReachable") }
         set { UserDefaults.standard.set(newValue, forKey: "serverWhenReachable") }
+    }
+
+    /// Once a recording is read, its actions go to Reminders and its dates to Calendar.
+    @MainActor static var autoReminders: Bool {
+        get { UserDefaults.standard.object(forKey: "autoReminders") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "autoReminders") }
+    }
+
+    @MainActor static var autoCalendar: Bool {
+        get { UserDefaults.standard.object(forKey: "autoCalendar") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "autoCalendar") }
     }
 
     /// What will actually run now: the server only if it answered, when that gate is on.
