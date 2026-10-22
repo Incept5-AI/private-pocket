@@ -242,6 +242,10 @@ final class PocketLink: NSObject, ObservableObject {
     private func establish(_ d: DeviceConfig) async throws {
         disconnect()
         try await waitForPoweredOn()
+        if device?.id != d.id {
+            keyRejected = false
+            pairAttemptPending = true
+        }
         device = d
         lines = []
         phase = .scanning

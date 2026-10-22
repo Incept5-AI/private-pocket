@@ -136,6 +136,10 @@ struct PocketView: View {
                 if let detailText { Text(detailText).font(.subheadline).foregroundStyle(Brand.muted) }
             }
             .multilineTextAlignment(.center)
+            if model.userDisconnected, !isConnected {
+                Button("Connect") { Task { await model.userConnect() } }
+                    .buttonStyle(.glass).disabled(busy)
+            }
             if recording || live.isActive { captions }
         }
         .frame(maxWidth: .infinity)
@@ -231,10 +235,8 @@ struct PocketView: View {
                  : "Until then, recordings started with the side button already stream in. Pairing adds recording from here, getting recordings made while the phone was away, and battery and storage.")
                 .font(.footnote).foregroundStyle(Brand.dim)
             HStack {
-                if isConnected {
-                    Button("Pair now") { Task { await model.pairSelected() } }
-                        .buttonStyle(.glass).disabled(busy)
-                }
+                Button("Pair now") { Task { await model.pairSelected() } }
+                    .buttonStyle(.glass).disabled(busy)
                 Button("Show me") { showWalkthrough = true }.buttonStyle(.glass)
             }
         }

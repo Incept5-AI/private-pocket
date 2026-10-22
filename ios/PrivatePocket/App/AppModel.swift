@@ -684,7 +684,8 @@ final class AppModel: ObservableObject {
     /// The app is as it was when first installed, and the walkthrough shows again.
     func resetEverything() {
         clearMoments()
-        userDisconnect()
+        link.disconnect()
+        userDisconnected = false
         for d in devices.devices { devices.remove(d) }
         LLM.key = ""
         RemoteSTT.key = ""

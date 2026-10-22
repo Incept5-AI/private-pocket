@@ -479,6 +479,7 @@ struct DeviceEditor: View {
 }
 
 struct AddDeviceSheet: View {
+    @EnvironmentObject var model: AppModel
     @EnvironmentObject var devices: DeviceStore
     @EnvironmentObject var link: PocketLink
     @Environment(\.dismiss) private var dismiss
@@ -534,6 +535,8 @@ struct AddDeviceSheet: View {
                         d.sessionKey = key.trimmingCharacters(in: .whitespaces)
                         devices.add(d)
                         dismiss()
+                        link.stopDiscovery()
+                        Task { await model.userConnect() }   // now, not at the next tick
                     }
                     .disabled(chosen == nil || name.isEmpty)
                 }
