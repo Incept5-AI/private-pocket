@@ -35,7 +35,7 @@ struct SettingsView: View {
                     NavigationLink { USBView() } label: {
                         Label("USB drive: free up space", systemImage: "externaldrive")
                     }
-                } header: { Text("Devices") } footer: {
+                } header: { Text("Pockets") } footer: {
                     Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected keeps the link up, also in the background, so every recording streams in as it is made. Deleting recordings from a Pocket needs the USB cable.")
                 }
 
@@ -340,8 +340,8 @@ struct DeviceEditor: View {
                     Button { showKey.toggle() } label: { Image(systemName: showKey ? "eye.slash" : "eye") }
                         .buttonStyle(.borderless)
                 }
-            } header: { Text("Session key") } footer: {
-                Text("Set when you pair, or paste the key another app uses. Sent first on every connection (APP&SK&…); without it the Pocket answers no commands but still streams recordings. Clear it to pair again from the Recorder tab. Stored in the Keychain on this phone only.")
+            } header: { Text("Advanced: session key") } footer: {
+                Text("Set when the app pairs, or paste the key another app uses. Sent first on every connection (APP&SK&…); without it the Pocket answers no commands but still streams recordings. Clear it to pair afresh from the Pocket tab. Stored in the Keychain on this phone only.")
             }
             Section("Bluetooth") {
                 TextField("Advertised name", text: $device.advertisedName)
@@ -394,7 +394,7 @@ struct AddDeviceSheet: View {
             Form {
                 Section {
                     if link.discovered.isEmpty {
-                        HStack { ProgressView(); Text("Scanning for Pockets…").foregroundStyle(.secondary) }
+                        HStack { ProgressView(); Text("Looking for your Pocket…").foregroundStyle(.secondary) }
                     }
                     ForEach(link.discovered.sorted { $0.rssi > $1.rssi }) { d in
                         let known = devices.devices.contains { $0.advertisedName == d.name }
@@ -412,20 +412,20 @@ struct AddDeviceSheet: View {
                         }
                         .disabled(known)
                     }
-                } header: { Text("Nearby") } footer: {
-                    Text("A Pocket only shows up while it is not connected to another phone or app. Turn Bluetooth off on other phones, or close the official app.")
+                } header: { Text("Found") } footer: {
+                    Text("Your Pocket shows up only while nothing else is connected to it: close the official app, or turn Bluetooth off on other phones.")
                 }
                 if chosen != nil {
                     Section("Name") { TextField("Name", text: $name) }
                     Section {
                         TextField("Session key (optional)", text: $key)
                             .textInputAutocapitalization(.never).autocorrectionDisabled().font(.body.monospaced())
-                    } header: { Text("Session key") } footer: {
-                        Text("Leave this empty and pair from the Recorder tab: hold the Pocket's side button for 5 seconds until it blinks blue, then tap Pair. Or paste the 16-character key another app already uses.")
+                    } header: { Text("Advanced") } footer: {
+                        Text("Leave this empty: once added, hold the Pocket's side button for 5 seconds until it blinks blue and the app pairs by itself. Or paste the 16-character key another app already uses.")
                     }
                 }
             }
-            .navigationTitle("Add device")
+            .navigationTitle("Add Pocket")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {

@@ -26,10 +26,19 @@ struct RecordingsView: View {
     }
 
     private var grouped: [(String, [Recording])] {
-        let byDay = Dictionary(grouping: shown) { r in
-            r.startedAt.map { $0.formatted(date: .complete, time: .omitted) } ?? r.day
-        }
+        let byDay = Dictionary(grouping: shown) { Self.dayLabel($0) }
         return byDay.sorted { ($0.value.first?.name ?? "") > ($1.value.first?.name ?? "") }
+    }
+
+    /// "Today", "Yesterday", then "Monday 20 October" (with the year once it differs).
+    static func dayLabel(_ r: Recording) -> String {
+        guard let d = r.startedAt else { return r.day }
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "Today" }
+        if cal.isDateInYesterday(d) { return "Yesterday" }
+        let sameYear = cal.component(.year, from: d) == cal.component(.year, from: Date())
+        return sameYear ? d.formatted(.dateTime.weekday(.wide).day().month(.wide))
+                        : d.formatted(.dateTime.weekday(.wide).day().month(.wide).year())
     }
 
     var body: some View {
@@ -37,7 +46,7 @@ struct RecordingsView: View {
             List {
                 if library.recordings.isEmpty {
                     ContentUnavailableView("No recordings yet", systemImage: "waveform",
-                                           description: Text("Recordings appear here as they stream from the Pocket, or when you download them on the Recorder tab."))
+                                           description: Text("Press the side button on your Pocket. Recordings stream in as they are made, and ones made while the phone was away arrive when it reconnects."))
                 } else if shown.isEmpty {
                     ContentUnavailableView.search(text: search)
                 }
@@ -89,35 +98,45 @@ struct RecordingRow: View {
     var showDevice = false
 
     var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
                 Text(recording.displayTitle).font(.headline).lineLimit(1)
-                HStack(spacing: 6) {
-                    if recording.meta.title != nil || recording.meta.place?.name != nil,
-                       let t = recording.startedAt {
-                        Text(t.formatted(date: .omitted, time: .shortened))
-                    }
-                    if let s = recording.meta.seconds { Text(Duration.seconds(s).formatted(.time(pattern: .minuteSecond))) }
-                    Text(recording.size.formatted(.byteCount(style: .file)))
-                    if showDevice { Text(recording.pocketName(devices.devices)) }
-                }
-                .font(.caption).foregroundStyle(.secondary)
-                if recording.meta.title != nil, let place = recording.meta.place {
-                    Label(place.label, systemImage: "mappin.and.ellipse")
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                }
-                if let s = recording.meta.summary ?? recording.meta.transcript {
-                    Text(s).font(.caption).lineLimit(2).foregroundStyle(.secondary)
+                Spacer()
+                if recording.meta.title != nil || recording.meta.place?.name != nil, let t = recording.startedAt {
+                    Text(t.formatted(date: .omitted, time: .shortened)).font(.subheadline).foregroundStyle(.secondary)
                 }
             }
-            Spacer()
-            if model.working.contains(recording.id) {
-                ProgressView()
+            HStack(spacing: 10) {
+                if let s = recording.meta.seconds { Label(Self.length(s), systemImage: "clock") }
+                if recording.meta.title != nil, let p = recording.meta.place?.name {
+                    Label(p, systemImage: "mappin").lineLimit(1)
+                }
+                if let t = recording.meta.turns, Speakers.count(t) > 1 {
+                    Label("\(Speakers.count(t)) speakers", systemImage: "person.2")
+                }
+                if showDevice { Text(recording.pocketName(devices.devices)) }
+                Spacer()
+                if model.working.contains(recording.id) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    if recording.meta.transcript != nil { Image(systemName: "text.quote") }
+                    if recording.meta.summary != nil { Image(systemName: "sparkles") }
+                }
+            }
+            .font(.caption).foregroundStyle(.secondary)
+            if let s = recording.meta.summary ?? recording.meta.transcript {
+                Text(s).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             } else {
-                if recording.meta.transcript != nil { Image(systemName: "text.quote").foregroundStyle(.secondary) }
-                if recording.meta.summary != nil { Image(systemName: "sparkles").foregroundStyle(.secondary) }
+                Text("Not transcribed yet").font(.subheadline).foregroundStyle(.tertiary)
             }
         }
+        .padding(.vertical, 2)
+    }
+
+    /// "40 sec", "12 min", "1 hr 5 min".
+    static func length(_ seconds: Int) -> String {
+        seconds < 60 ? "\(seconds) sec"
+            : Duration.seconds(seconds).formatted(.units(allowed: [.hours, .minutes], width: .abbreviated))
     }
 }
 

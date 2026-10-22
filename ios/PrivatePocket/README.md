@@ -6,17 +6,21 @@ goes to Pocket's cloud. See the [top-level README](../../README.md) for the over
 
 ## Tabs
 
-- **Recorder.** Stays connected while the app is open. If the Pocket is not paired yet, a
-  **Pair** section shows the one step (hold the side button for 5 s until it blinks blue;
-  the app pairs by itself, and Pair tries at once); recordings started with the button
-  already stream in before that, and keep doing so if the Pocket ever rejects the key. It has a
-  record button with a timer, and while recording a **Live** panel shows the streaming
-  state and the transcript as it arrives (on-device `SpeechAnalyzer`, or server Whisper in
-  15 s slices). At stop, the streamed copy becomes the recording if its length matches
-  what the Pocket reports; otherwise the file is downloaded (unpaired: the streamed copy
-  is kept as is). Recordings made while the phone was away are fetched by themselves on
-  every connection (per-device setting). Below that: Fetch missed recordings now, device
-  details and the protocol log.
+- **Pocket.** The card itself, drawn in its own colour (from the Bluetooth name) with a
+  light that mirrors the real one: blue when paired and ready, blinking blue when it needs
+  pairing, amber while recording. Under it, what it is doing and battery and storage, the
+  latter in hours of recording. If the Pocket is not paired yet, a **Pair** section shows
+  the one step (hold the side button for 5 s until it blinks blue; the app pairs by
+  itself, and Pair now tries at once); recordings started with the button already stream
+  in before that, and keep doing so if the Pocket ever rejects the key. A round amber
+  button is the side button's twin, and while recording the section shows the timer, the
+  streaming state and the transcript as it arrives (on-device `SpeechAnalyzer`, or server
+  Whisper in 15 s slices). At stop, the streamed copy becomes the recording if its length
+  matches what the Pocket reports; otherwise the file is fetched (unpaired: the streamed
+  copy is kept as is). Recordings made while the phone was away are fetched by themselves
+  on every connection (per-device setting). Then today's recordings. The ⋯ menu has Get
+  recordings now, Pocket details (battery, storage, firmware, protocol log), Connect or
+  Disconnect, and Add another Pocket.
 - **Recordings.** Named by place and time, searchable, and filterable by Pocket. Each
   recording has a player, a title, a location, a transcript in a chosen language (with speakers if
   enabled, which you can rename), a summary, and "Ask about this recording".
