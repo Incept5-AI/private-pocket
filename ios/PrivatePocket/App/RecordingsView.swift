@@ -31,6 +31,11 @@ struct RecordingsView: View {
         return byDay.sorted { ($0.value.first?.startedAt ?? .distantPast) > ($1.value.first?.startedAt ?? .distantPast) }
     }
 
+    /// The month of the oldest moment shown, for the foot of the rail.
+    private var earliestLabel: String {
+        shown.compactMap(\.startedAt).min().map { $0.formatted(.dateTime.month(.abbreviated).year(.twoDigits)) } ?? ""
+    }
+
     /// "Today", "Yesterday", then "Monday 20 October" (with the year once it differs).
     static func dayLabel(_ r: Recording) -> String {
         guard let d = r.startedAt else { return r.day }
@@ -44,6 +49,7 @@ struct RecordingsView: View {
 
     var body: some View {
         NavigationStack {
+            ScrollViewReader { proxy in
             List {
                 if library.recordings.isEmpty {
                     ContentUnavailableView {
@@ -57,7 +63,7 @@ struct RecordingsView: View {
                     ContentUnavailableView.search(text: search)
                 }
                 ForEach(grouped, id: \.0) { day, items in
-                    Section(day) {
+                    Section {
                         ForEach(items) { r in
                             NavigationLink(value: r.id) { MomentRow(recording: r, showDevice: pockets.count > 1) }
                                 .listRowBackground(Color.clear)
@@ -65,11 +71,23 @@ struct RecordingsView: View {
                                 .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                         }
                         .onDelete { idx in idx.map { items[$0] }.forEach(library.delete) }
+                    } header: {
+                        Text(day).id(day)
                     }
                 }
             }
                 .scrollContentBackground(.hidden)
                 .background(Brand.ground)
+                .scrollIndicators(.hidden)
+                .overlay(alignment: .trailing) {
+                    if grouped.count >= 3, search.isEmpty {
+                        DateRail(days: grouped.map(\.0), earliest: earliestLabel) { day in
+                            withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(day, anchor: .top) }
+                        }
+                        .padding(.vertical, 28).padding(.trailing, 2)
+                    }
+                }
+            }
             .navigationTitle("Moments")
             .searchable(text: $search, prompt: "Titles, places, transcripts, speakers, Pockets")
             .toolbar {
@@ -302,5 +320,73 @@ struct MomentRow: View {
             MomentCard(recording: recording, showTime: false,
                        device: showDevice ? recording.pocketName(devices.devices) : nil)
         }
+    }
+}
+
+
+// MARK: - The date rail
+
+/// The date filter on the right edge of Moments: slide a thumb up or down and the
+/// list follows, now at the top, the past at the bottom, one tick per day that has
+/// moments. A glass lens names the day under the thumb.
+struct DateRail: View {
+    let days: [String]
+    let earliest: String
+    let scrollTo: (String) -> Void
+    @State private var dragging = false
+    @State private var index = 0
+    @State private var y: CGFloat = 0
+
+    var body: some View {
+        GeometryReader { geo in
+            let h = geo.size.height
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 4) {
+                    Text("Now").font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted)
+                    Canvas { ctx, size in
+                        let n = max(2, min(days.count, Int(size.height / 7)))
+                        for k in 0..<n {
+                            let ty = size.height * CGFloat(k) / CGFloat(n - 1)
+                            let day = Int((CGFloat(k) / CGFloat(n - 1) * CGFloat(days.count - 1)).rounded())
+                            let active = dragging && day == index
+                            let w: CGFloat = active ? 14 : (k % 5 == 0 ? 10 : 6)
+                            ctx.fill(Path(roundedRect: CGRect(x: size.width - w, y: ty - 1, width: w, height: 2), cornerRadius: 1),
+                                     with: .color(active ? Brand.act : Color.white.opacity(0.4)))
+                        }
+                    }
+                    .frame(width: 16)
+                    Text(earliest).font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted).lineLimit(1).fixedSize()
+                }
+                .padding(.horizontal, 6).padding(.vertical, 8)
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .frame(height: h)
+                if dragging {
+                    HStack(spacing: 8) {
+                        Text(days[min(max(index, 0), days.count - 1)]).font(.subheadline.weight(.semibold)).lineLimit(1).fixedSize()
+                        Circle().fill(Brand.act).frame(width: 8, height: 8)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .glassEffect(.regular.tint(Brand.act.opacity(0.18)), in: Capsule())
+                    .offset(x: -40, y: min(max(y - 18, 0), h - 36))
+                    .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
+                }
+            }
+            .frame(width: geo.size.width, height: h, alignment: .topTrailing)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { g in
+                        let inner = max(1, h - 48)   // the track, inside the Now and month labels
+                        y = min(max(0, g.location.y), h)
+                        let f = min(max(0, (y - 24) / inner), 1)
+                        let i = days.isEmpty ? 0 : Int((f * CGFloat(days.count - 1)).rounded())
+                        if !dragging { withAnimation(.spring(duration: 0.3)) { dragging = true } }
+                        if i != index || !dragging { index = i; scrollTo(days[i]) }
+                    }
+                    .onEnded { _ in withAnimation(.spring(duration: 0.35)) { dragging = false } }
+            )
+            .sensoryFeedback(.selection, trigger: index)
+        }
+        .frame(width: 44)
     }
 }
