@@ -27,7 +27,7 @@ struct RecordingsView: View {
 
     private var grouped: [(String, [Recording])] {
         let byDay = Dictionary(grouping: shown) { Self.dayLabel($0) }
-        return byDay.sorted { ($0.value.first?.name ?? "") > ($1.value.first?.name ?? "") }
+        return byDay.sorted { ($0.value.first?.startedAt ?? .distantPast) > ($1.value.first?.startedAt ?? .distantPast) }
     }
 
     /// "Today", "Yesterday", then "Monday 20 October" (with the year once it differs).

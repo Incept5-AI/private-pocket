@@ -159,7 +159,9 @@ final class Library: ObservableObject {
                 }
             }
         }
-        recordings = out.sorted { $0.name > $1.name }
+        // Newest first by time, not by name: call recordings are named `PH…` and would
+        // otherwise all sort above the digit-named audio ones.
+        recordings = out.sorted { ($0.startedAt ?? .distantPast, $0.name) > ($1.startedAt ?? .distantPast, $1.name) }
     }
 
     func recordings(for device: UUID) -> [Recording] { recordings.filter { $0.deviceID == device } }

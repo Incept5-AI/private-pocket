@@ -48,7 +48,7 @@ struct PocketView: View {
     private var today: [Recording] {
         library.recordings
             .filter { $0.deviceID == devices.selectedID && $0.startedAt.map { Calendar.current.isDateInToday($0) } == true }
-            .sorted { $0.name > $1.name }
+            .sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
     }
 
     var body: some View {
