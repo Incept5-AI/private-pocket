@@ -116,6 +116,8 @@ final class PocketLink: NSObject, ObservableObject {
     /// One pairing try at a time, and automatic ones no closer than 8 s apart.
     private var pairing = false
     private var lastPairTryAt = Date.distantPast
+    /// Looks at a key the Pocket may have taken while the link was dropping, a few times.
+    private var triedChecks = 0
     /// Called when a key was accepted, with the device that now holds it.
     var onPaired: ((DeviceConfig) -> Void)?
 
@@ -191,11 +193,15 @@ final class PocketLink: NSObject, ObservableObject {
     private func tryNewKey(_ d: DeviceConfig, quiet: Bool) async throws {
         let key = Self.newKey()
         note("trying to pair")
+        Keychain.set(key, for: Self.triedAccount(d))   // in case the Pocket takes it but the link drops before it says so
+        triedChecks = 0
         do { try await sendKey(key) } catch {
+            if peripheral?.state == .connected { Keychain.delete(Self.triedAccount(d)) }   // a refusal, not a drop
             if quiet { return }
             disconnect()
             throw PocketError.notPairing
         }
+        Keychain.delete(Self.triedAccount(d))
         d.sessionKey = key   // Keychain; the struct itself is unchanged
         note("paired: the Pocket took a new key")
         try await afterKey(d)
@@ -379,8 +385,30 @@ final class PocketLink: NSObject, ObservableObject {
             onPaired?(d)
             return
         }
+        if let tried = Keychain.get(Self.triedAccount(d)), !tried.isEmpty, triedChecks < 3 {
+            triedChecks += 1
+            note("checking whether the Pocket took the last key sent")
+            do {
+                try await sendKey(tried)
+            } catch {
+                if peripheral?.state == .connected { Keychain.delete(Self.triedAccount(d)) }   // it answered: it does not hold it
+                note("it had not")
+                if quiet { return }
+                disconnect()
+                throw PocketError.notPairing
+            }
+            Keychain.delete(Self.triedAccount(d))
+            d.sessionKey = tried
+            note("it had: paired")
+            try await afterKey(d)
+            onPaired?(d)
+            return
+        }
         try await tryNewKey(d, quiet: quiet)
     }
+
+    /// Where the last key sent to a Pocket waits until the Pocket says whether it took it.
+    static func triedAccount(_ d: DeviceConfig) -> String { "sk.tried.\(d.id.uuidString)" }
 
     /// `APP&SK&<key>`: the Pocket answers `MCU&SK&OK`, or drops the connection at once
     /// when the key is wrong (outside pairing mode).
