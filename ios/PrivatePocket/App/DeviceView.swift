@@ -198,11 +198,11 @@ struct DeviceView: View {
                 }
             }
             Button { Task { await model.sync() } } label: {
-                Label("Download new recordings", systemImage: "arrow.down.circle")
+                Label("Fetch missed recordings now", systemImage: "arrow.down.circle")
             }
             .disabled(busy || recording)
         } footer: {
-            Text("Fetches every recording the phone does not have yet. Pull down to do the same. Recordings made while connected are saved as they stream.")
+            Text("Recordings made while connected are saved as they stream. Anything made while the phone was away is fetched by itself when the Pocket connects (Settings → Devices). This fetches it now; pulling down does the same.")
         }
     }
 

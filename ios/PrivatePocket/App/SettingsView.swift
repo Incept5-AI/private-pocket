@@ -353,9 +353,10 @@ struct DeviceEditor: View {
                 }
             }
             Section("Behaviour") {
+                Toggle("Fetch missed recordings when connected", isOn: $device.syncsAutomatically)
                 Toggle("Set the Pocket's clock on connect", isOn: $device.setClockOnConnect)
-                Toggle("Download after stopping a recording", isOn: $device.downloadAfterStop)
-                Toggle("Transcribe automatically after download", isOn: $device.autoTranscribe)
+                Toggle("Fetch the file after stopping a recording", isOn: $device.downloadAfterStop)
+                Toggle("Transcribe fetched recordings automatically", isOn: $device.autoTranscribe)
             }
             Section {
                 Button("Remove device", role: .destructive) { confirmRemove = true }

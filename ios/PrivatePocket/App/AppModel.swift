@@ -77,6 +77,7 @@ final class AppModel: ObservableObject {
         }
         link.onConnected = { [weak self] in
             self?.link.note("connected in the background")
+            Task { await self?.autoSync() }
         }
         link.onRecordingStopped = { [weak self] name in
             guard let self, let d = self.connectedDevice else { return }
@@ -112,6 +113,19 @@ final class AppModel: ObservableObject {
         guard active else { link.standby(d); return }
         guard link.phase == .idle else { return }
         await link.run("Connecting", quiet: true) { try await link.connect(d) }
+        await autoSync(d)
+    }
+
+    private var autoSyncing = false
+
+    /// Fetch whatever the phone is missing, quietly, once the Pocket is connected and
+    /// not recording. Runs after every connection, foreground or background.
+    func autoSync(_ device: DeviceConfig? = nil) async {
+        guard let d = device ?? devices.selected, d.isPaired, d.syncsAutomatically, !autoSyncing,
+              link.isReady, link.connectedDeviceID == d.id, link.status.recordingSince == nil else { return }
+        autoSyncing = true
+        defer { autoSyncing = false }
+        await sync(quiet: true)
     }
 
     func standby() {
@@ -125,6 +139,7 @@ final class AppModel: ObservableObject {
         userDisconnected = false
         await link.run("Pairing") { try await link.pair(d) }
         devices.update(d)   // the key lives in the Keychain; this refreshes the views
+        await autoSync(d)
     }
 
     func userConnect() async {
@@ -147,13 +162,17 @@ final class AppModel: ObservableObject {
     func connectSelected() async {
         guard let d = devices.selected else { return }
         await link.run("Connecting") { try await link.connect(d) }
+        await autoSync(d)
     }
 
-    /// Download every recording on the device that is not on the phone yet.
-    func sync() async {
+    /// Fetch every recording on the device that is not on the phone yet.
+    func sync(quiet: Bool = false) async {
         guard let d = devices.selected else { return }
-        guard d.isPaired else { link.lastError = "Pair the Pocket to download recordings from it."; return }
-        await link.run("Syncing") {
+        guard d.isPaired else {
+            if !quiet { link.lastError = "Pair the Pocket to fetch recordings from it." }
+            return
+        }
+        await link.run("Fetching", quiet: quiet) {
             try await link.connect(d)
             let remote = try await link.listFiles()
             let missing = remote.filter { !library.has(device: d.id, day: $0.day, name: $0.name) }

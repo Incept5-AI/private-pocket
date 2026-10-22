@@ -13,7 +13,9 @@ goes to Pocket's cloud. See the [top-level README](../../README.md) for the over
   state and the transcript as it arrives (on-device `SpeechAnalyzer`, or server Whisper in
   15 s slices). At stop, the streamed copy becomes the recording if its length matches
   what the Pocket reports; otherwise the file is downloaded (unpaired: the streamed copy
-  is kept as is). Below that: Download new recordings, device details and the protocol log.
+  is kept as is). Recordings made while the phone was away are fetched by themselves on
+  every connection (per-device setting). Below that: Fetch missed recordings now, device
+  details and the protocol log.
 - **Recordings.** Named by place and time, searchable, and filterable by Pocket. Each
   recording has a player, a title, a location, a transcript in a chosen language (with speakers if
   enabled, which you can rename), a summary, and "Ask about this recording".
