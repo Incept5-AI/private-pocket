@@ -71,7 +71,7 @@ extension Recording {
         if let t = meta.title, !t.isEmpty { return t }
         if let t = meta.insight?.title, !t.isEmpty { return t }
         if let s = firstSentence { return "“\(s)”" }
-        return meta.place?.name ?? "Not transcribed yet"
+        return meta.transcript == nil ? "Not transcribed yet" : (meta.place?.name ?? "Untitled")
     }
 
     var firstSentence: String? {
@@ -104,6 +104,8 @@ struct KindChip: View {
         Label(kind.label, systemImage: kind.symbol)
             .font(.caption.weight(.semibold))
             .foregroundStyle(kind.colour)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
             .padding(.horizontal, 9).padding(.vertical, 4)
             .background(kind.colour.opacity(0.14), in: Capsule())
     }
@@ -152,7 +154,8 @@ enum Analyst {
     static let instructions = """
     You read the transcript of one recorded conversation, phone call or voice note, and say what it was and what came out of it. \
     The transcript may be in any language; write the title and the items in that language. \
-    Use only what is in the text. Do not invent names, dates or tasks. Keep every item short.
+    Use only what is in the text. Do not invent names, dates or tasks. Keep every item short. \
+    People are real names only: never list labels like Speaker 1 or Speaker 2 as people.
     """
 
     /// The whole transcript, in parts if it is long, merged into one reading.
@@ -192,9 +195,15 @@ enum Analyst {
         out.actions = unique(drafts.flatMap { $0.actions ?? [] }, cap: 10)
         out.promises = unique(drafts.flatMap { $0.promises ?? [] }, cap: 8)
         out.upcoming = unique(drafts.flatMap { $0.upcoming ?? [] } + base.upcoming, cap: 8)
-        out.people = unique(drafts.flatMap { $0.people ?? [] } + base.people, cap: 10)
+        out.people = unique((drafts.flatMap { $0.people ?? [] } + base.people).filter { !isLabel($0) }, cap: 10)
         out.source = "model"
         return out
+    }
+
+    /// "Speaker 2", "speaker one": a transcript label, not a person.
+    static func isLabel(_ s: String) -> Bool {
+        let t = s.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.hasPrefix("speaker ") || t == "speaker" || t.hasPrefix("unknown speaker")
     }
 
     private static func unique(_ items: [String], cap: Int) -> [String] {

@@ -466,37 +466,55 @@ struct PlayerControls: View {
 
 // MARK: - Moments
 
-/// A moment as a card: the kind, when and how long, the line that stands for it, who and where.
+/// A moment as a card: the kind, when and how long, the line that stands for it, who and
+/// where, and for a sample whether it was read as expected.
 struct MomentCard: View {
     @EnvironmentObject var model: AppModel
     let recording: Recording
     var showTime = true
+    /// Which Pocket, when more than one has recordings here.
+    var device: String? = nil
 
     var body: some View {
         let r = recording
         let when = [showTime ? r.startedAt?.formatted(date: .omitted, time: .shortened) : nil,
                     r.meta.seconds.map { PocketFacts.length($0) }].compactMap { $0 }.joined(separator: " · ")
+        let foot = [r.subline, device].compactMap { $0 }.joined(separator: " · ")
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 KindChip(kind: r.kind)
-                if let e = r.meta.expectedKind, let i = r.meta.insight, i.readByModel {
-                    let ok = e == i.kind
-                    Label(ok ? "As expected" : "Expected \(MomentKind(rawValue: e)?.label ?? e)", systemImage: ok ? "checkmark" : "xmark")
-                        .font(.caption2.weight(.semibold)).foregroundStyle(ok ? Brand.good : Brand.bad)
-                }
-                Spacer()
+                Spacer(minLength: 6)
                 if model.working.contains(r.id) { ProgressView().controlSize(.small) }
-                Text(when).font(.caption).foregroundStyle(Brand.muted)
+                Text(when).font(.caption).foregroundStyle(Brand.muted).fixedSize()
             }
             Text(r.quote)
                 .font(.body.weight(.medium))
                 .lineLimit(2)
                 .foregroundStyle(r.meta.transcript == nil && r.meta.title == nil ? Brand.muted : Brand.text)
-            if let s = r.subline { Text(s).font(.caption).foregroundStyle(Brand.muted).lineLimit(1) }
+            if !foot.isEmpty || verdict != nil {
+                HStack(spacing: 8) {
+                    if !foot.isEmpty { Text(foot).font(.caption).foregroundStyle(Brand.muted).lineLimit(1) }
+                    Spacer(minLength: 6)
+                    if let v = verdict {
+                        Label(v.text, systemImage: v.ok ? "checkmark" : "xmark")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(v.ok ? Brand.good : Brand.bad)
+                            .lineLimit(1)
+                            .fixedSize()
+                    }
+                }
+            }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Brand.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    /// For a sample moment that has been read: whether the kind matched.
+    private var verdict: (ok: Bool, text: String)? {
+        guard let e = recording.meta.expectedKind, let i = recording.meta.insight, i.readByModel else { return nil }
+        let ok = e == i.kind
+        return (ok, ok ? "As expected" : "Expected \(MomentKind(rawValue: e)?.label ?? e)")
     }
 }
 
@@ -513,12 +531,8 @@ struct MomentRow: View {
                 .foregroundStyle(Brand.muted)
                 .frame(width: 50, alignment: .leading)
                 .padding(.top, 14)
-            VStack(alignment: .leading, spacing: 4) {
-                MomentCard(recording: recording, showTime: false)
-                if showDevice {
-                    Text(recording.pocketName(devices.devices)).font(.caption2).foregroundStyle(Brand.dim).padding(.leading, 4)
-                }
-            }
+            MomentCard(recording: recording, showTime: false,
+                       device: showDevice ? recording.pocketName(devices.devices) : nil)
         }
     }
 }
