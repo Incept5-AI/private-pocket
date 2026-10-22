@@ -145,15 +145,18 @@ struct RecordingDetail: View {
     @State private var language = Prefs.transcriptionLocale
     @State private var renaming: Int?
     @State private var newName = ""
+    @State private var blocks: [TranscriptBlock] = []
 
     private var recording: Recording? { library.recordings.first { $0.id == id } }
+    /// The paragraph the playhead is in.
+    private var currentBlock: Int? { blocks.last { $0.start <= player.position }?.id }
 
     var body: some View {
         if let r = recording {
+            ScrollViewReader { proxy in
             List {
                 Section {
                     PlayerControls(player: player, url: r.audioURL)
-                    ShareLink(item: r.audioURL) { Label("Share audio", systemImage: "square.and.arrow.up") }
                 }
                 Section("Details") {
                     TextField(r.meta.place?.name ?? r.startedAt?.formatted(date: .omitted, time: .shortened) ?? "Title",
@@ -185,42 +188,33 @@ struct RecordingDetail: View {
                     }
                 }
                 Section {
-                    Picker("Language", selection: $language) {
-                        ForEach(languageChoices(r), id: \.self) { Text(Languages.name($0)).tag($0) }
-                    }
-                    if let turns = r.meta.turns, Speakers.count(turns) > 1 {
-                        ForEach(turns) { t in
-                            TurnRow(turn: t, names: r.meta.speakerNames) { speaker in
-                                newName = r.meta.speakerNames?[String(speaker)] ?? ""
-                                renaming = speaker
-                            }
+                    ForEach(blocks) { b in
+                        TranscriptBlockRow(block: b, names: r.meta.speakerNames,
+                                           position: b.id == currentBlock ? player.position : nil) { speaker in
+                            newName = r.meta.speakerNames?[String(speaker)] ?? ""
+                            renaming = speaker
                         }
-                    } else if let t = r.meta.transcript {
-                        Text(t).textSelection(.enabled)
+                        .id(b.id)
+                        .listRowBackground(b.id == currentBlock && player.playing
+                                           ? Color.orange.opacity(0.12) : Color(.secondarySystemGroupedBackground))
+                        .onTapGesture {
+                            player.seek(b.start)
+                            if !player.playing { player.toggle() }
+                        }
                     }
-                    if let t = r.transcriptForModel {
-                        ShareLink(item: t) { Label("Share transcript", systemImage: "square.and.arrow.up") }
-                    }
-                    if r.meta.words != nil, Prefs.diarize {
+                    if r.meta.transcript == nil {
                         Button {
-                            Task { await model.findSpeakers(r) }
+                            Task { await model.transcribe(r, localeID: language) }
                         } label: {
-                            Label(r.meta.turns == nil ? "Find speakers" : "Find speakers again", systemImage: "person.2")
+                            Label("Transcribe in \(Languages.name(language))", systemImage: "text.quote")
                         }
                         .disabled(model.working.contains(r.id))
                     }
-                    Button {
-                        Task { await model.transcribe(r, localeID: language) }
-                    } label: {
-                        Label(r.meta.transcript == nil ? "Transcribe in \(Languages.name(language))"
-                                                       : "Transcribe again in \(Languages.name(language))",
-                              systemImage: "text.quote")
-                    }
-                    .disabled(model.working.contains(r.id))
                 } header: { Text("Transcript") } footer: {
                     VStack(alignment: .leading, spacing: 4) {
+                        if !blocks.isEmpty { Text("Follows the audio as it plays. Tap a line to play from there.") }
                         if r.meta.liveTranscript == true {
-                            Text("Made live while recording. Transcribe again for the most accurate version.")
+                            Text("Made live while recording. Transcribe again, from the ⋯ menu, for the most accurate version.")
                         }
                         if let e = r.meta.speakersError { Text("Speakers: \(e)") }
                         if let turns = r.meta.turns, Speakers.count(turns) > 1 { Text("Tap a speaker's name to rename them.") }
@@ -232,7 +226,6 @@ struct RecordingDetail: View {
                 Section {
                     if let s = r.meta.summary {
                         Text(s).textSelection(.enabled)
-                        ShareLink(item: s) { Label("Share summary", systemImage: "square.and.arrow.up") }
                     }
                     Button {
                         Task { await model.summarise(r) }
@@ -267,6 +260,48 @@ struct RecordingDetail: View {
             }
             .navigationTitle(r.displayTitle)
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Menu {
+                            ForEach(languageChoices(r), id: \.self) { lang in
+                                Button(Languages.name(lang)) { Task { await model.transcribe(r, localeID: lang) } }
+                            }
+                        } label: {
+                            Label(r.meta.transcript == nil ? "Transcribe in…" : "Transcribe again in…", systemImage: "text.quote")
+                        }
+                        if r.meta.words != nil, Prefs.diarize {
+                            Button {
+                                Task { await model.findSpeakers(r) }
+                            } label: {
+                                Label(r.meta.turns == nil ? "Find speakers" : "Find speakers again", systemImage: "person.2")
+                            }
+                        }
+                        Button {
+                            Task { await model.summarise(r) }
+                        } label: {
+                            Label(r.meta.summary == nil ? "Summarise" : "Summarise again", systemImage: "sparkles")
+                        }
+                        .disabled(r.meta.transcript == nil || Summariser.availability != nil)
+                        Divider()
+                        ShareLink(item: r.audioURL) { Label("Share audio", systemImage: "waveform") }
+                        if let t = r.transcriptForModel {
+                            ShareLink(item: t) { Label("Share transcript", systemImage: "text.quote") }
+                        }
+                        if let s = r.meta.summary {
+                            ShareLink(item: s) { Label("Share summary", systemImage: "sparkles") }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .disabled(model.working.contains(r.id))
+                }
+            }
+            .onChange(of: r.meta, initial: true) { blocks = TranscriptBlock.make(r) }
+            .onChange(of: currentBlock) {
+                guard player.playing, let id = currentBlock else { return }
+                withAnimation { proxy.scrollTo(id, anchor: .center) }
+            }
             .alert("Name this speaker", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
                 TextField(renaming.map { "Speaker \($0 + 1)" } ?? "", text: $newName)
                 Button("Save") { if let s = renaming { model.renameSpeaker(r, speaker: s, to: newName) } }
@@ -282,9 +317,99 @@ struct RecordingDetail: View {
                 player.stop()
                 if title != (r.meta.title ?? "") { model.rename(r, to: title) }
             }
+            }
         } else {
             ContentUnavailableView("Recording deleted", systemImage: "trash")
         }
+    }
+}
+
+/// A paragraph of the transcript: one speaker's turn, or a run of words between pauses.
+struct TranscriptBlock: Identifiable, Hashable {
+    let id: Int
+    let speaker: Int?
+    let start: Double
+    /// Timed words, when the transcript has them, so the current word can be shown.
+    let words: [TimedWord]
+    let text: String
+
+    static func make(_ r: Recording) -> [TranscriptBlock] {
+        let words = (r.meta.words ?? []).sorted { $0.start < $1.start }
+        if let turns = r.meta.turns, Speakers.count(turns) > 1 {
+            var byTurn = Array(repeating: [TimedWord](), count: turns.count)
+            var i = 0
+            for w in words {
+                while i + 1 < turns.count, turns[i + 1].start <= w.start { i += 1 }
+                byTurn[i].append(w)
+            }
+            return turns.enumerated().map { i, t in
+                TranscriptBlock(id: i, speaker: t.speaker, start: t.start, words: byTurn[i], text: t.text)
+            }
+        }
+        guard !words.isEmpty else {
+            return r.meta.transcript.map { [TranscriptBlock(id: 0, speaker: nil, start: 0, words: [], text: $0)] } ?? []
+        }
+        var out: [TranscriptBlock] = []
+        var run: [TimedWord] = []
+        func flush() {
+            guard let first = run.first else { return }
+            out.append(TranscriptBlock(id: out.count, speaker: nil, start: first.start, words: run,
+                                       text: run.map(\.word).joined(separator: " ")))
+            run = []
+        }
+        for w in words {
+            if let last = run.last, w.start - last.end > 1.5 || run.count >= 70 { flush() }
+            run.append(w)
+        }
+        flush()
+        return out
+    }
+}
+
+/// One paragraph. With `position` set (the paragraph the playhead is in) the current
+/// word is amber and the words still to come are dimmed.
+struct TranscriptBlockRow: View {
+    let block: TranscriptBlock
+    let names: [String: String]?
+    let position: Double?
+    var onRename: ((Int) -> Void)?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                if let s = block.speaker {
+                    let name = Text(Speakers.name(s, names)).font(.caption.weight(.semibold))
+                        .foregroundStyle(TurnRow.colours[s % TurnRow.colours.count])
+                    if let onRename {
+                        Button { onRename(s) } label: { name }.buttonStyle(.borderless)
+                    } else {
+                        name
+                    }
+                }
+                if block.speaker != nil || !block.words.isEmpty {
+                    Text(Speakers.stamp(block.start)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                }
+            }
+            Text(attributed).textSelection(.enabled)
+        }
+        .padding(.vertical, 2)
+        .contentShape(Rectangle())
+    }
+
+    private var attributed: AttributedString {
+        guard let position, !block.words.isEmpty else { return AttributedString(block.text) }
+        var out = AttributedString()
+        for w in block.words {
+            var piece = AttributedString(w.word + " ")
+            if position >= w.start, position < max(w.end, w.start + 0.25) {
+                piece.foregroundColor = .orange
+                piece.font = .body.weight(.semibold)
+            } else if position < w.start {
+                piece.foregroundColor = .secondary
+            }
+            out += piece
+        }
+        return out
     }
 }
 
@@ -330,21 +455,34 @@ struct PlayerControls: View {
     let url: URL
 
     var body: some View {
-        VStack {
-            HStack {
-                Button { player.toggle() } label: {
-                    Image(systemName: player.playing ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 40))
-                }
-                .buttonStyle(.plain)
-                Slider(value: Binding(get: { player.position }, set: { player.seek($0) }), in: 0...max(player.duration, 0.1))
-            }
+        VStack(spacing: 6) {
+            Slider(value: Binding(get: { player.position }, set: { player.seek($0) }), in: 0...max(player.duration, 0.1))
+                .tint(.orange)
             HStack {
                 Text(Duration.seconds(Int(player.position)).formatted(.time(pattern: .minuteSecond)))
                 Spacer()
                 Text(Duration.seconds(Int(player.duration)).formatted(.time(pattern: .minuteSecond)))
             }
             .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+            HStack(spacing: 36) {
+                Button { player.seek(max(0, player.position - 15)) } label: {
+                    Image(systemName: "gobackward.15").font(.title2)
+                }
+                Button { player.toggle() } label: {
+                    Image(systemName: player.playing ? "pause.fill" : "play.fill")
+                        .font(.title2.weight(.semibold))
+                        .frame(width: 58, height: 58)
+                }
+                .glassEffect(.regular.tint(.orange.opacity(0.3)).interactive(), in: .circle)
+                Button { player.seek(min(player.duration, player.position + 15)) } label: {
+                    Image(systemName: "goforward.15").font(.title2)
+                }
+            }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+            .padding(.top, 4)
         }
+        .padding(.vertical, 6)
         .onAppear { player.load(url) }
     }
 }

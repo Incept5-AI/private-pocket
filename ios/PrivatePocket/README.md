@@ -31,9 +31,12 @@ goes to Pocket's cloud. See the [top-level README](../../README.md) for the over
   started at each recording; it can be turned off in Settings. Its Stop button runs
   `StopRecordingIntent` in the app. "Start recording on Private Pocket" is an App
   Shortcut for Siri and the Action button.
-- **Recordings.** Named by place and time, searchable, and filterable by Pocket. Each
-  recording has a player, a title, a location, a transcript in a chosen language (with speakers if
-  enabled, which you can rename), a summary, and "Ask about this recording".
+- **Recordings.** Named by place and time, searchable, and filterable by Pocket, grouped
+  into Today, Yesterday and dated days. Each recording has a player with ±15 s and a glass
+  play button, a title, a location, the transcript as paragraphs (speaker turns, or runs
+  of words between pauses) that follow the audio as it plays, the current word in amber
+  and a tap on any paragraph playing from there, a summary, and "Ask about this
+  recording". Transcribe, find speakers, summarise and share live in the ⋯ menu.
 - **Ask.** Questions about one recording or all of them in a date range. Long transcripts
   are read in parts and the answers combined.
 - **Settings.**
