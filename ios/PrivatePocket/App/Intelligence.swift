@@ -60,8 +60,12 @@ struct NextItem: Codable, Hashable, Identifiable {
     /// When, in the words used ("by Friday").
     var when: String?
     var date: Date?
-    /// Where in the audio it was said.
+    /// Where in the audio it was said, and the words it rests on.
     var at: Double?
+    var quote: String?
+    /// For a date: where it happens, and how long, when either was said.
+    var location: String?
+    var duration: Double?
     var reminderID: String?
     var eventID: String?
     var done: Bool?
@@ -92,6 +96,9 @@ struct MomentInsight: Codable, Hashable {
     var keyLines: [Anchored]?
     /// Speaker names the conversation revealed, keyed like `speakerNames` ("0", "1"…).
     var inferredSpeakers: [String: String]?
+    /// Which reader wrote it; older readings are redone when a moment opens.
+    var version: Int?
+    static let readerVersion = 2
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -183,10 +190,12 @@ struct DraftSentence {
 struct DraftItem {
     @Guide(description: "action if the user has to do it; promise if someone else said they would do something for the user; date if it is a meeting, deadline or event")
     var kind: String
-    @Guide(description: "What it is, in a few words: an imperative for an action, 'Name will …' for a promise, the event's name for a date")
+    @Guide(description: "For an action, a short imperative. For a promise, 'Name will …'. For a date, the title as it should appear in a calendar, specific to this conversation: what it is and with whom or where, like 'Workshop at the Garden Room' or 'Call with Ravi about the launch'; never the date or time itself")
     var text: String
     @Guide(description: "Who made the promise; empty otherwise")
     var who: String
+    @Guide(description: "For a date, where it happens, if said; empty otherwise")
+    var place: String
     @Guide(description: "When, in the words used, like 'by Friday' or 'Tuesday the 12th at 9'; empty if none was said")
     var when: String
     @Guide(description: "The exact words from the transcript it rests on, verbatim, ten words or fewer")
@@ -222,7 +231,7 @@ struct InsightDraft {
 /// A plain copy of the draft, so a server's JSON and the on-device model meet in one place.
 private struct Draft: Decodable {
     struct Sentence: Decodable { var text: String?; var quote: String? }
-    struct Item: Decodable { var kind: String?; var text: String?; var who: String?; var when: String?; var quote: String? }
+    struct Item: Decodable { var kind: String?; var text: String?; var who: String?; var place: String?; var when: String?; var quote: String? }
     struct Speaker: Decodable { var label: String?; var name: String? }
     var kind: String?
     var title: String?
@@ -236,7 +245,7 @@ private struct Draft: Decodable {
         kind = d.kind
         title = d.title
         brief = d.brief.map { Sentence(text: $0.text, quote: $0.quote) }
-        next = d.next.map { Item(kind: $0.kind, text: $0.text, who: $0.who, when: $0.when, quote: $0.quote) }
+        next = d.next.map { Item(kind: $0.kind, text: $0.text, who: $0.who, place: $0.place, when: $0.when, quote: $0.quote) }
         keyLines = d.keyLines
         people = d.people
         speakers = d.speakers.map { Speaker(label: $0.label, name: $0.name) }
@@ -254,6 +263,7 @@ enum Analyst {
     The user is the person who made the recording: address them as "you". \
     Speaker labels like Speaker 1 are not names and are never people; if the conversation reveals a label's name, give it under speakers. \
     Write each action as a short imperative without naming who does it; things other people said they would do are promises, not actions. \
+    Title each date the way it should appear in a calendar: what it is and with whom or where, specific to this conversation, with the date and time kept out of the title and given under when. \
     For every item and every sentence of the brief, quote the exact words from the transcript it rests on, verbatim, ten words or fewer.
     """
 
@@ -277,7 +287,7 @@ enum Analyst {
         }
         let json = instructions + "\nReply with JSON only, no prose and no code fence, with exactly these keys: " +
             "\"kind\" (one of business_call, personal_call, business_meeting, personal_meeting, note, other); \"title\" (a string); " +
-            "\"brief\" (an array of {\"text\", \"quote\"}); \"next\" (an array of {\"kind\": action|date|promise, \"text\", \"who\", \"when\", \"quote\"}); " +
+            "\"brief\" (an array of {\"text\", \"quote\"}); \"next\" (an array of {\"kind\": action|date|promise, \"text\", \"who\", \"place\", \"when\", \"quote\"}); " +
             "\"keyLines\" (an array of strings); \"people\" (an array of strings); \"speakers\" (an array of {\"label\", \"name\"})."
         let reply = try await LLM.complete(c, instructions: json, prompt: prompt)
         guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close else { throw LLMError.empty }
@@ -315,8 +325,12 @@ enum Analyst {
                 seen.insert(key)
                 let when = clean(it.when).isEmpty ? nil : clean(it.when)
                 let who = clean(it.who).isEmpty || isLabel(clean(it.who)) ? nil : clean(it.who)
-                let date = when.flatMap(Planner.date(in:)) ?? (kind == "date" ? Planner.date(in: text) : nil)
-                items.append(NextItem(kind: kind, text: text, who: who, when: when, date: date, at: anchor(it.quote)))
+                let place = clean(it.place).isEmpty ? nil : clean(it.place)
+                let found = when.flatMap(Planner.dateAndDuration(in:)) ?? (kind == "date" ? Planner.dateAndDuration(in: text) : nil)
+                let title = kind == "date" ? eventTitle(text, place: place) : text
+                let quote = clean(it.quote).isEmpty ? nil : clean(it.quote)
+                items.append(NextItem(kind: kind, text: title, who: who, when: when, date: found?.date, at: anchor(quote), quote: quote,
+                                      location: place, duration: found?.duration))
             }
         }
         out.next = Array(items.prefix(16))
@@ -336,7 +350,31 @@ enum Analyst {
         }
         out.inferredSpeakers = inferred.isEmpty ? nil : inferred
         out.source = "model"
+        out.version = MomentInsight.readerVersion
         return out
+    }
+
+    /// A calendar title: the date and time words stripped from the end, the place added
+    /// when the title does not already say where.
+    static func eventTitle(_ text: String, place: String?) -> String {
+        var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let days = "monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today|tonight|next week|next month|this week"
+        let patterns = [
+            #"[,\s]+(on|next|this|by|from|for)?\s*(\#(days))\b.*$"#,
+            #"[,\s]+at\s+(half\s+|quarter\s+)?\d[\d:.]*\s*(am|pm|o'clock)?.*$"#,
+            #"[,\s]+(on|by)\s+the\s+\d+(st|nd|rd|th)?\b.*$"#,
+        ]
+        for p in patterns {
+            if let r = t.range(of: p, options: [.regularExpression, .caseInsensitive]), r.lowerBound > t.startIndex {
+                t = String(t[..<r.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        t = t.trimmingCharacters(in: CharacterSet(charactersIn: ",.;:-– "))
+        if t.isEmpty { t = text }
+        if let place, !t.localizedCaseInsensitiveContains(place), t.count + place.count < 48 {
+            t += " at " + place
+        }
+        return t.prefix(1).uppercased() + t.dropFirst()
     }
 
     /// "Speaker 2" → 1, the index `speakerNames` is keyed by.
@@ -448,10 +486,15 @@ enum Planner {
     }
 
     /// The first date in a short line like "Demo, Thursday 10am".
-    static func date(in line: String) -> Date? {
+    static func date(in line: String) -> Date? { dateAndDuration(in: line)?.date }
+
+    /// The first date in a line, and how long when a span like "nine till four" was said.
+    static func dateAndDuration(in line: String) -> (date: Date, duration: Double?)? {
         guard let detector else { return nil }
-        return detector.matches(in: line, range: NSRange(location: 0, length: (line as NSString).length))
-            .compactMap(\.date).first
+        for m in detector.matches(in: line, range: NSRange(location: 0, length: (line as NSString).length)) {
+            if let d = m.date { return (d, m.duration > 0 ? m.duration : nil) }
+        }
+        return nil
     }
 
     // Reminders
@@ -501,12 +544,13 @@ enum Planner {
 
     // Calendar
 
-    static func addEvent(_ title: String, at date: Date, note: String) async throws -> String {
+    static func addEvent(_ title: String, at date: Date, duration: Double? = nil, location: String? = nil, note: String) async throws -> String {
         guard try await store.requestFullAccessToEvents() else { throw PlannerError.denied("Calendar") }
         let event = EKEvent(eventStore: store)
         event.title = title
         event.startDate = date
-        event.endDate = date.addingTimeInterval(3600)
+        event.endDate = date.addingTimeInterval(duration ?? 3600)
+        event.location = location
         event.notes = note
         event.calendar = store.defaultCalendarForNewEvents
         try store.save(event, span: .thisEvent, commit: true)

@@ -548,7 +548,7 @@ final class AppModel: ObservableObject {
                 changed = true
             }
             if item.isDate, item.eventID == nil, Prefs.autoCalendar, let d = item.date,
-               let id = try? await Planner.addEvent(item.text, at: d, note: "From \(r.sourceLabel), in Private Pocket.") {
+               let id = try? await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item)) {
                 items[idx].eventID = id
                 changed = true
             }
@@ -567,12 +567,20 @@ final class AppModel: ObservableObject {
                 let id = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.")
                 change(r, item) { $0.reminderID = id }
             } else if item.isDate, let d = item.date {
-                let id = try await Planner.addEvent(item.text, at: d, note: "From \(r.sourceLabel), in Private Pocket.")
+                let id = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item))
                 change(r, item) { $0.eventID = id }
             }
         } catch {
             aiError = error.localizedDescription
         }
+    }
+
+    /// What the event or reminder says about where it came from.
+    private func eventNote(_ r: Recording, _ item: NextItem) -> String {
+        var lines = ["From \(r.sourceLabel), in Private Pocket."]
+        if let q = item.quote { lines.append("“\(q)”") }
+        if !r.people.isEmpty { lines.append("With " + r.people.joined(separator: ", ") + ".") }
+        return lines.joined(separator: "\n")
     }
 
     /// Ticked here, done in Reminders too.

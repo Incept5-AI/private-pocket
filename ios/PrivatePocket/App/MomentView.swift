@@ -111,8 +111,8 @@ struct MomentView: View {
             .task(id: r.audioURL) {
                 player.load(r.audioURL)
                 model.refreshDone(r)
-                if let i = r.meta.insight, i.readByModel, i.brief == nil, r.meta.transcript != nil, !model.working.contains(r.id) {
-                    Task { await model.analyse(r, quiet: true) }   // read before briefs existed: read again
+                if let i = r.meta.insight, i.readByModel, (i.version ?? 1) < MomentInsight.readerVersion, r.meta.transcript != nil, !model.working.contains(r.id) {
+                    Task { await model.analyse(r, quiet: true) }   // read by an older reader: read again
                 }
                 let url = r.audioURL
                 envelope = await Task.detached(priority: .utility) { Waveform.envelope(url: url) }.value
@@ -462,7 +462,7 @@ struct NextRow: View {
     private var whenText: String? {
         if let d = item.date {
             return item.isDate
-                ? "\(d.formatted(.dateTime.weekday(.wide))) \(d.formatted(date: .omitted, time: .shortened))"
+                ? ["\(d.formatted(.dateTime.weekday(.wide))) \(d.formatted(date: .omitted, time: .shortened))", item.location].compactMap { $0 }.joined(separator: " · ")
                 : d.formatted(.dateTime.weekday(.wide).day().month(.abbreviated))
         }
         if item.isPromise, let who = item.who { return [who, item.when].compactMap { $0 }.joined(separator: " · ") }
