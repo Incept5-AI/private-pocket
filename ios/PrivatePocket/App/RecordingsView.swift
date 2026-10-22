@@ -36,6 +36,18 @@ struct RecordingsView: View {
         return byDay.sorted { ($0.value.first?.startedAt ?? .distantPast) > ($1.value.first?.startedAt ?? .distantPast) }
     }
 
+    /// The list moved: show the date finder's handle, and hide it again once the list
+    /// has been still for a moment.
+    private func noteScrolling() {
+        hideHandle?.cancel()
+        if !scrolling { withAnimation(.spring(duration: 0.35)) { scrolling = true } }
+        hideHandle = Task {
+            try? await Task.sleep(for: .seconds(1.4))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.35)) { scrolling = false }
+        }
+    }
+
     /// "Today", "Yesterday", then "Monday 20 October" (with the year once it differs).
     static func dayLabel(_ r: Recording) -> String {
         guard let d = r.startedAt else { return r.day }
@@ -82,18 +94,8 @@ struct RecordingsView: View {
                 .scrollContentBackground(.hidden)
                 .background(Brand.ground)
                 .scrollIndicators(.hidden)
-                .onScrollPhaseChange { _, phase in
-                    hideHandle?.cancel()
-                    if phase == .idle {
-                        hideHandle = Task {
-                            try? await Task.sleep(for: .seconds(1.4))
-                            guard !Task.isCancelled else { return }
-                            withAnimation(.easeOut(duration: 0.35)) { scrolling = false }
-                        }
-                    } else if !scrolling {
-                        withAnimation(.spring(duration: 0.35)) { scrolling = true }
-                    }
-                }
+                .onChange(of: visible) { noteScrolling() }
+                .onScrollPhaseChange { _, phase in if phase != .idle { noteScrolling() } }
                 .overlay(alignment: .trailing) {
                     if shown.count >= 2, search.isEmpty {
                         DateFinder(moments: shown.compactMap { r in r.startedAt.map { (id: r.id, at: $0) } },
