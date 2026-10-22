@@ -71,8 +71,8 @@ notice. Until then, Private Pocket keeps your recordings on your own phone.
   blinks blue, tap Pair, and the light goes solid a little later. No account, nothing to
   type. Even before pairing, every recording started with the button streams to the phone.
 - **Record and stream.** Start and stop the Pocket from the phone, or use its button.
-  While the phone is connected, the Pocket streams its audio live, so the recording is
-  saved and transcribed as you speak, with no download afterwards.
+  The phone stays connected, also with the app in the background, so every recording
+  streams in live and is saved and transcribed as you speak, with no download afterwards.
 - **Sync over Bluetooth.** Download any recordings the phone doesn't have yet, at about
   40–60 KB/s (an hour of audio in about five minutes). No cable, Wi-Fi or account needed.
 - **Transcribe.** Choose Apple's on-device speech recognition (`SpeechAnalyzer`) in the

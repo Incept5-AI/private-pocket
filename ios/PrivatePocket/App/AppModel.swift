@@ -41,6 +41,8 @@ final class AppModel: ObservableObject {
     /// The user tapped Disconnect: do not reconnect until they tap Connect.
     @Published var userDisconnected = false
     private var keepAlive: Task<Void, Never>?
+    /// Scene is active: reconnect by scanning; otherwise leave a background standby.
+    private var active = false
 
     @Published var working: Set<String> = []   // recording ids being transcribed/summarised
     @Published var aiError: String?
@@ -65,8 +67,16 @@ final class AppModel: ObservableObject {
         }
         link.onLiveAudio = { [weak self] data in self?.live.append(data) }
         link.onLinkLost = { [weak self] in
-            self?.live.markGap()
-            Task { try? await Task.sleep(for: .seconds(2)); await self?.ensureConnected() }
+            guard let self else { return }
+            live.markGap()
+            if active {
+                Task { try? await Task.sleep(for: .seconds(2)); await self.ensureConnected() }
+            } else {
+                standby()   // at once: background runtime after a Bluetooth event is short
+            }
+        }
+        link.onConnected = { [weak self] in
+            self?.link.note("connected in the background")
         }
         link.onRecordingStopped = { [weak self] name in
             guard let self, let d = self.connectedDevice else { return }
@@ -76,11 +86,14 @@ final class AppModel: ObservableObject {
 
     // MARK: - Staying connected
 
-    /// While the app is in the foreground, keep the selected Pocket connected so
-    /// recordings stream live (iOS keeps an existing connection in the background).
+    /// Keep the selected Pocket connected so recordings stream live. In the foreground
+    /// that means scanning every 15 s; in the background a pending connection that iOS
+    /// completes whenever the Pocket is in range (an existing connection just stays up).
     func setActive(_ active: Bool) {
+        self.active = active
         keepAlive?.cancel()
-        guard active else { return }
+        guard active else { standby(); return }
+        if link.phase == .waiting { link.disconnect() }   // scan instead, which also notices new Pockets
         keepAlive = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.ensureConnected()
@@ -89,10 +102,21 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private var wantsConnection: DeviceConfig? {
+        guard Prefs.stayConnected, !userDisconnected, !link.isDiscovering, !link.keyRejected else { return nil }
+        return devices.selected
+    }
+
     func ensureConnected() async {
-        guard Prefs.stayConnected, !userDisconnected, link.phase == .idle, !link.isDiscovering, !link.keyRejected,
-              let d = devices.selected else { return }
+        guard let d = wantsConnection else { return }
+        guard active else { link.standby(d); return }
+        guard link.phase == .idle else { return }
         await link.run("Connecting", quiet: true) { try await link.connect(d) }
+    }
+
+    func standby() {
+        guard let d = wantsConnection else { return }
+        link.standby(d)
     }
 
     /// With the Pocket in pairing mode (side button held 5 s, blinking blue), give it a new key.

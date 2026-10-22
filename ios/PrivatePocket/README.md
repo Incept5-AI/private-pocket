@@ -53,6 +53,8 @@ summaries default to the iPhone.
 
 - The Pocket talks to one central at a time. If the official app (or the Mac tools) is
   connected, this app won't find it.
-- iOS keeps the Bluetooth link alive in the background (`bluetooth-central`), but the app
-  only reconnects on its own while it's open.
+- In the background the app leaves a pending connection that iOS completes whenever the
+  Pocket is in range, and iOS relaunches the app for Bluetooth events if it was
+  terminated (state restoration), so recordings stream in without the app open. Swiping
+  the app away in the app switcher stops that until it is opened again.
 - Mounting the Pocket over USB-C on an iPhone is untested. It works on a Mac.

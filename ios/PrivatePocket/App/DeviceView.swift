@@ -98,7 +98,7 @@ struct DeviceView: View {
             if !isConnected, model.userDisconnected {
                 Text("Disconnected. Recordings will not stream until you connect.")
             } else if !isConnected {
-                Text("Connects by itself while the app is open. The Pocket talks to one phone or app at a time.")
+                Text("Connects by itself, also while the app is in the background, so recordings stream in as they are made. The Pocket talks to one phone or app at a time.")
             }
         }
     }
@@ -249,6 +249,7 @@ struct DeviceView: View {
     private var phaseText: String {
         switch link.phase {
         case .idle: "Not connected"
+        case .waiting: "Waiting for the Pocket"
         case .scanning: "Looking for the Pocket…"
         case .connecting: "Connecting…"
         case .ready: paired ? "Connected" : "Connected, not paired"

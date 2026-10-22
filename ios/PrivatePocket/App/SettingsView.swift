@@ -36,7 +36,7 @@ struct SettingsView: View {
                         Label("USB drive: free up space", systemImage: "externaldrive")
                     }
                 } header: { Text("Devices") } footer: {
-                    Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected reconnects while the app is open, so recordings stream live. Deleting recordings from a Pocket needs the USB cable.")
+                    Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected keeps the link up, also in the background, so every recording streams in as it is made. Deleting recordings from a Pocket needs the USB cable.")
                 }
 
                 Section {
