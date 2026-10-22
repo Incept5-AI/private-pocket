@@ -107,6 +107,8 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
+                .scrollContentBackground(.hidden)
+                .background(Brand.ground)
             .navigationTitle("Settings")
             .sheet(isPresented: $adding) { AddDeviceSheet() }
         }
@@ -231,6 +233,8 @@ struct STTSettingsView: View {
                 Text("Sends the audio to a diarisation server (…/audio/diarize) to work out who spoke when, with either kind of speech to text. Several servers, comma-separated, are tried in order. During a recording, speakers are refreshed every \(Int(LiveSession.diarizeEvery)) s. Uses the speech-to-text key, or the language model's.")
             }
         }
+            .scrollContentBackground(.hidden)
+            .background(Brand.ground)
         .navigationTitle("Speech to text")
         .onChange(of: key) { RemoteSTT.key = key.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
@@ -284,6 +288,8 @@ struct LLMSettingsView: View {
                                        prompt: "Say hello and name the model you are.")
             }
         }
+            .scrollContentBackground(.hidden)
+            .background(Brand.ground)
         .navigationTitle("Language model")
         .onChange(of: key) { LLM.key = key.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
@@ -316,6 +322,8 @@ struct LanguagesView: View {
                 }
             }
         }
+            .scrollContentBackground(.hidden)
+            .background(Brand.ground)
         .navigationTitle("Languages")
         .searchable(text: $search)
         .task { all = await Languages.supported() }
@@ -367,6 +375,8 @@ struct DeviceEditor: View {
                 Text("Removes the settings and key. Recordings already on the phone are kept.")
             }
         }
+            .scrollContentBackground(.hidden)
+            .background(Brand.ground)
         .navigationTitle(device.name)
         .onAppear { key = device.sessionKey }
         .onDisappear {
@@ -428,6 +438,8 @@ struct AddDeviceSheet: View {
                     }
                 }
             }
+                .scrollContentBackground(.hidden)
+                .background(Brand.ground)
             .navigationTitle("Add Pocket")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }

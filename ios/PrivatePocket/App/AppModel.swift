@@ -16,6 +16,8 @@ struct PrivatePocketApp: App {
                 .environmentObject(model.drive)
                 .environmentObject(model.locator)
                 .environmentObject(model.live)
+                .preferredColorScheme(.dark)
+                .tint(Brand.act)
         }
     }
 }

@@ -119,6 +119,8 @@ struct AskView: View {
                     .disabled(busy)
             }
         }
+            .scrollContentBackground(.hidden)
+            .background(Brand.ground)
         .navigationTitle(fixedRecording == nil ? "Ask" : "Ask about this recording")
         .navigationBarTitleDisplayMode(fixedRecording == nil ? .large : .inline)
         .scrollDismissesKeyboard(.interactively)

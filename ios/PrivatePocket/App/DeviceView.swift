@@ -78,7 +78,7 @@ struct PocketView: View {
                 .padding(.top, 4)
                 .padding(.bottom, 24)
             }
-            .background(Color(.systemGroupedBackground))
+            .background(Brand.ground)
             .navigationTitle("Pocket")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { if !devices.devices.isEmpty { toolbarMenu } }
@@ -98,7 +98,7 @@ struct PocketView: View {
 
     // MARK: Pieces
 
-    private var panel: some ShapeStyle { Color(.secondarySystemGroupedBackground) }
+    private var panel: some ShapeStyle { Brand.surface }
     private var panelShape: RoundedRectangle { RoundedRectangle(cornerRadius: 20, style: .continuous) }
 
     private var setup: some View {
@@ -153,7 +153,7 @@ struct PocketView: View {
                     .padding(.vertical, 8)
             }
             .buttonStyle(.glassProminent)
-            .tint(.orange)
+            .tint(Brand.record)
             .disabled(busy || !isConnected)
             Text(isConnected ? "Like the side button. It streams here as it records."
                              : "Connect to record from here, or press the side button.")
@@ -163,7 +163,7 @@ struct PocketView: View {
 
     private var buttonHint: some View {
         HStack(spacing: 12) {
-            Image(systemName: "record.circle").foregroundStyle(.orange)
+            Image(systemName: "record.circle").foregroundStyle(Brand.record)
             Text(isConnected ? "Press the side button on your Pocket to record. It streams here as it records."
                              : "Press the side button on your Pocket to record. It streams here once the phone connects.")
                 .font(.subheadline).foregroundStyle(.secondary)
@@ -186,10 +186,10 @@ struct PocketView: View {
                 Spacer()
                 if paired, recording {
                     Button { Task { await model.toggleRecording() } } label: { Label("Stop", systemImage: "stop.fill") }
-                        .buttonStyle(.glassProminent).tint(.orange).disabled(busy)
+                        .buttonStyle(.glassProminent).tint(Brand.record).disabled(busy)
                 }
             }
-            Text(streamText).font(.footnote).foregroundStyle(live.gap ? .orange : .secondary)
+            Text(streamText).font(.footnote).foregroundStyle(live.gap ? Brand.record : .secondary)
             if live.isActive {
                 if !live.turns.isEmpty, Speakers.count(live.turns) > 1 {
                     ForEach(live.turns.suffix(8)) { t in TurnRow(turn: t, names: nil) }
@@ -414,7 +414,7 @@ struct NowRecordingBar: View {
                 Button { Task { await model.toggleRecording() } } label: {
                     Image(systemName: "stop.fill")
                 }
-                .tint(.orange)
+                .tint(Brand.record)
                 .accessibilityLabel("Stop recording")
             }
         }
@@ -460,6 +460,8 @@ struct PocketDetails: View {
                     }
                 }
             }
+                .scrollContentBackground(.hidden)
+                .background(Brand.ground)
             .navigationTitle("Pocket details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -477,7 +479,7 @@ struct TurnRow: View {
     let names: [String: String]?
     var onRename: ((Int) -> Void)?
 
-    static let colours: [Color] = [.blue, .orange, .green, .purple, .pink, .teal, .brown, .indigo]
+    static let colours: [Color] = Brand.speakers
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {

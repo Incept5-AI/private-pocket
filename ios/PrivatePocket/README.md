@@ -86,3 +86,10 @@ summaries default to the iPhone.
   terminated (state restoration), so recordings stream in without the app open. Swiping
   the app away in the app switcher stops that until it is opened again.
 - Mounting the Pocket over USB-C on an iPhone is untested. It works on a Mac.
+
+## Look
+
+The app is dark-only, in the palette `Shared/Brand.swift` defines: a graphite ground,
+cyan for anything you can tap, the card's own amber for recording, blue for work and
+pink for life. The status light's colours are the device's and are never restyled. The
+app icon is the card with its light.

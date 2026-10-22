@@ -20,7 +20,7 @@ struct PocketRecordingControl: ControlWidget {
             ControlWidgetToggle("Pocket", isOn: recording, action: ToggleRecordingIntent()) { on in
                 Label(on ? "Recording" : "Record", systemImage: on ? "record.circle.fill" : "record.circle")
             }
-            .tint(.orange)
+            .tint(Brand.record)
         }
         .displayName("Pocket")
         .description("Starts or stops recording on your Pocket, like its side button.")
@@ -65,7 +65,7 @@ struct PocketLiveActivity: Widget {
                             Button(intent: StopRecordingIntent()) {
                                 Image(systemName: "stop.fill").font(.body.weight(.semibold))
                             }
-                            .buttonStyle(.borderedProminent).tint(.orange)
+                            .buttonStyle(.borderedProminent).tint(Brand.record)
                         }
                     }
                     .padding(.horizontal, 4)
@@ -79,7 +79,7 @@ struct PocketLiveActivity: Widget {
             } minimal: {
                 LightDot(state: context.state.light).frame(width: 10, height: 10)
             }
-            .keylineTint(context.state.isRecording ? .orange : .blue)
+            .keylineTint(context.state.isRecording ? Brand.record : .blue)
         }
     }
 }
@@ -142,7 +142,7 @@ struct LockScreenView: View {
                     Button(intent: StopRecordingIntent()) {
                         Label("Stop", systemImage: "stop.fill")
                     }
-                    .buttonStyle(.borderedProminent).tint(.orange)
+                    .buttonStyle(.borderedProminent).tint(Brand.record)
                 }
             }
         }

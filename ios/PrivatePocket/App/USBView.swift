@@ -23,6 +23,8 @@ struct USBView: View {
                 ContentUnavailableView("No devices", systemImage: "externaldrive", description: Text("Add a device in Settings first."))
             }
         }
+            .scrollContentBackground(.hidden)
+            .background(Brand.ground)
         .navigationTitle("USB drive")
         .toolbar {
             if drive.root != nil {

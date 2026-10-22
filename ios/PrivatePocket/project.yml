@@ -52,6 +52,8 @@ targets:
       path: App/Info.plist
       properties:
         UIBackgroundModes: [bluetooth-central, audio]
+        # The brand is dark: a graphite ground, cyan for anything you can tap, amber for recording.
+        UIUserInterfaceStyle: Dark
         # Dynamic Island and Lock Screen while the Pocket records (PrivatePocketWidgets).
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true

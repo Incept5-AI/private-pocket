@@ -14,7 +14,7 @@ struct LightDot: View {
         switch state {
         case .off: Color.white.opacity(0.35)
         case .on, .pairing: .blue
-        case .recording: .orange
+        case .recording: Brand.record
         }
     }
     private var animated: Bool { state == .pairing || state == .recording }

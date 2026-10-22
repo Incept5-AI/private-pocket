@@ -59,6 +59,8 @@ struct RecordingsView: View {
                     }
                 }
             }
+                .scrollContentBackground(.hidden)
+                .background(Brand.ground)
             .navigationTitle("Recordings")
             .searchable(text: $search, prompt: "Titles, places, transcripts, speakers, Pockets")
             .toolbar {
@@ -197,7 +199,7 @@ struct RecordingDetail: View {
                         }
                         .id(b.id)
                         .listRowBackground(b.id == currentBlock && player.playing
-                                           ? Color.orange.opacity(0.12) : Color(.secondarySystemGroupedBackground))
+                                           ? Brand.record.opacity(0.12) : Brand.surface)
                         .onTapGesture {
                             player.seek(b.start)
                             if !player.playing { player.toggle() }
@@ -259,6 +261,8 @@ struct RecordingDetail: View {
                     LabeledContent("Size", value: r.size.formatted(.byteCount(style: .file)))
                 }
             }
+                .scrollContentBackground(.hidden)
+                .background(Brand.ground)
             .navigationTitle(r.displayTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -403,7 +407,7 @@ struct TranscriptBlockRow: View {
         for w in block.words {
             var piece = AttributedString(w.word + " ")
             if position >= w.start, position < max(w.end, w.start + 0.25) {
-                piece.foregroundColor = .orange
+                piece.foregroundColor = Brand.record
                 piece.font = .body.weight(.semibold)
             } else if position < w.start {
                 piece.foregroundColor = .secondary
@@ -458,7 +462,7 @@ struct PlayerControls: View {
     var body: some View {
         VStack(spacing: 6) {
             Slider(value: Binding(get: { player.position }, set: { player.seek($0) }), in: 0...max(player.duration, 0.1))
-                .tint(.orange)
+                .tint(Brand.record)
             HStack {
                 Text(Duration.seconds(Int(player.position)).formatted(.time(pattern: .minuteSecond)))
                 Spacer()
@@ -474,7 +478,7 @@ struct PlayerControls: View {
                         .font(.title2.weight(.semibold))
                         .frame(width: 58, height: 58)
                 }
-                .glassEffect(.regular.tint(.orange.opacity(0.3)).interactive(), in: .circle)
+                .glassEffect(.regular.tint(Brand.record.opacity(0.3)).interactive(), in: .circle)
                 Button { player.seek(min(player.duration, player.position + 15)) } label: {
                     Image(systemName: "goforward.15").font(.title2)
                 }
