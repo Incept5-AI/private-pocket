@@ -6,7 +6,7 @@ import SwiftUI
 struct WalkthroughView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var page = 0
-    private let last = 6
+    private let last = 7
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -18,7 +18,8 @@ struct WalkthroughView: View {
                 RecordPage().tag(3)
                 SwitchPage().tag(4)
                 LightPage().tag(5)
-                ResetPage(start: finish).tag(6)
+                ResetPage().tag(6)
+                RepairPage(start: finish).tag(7)
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .never))
@@ -299,7 +300,6 @@ struct LightPage: View {
 }
 
 struct ResetPage: View {
-    let start: () -> Void
     @State private var step = 0   // press three times, hold, erasing, ready to pair
     @State private var pressed = false
 
@@ -315,13 +315,6 @@ struct ResetPage: View {
     var body: some View {
         WalkPage(glow: light, headline: headline, line: line) {
             PocketIllustration(light: light, blink: step >= 2, buttonPressed: pressed)
-        } footer: {
-            Button { start() } label: {
-                Text("Start").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
-            }
-            .buttonStyle(.glassProminent)
-            .tint(Brand.act)
-            .padding(.horizontal, 64)
         }
         .task {
             while !Task.isCancelled {
@@ -342,5 +335,66 @@ struct ResetPage: View {
                 guard await hold(2.6) else { return }
             }
         }
+    }
+}
+
+/// The way back when it won't pair or keeps dropping out: Bluetooth off on the phone,
+/// the card reset, Bluetooth on, pair again. Spelled out, because it is the one thing
+/// the card cannot show you with its light.
+struct RepairPage: View {
+    let start: () -> Void
+    @State private var step = 0   // bluetooth off, reset, bluetooth on, blinking blue, paired
+
+    private var light: Color? { [nil, Lamp.resetting, nil, Lamp.ready, Lamp.ready][step] }
+    private var blink: Bool { step == 1 || step == 3 }
+
+    var body: some View {
+        WalkPage(glow: step >= 3 ? Lamp.ready : nil,
+                 headline: "If it won't pair, or drops out.",
+                 line: "") {
+            ZStack(alignment: .bottom) {
+                PocketIllustration(light: light, blink: blink, buttonPressed: step == 1)
+                    .scaleEffect(0.78).offset(y: -22)
+                VStack(alignment: .leading, spacing: 9) {
+                    RepairStep(n: 1, text: "Turn Bluetooth off on your iPhone, in Settings.", on: step == 0)
+                    RepairStep(n: 2, text: "Reset the Pocket: press three times, then hold until it blinks red.", on: step == 1)
+                    RepairStep(n: 3, text: "Turn Bluetooth back on.", on: step == 2)
+                    RepairStep(n: 4, text: "Hold the side button five seconds until it blinks blue, then tap Pair.", on: step == 3)
+                }
+                .padding(.horizontal, 28)
+            }
+        } footer: {
+            Button { start() } label: {
+                Text("Start").font(.headline).frame(maxWidth: .infinity).padding(.vertical, 6)
+            }
+            .buttonStyle(.glassProminent)
+            .tint(Brand.act)
+            .padding(.horizontal, 64)
+        }
+        .task {
+            while !Task.isCancelled {
+                for i in 0..<5 {
+                    withAnimation { step = i }
+                    guard await hold(i == 4 ? 2.2 : 2.6) else { return }
+                }
+            }
+        }
+    }
+}
+
+struct RepairStep: View {
+    let n: Int
+    let text: String
+    let on: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(n)").font(.caption.weight(.bold))
+                .foregroundStyle(on ? Brand.onAct : Brand.act)
+                .frame(width: 20, height: 20)
+                .background(on ? Brand.act : Brand.act.opacity(0.18), in: Circle())
+            Text(text).font(.subheadline).foregroundStyle(on ? Brand.text : Brand.textSecondary)
+        }
+        .animation(.easeInOut(duration: 0.3), value: on)
     }
 }

@@ -248,6 +248,17 @@ struct PocketView: View {
                 Text("Your Pocket no longer accepts this phone's key, which happens after a reset or when another app paired it.")
                     .font(.footnote).foregroundStyle(Brand.dim)
             }
+            DisclosureGroup("Not pairing, or it keeps dropping out?") {
+                VStack(alignment: .leading, spacing: 8) {
+                    step(1, "Turn Bluetooth off on your iPhone, in Settings.")
+                    step(2, "Reset the Pocket: press the side button three times, then hold it until the light blinks red.")
+                    step(3, "Turn Bluetooth back on.")
+                    step(4, "Hold the side button for five seconds until it blinks blue, then tap Pair.")
+                }
+                .padding(.top, 6)
+            }
+            .font(.footnote.weight(.semibold))
+            .tint(Brand.act)
             Button("Show me") { showWalkthrough = true }.font(.footnote.weight(.semibold))
         }
         .padding(16)
