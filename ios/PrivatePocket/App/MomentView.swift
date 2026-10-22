@@ -52,13 +52,13 @@ struct MomentView: View {
                                         .font(.caption).foregroundStyle(Brand.dim).padding(.top, 8)
                                 }
                             }
+                            AskSection(recording: r)
                             TodoSection(recording: r) { behind = Behind(item: $0) }
                             EventSection(recording: r) { behind = Behind(item: $0) }
                             TranscriptSection(recording: r, blocks: blocks, current: current, player: player, showAll: $showAll) { i in
                                 newName = r.meta.speakerNames?[String(i)] ?? ""
                                 renamingSpeaker = i
                             }
-                            AskSection(recording: r)
                             footer(r)
                         }
                         .padding(.horizontal, 24)
