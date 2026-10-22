@@ -90,9 +90,17 @@ final class AppModel: ObservableObject {
     }
 
     func ensureConnected() async {
-        guard Prefs.stayConnected, !userDisconnected, link.phase == .idle, !link.isDiscovering,
-              let d = devices.selected, !d.sessionKey.isEmpty else { return }
+        guard Prefs.stayConnected, !userDisconnected, link.phase == .idle, !link.isDiscovering, !link.keyRejected,
+              let d = devices.selected else { return }
         await link.run("Connecting", quiet: true) { try await link.connect(d) }
+    }
+
+    /// With the Pocket in pairing mode (side button held 5 s, blinking blue), give it a new key.
+    func pairSelected() async {
+        guard let d = devices.selected else { return }
+        userDisconnected = false
+        await link.run("Pairing") { try await link.pair(d) }
+        devices.update(d)   // the key lives in the Keychain; this refreshes the views
     }
 
     func userConnect() async {
@@ -120,6 +128,7 @@ final class AppModel: ObservableObject {
     /// Download every recording on the device that is not on the phone yet.
     func sync() async {
         guard let d = devices.selected else { return }
+        guard d.isPaired else { link.lastError = "Pair the Pocket to download recordings from it."; return }
         await link.run("Syncing") {
             try await link.connect(d)
             let remote = try await link.listFiles()
@@ -136,7 +145,7 @@ final class AppModel: ObservableObject {
     }
 
     func toggleRecording() async {
-        guard let d = devices.selected else { return }
+        guard let d = devices.selected, d.isPaired else { return }
         await link.run(link.status.recordingSince == nil ? "Starting" : "Stopping") {
             try await link.connect(d)
             if link.status.recordingSince == nil {
@@ -154,19 +163,29 @@ final class AppModel: ObservableObject {
         guard let date = PocketTime.parse(name) else { return }
         let day = PocketTime.day.string(from: date)
         guard !library.has(device: d.id, day: day, name: name) else { return }
-        try await Task.sleep(for: .milliseconds(500))   // let the device close the file
-        let remote = try await link.listFiles().first { $0.name == name }
-            ?? RemoteFile(day: day, name: name, seconds: 0)
 
         let audio: Data
-        if let s = streamed, s.complete, Self.matches(s.audio, seconds: remote.seconds) {
+        let remote: RemoteFile
+        if !d.isPaired {
+            // Not paired: the Pocket answers no commands, so the stream is all there is.
+            guard let s = streamed, !s.audio.isEmpty else { return }
             audio = s.audio
-            link.note("kept the streamed copy of \(name): \(s.audio.count) bytes")
-        } else if d.downloadAfterStop {
-            if let s = streamed { link.note("streamed copy incomplete (\(s.audio.count) bytes); downloading") }
-            audio = try await link.download(remote)
+            remote = RemoteFile(day: day, name: name, seconds: Int((Self.duration(of: s.audio) ?? 0).rounded()))
+            link.note(s.complete ? "kept the streamed copy of \(name): \(s.audio.count) bytes"
+                                 : "stream had a gap; kept \(s.audio.count) bytes of \(name). Pair to download the Pocket's file")
         } else {
-            return
+            try await Task.sleep(for: .milliseconds(500))   // let the device close the file
+            remote = try await link.listFiles().first { $0.name == name }
+                ?? RemoteFile(day: day, name: name, seconds: 0)
+            if let s = streamed, s.complete, Self.matches(s.audio, seconds: remote.seconds) {
+                audio = s.audio
+                link.note("kept the streamed copy of \(name): \(s.audio.count) bytes")
+            } else if d.downloadAfterStop {
+                if let s = streamed { link.note("streamed copy incomplete (\(s.audio.count) bytes); downloading") }
+                audio = try await link.download(remote)
+            } else {
+                return
+            }
         }
         let place = await locator.place(for: name, seconds: remote.seconds)
         var r = try library.save(device: d.id, day: remote.day, name: name, audio: audio, seconds: remote.seconds, place: place,
@@ -192,12 +211,16 @@ final class AppModel: ObservableObject {
     /// The streamed MP3 lasts as long as the device says the recording does
     /// (LIST reports whole seconds), so nothing was missed.
     static func matches(_ mp3: Data, seconds: Int) -> Bool {
-        guard seconds > 0 else { return false }
+        guard seconds > 0, let duration = duration(of: mp3) else { return false }
+        return abs(duration - Double(seconds)) <= 2
+    }
+
+    /// Seconds of audio in an MP3, by decoding its header chain.
+    static func duration(of mp3: Data) -> Double? {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("check-\(UUID().uuidString).mp3")
         defer { try? FileManager.default.removeItem(at: tmp) }
-        guard (try? mp3.write(to: tmp)) != nil, let f = try? AVAudioFile(forReading: tmp) else { return false }
-        let duration = Double(f.length) / f.processingFormat.sampleRate
-        return abs(duration - Double(seconds)) <= 2
+        guard (try? mp3.write(to: tmp)) != nil, let f = try? AVAudioFile(forReading: tmp) else { return nil }
+        return Double(f.length) / f.processingFormat.sampleRate
     }
 
     func setWebSync(_ on: Bool) async {

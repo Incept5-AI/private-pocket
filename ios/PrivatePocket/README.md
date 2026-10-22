@@ -6,19 +6,22 @@ goes to Pocket's cloud. See the [top-level README](../../README.md) for the over
 
 ## Tabs
 
-- **Recorder.** Stays connected while the app is open. It has a record button with a timer,
-  and while recording a **Live** panel shows the streaming state and the transcript as it
-  arrives (on-device `SpeechAnalyzer`, or server Whisper in 15 s slices). At stop, the
-  streamed copy becomes the recording if its length matches what the Pocket reports;
-  otherwise the file is downloaded. Below that: Download new recordings, device details
-  and the protocol log.
+- **Recorder.** Stays connected while the app is open. If the Pocket is not paired yet, a
+  **Pair** section shows the one step (hold the side button for 5 s until it blinks blue,
+  tap Pair); recordings started with the button already stream in before that. It has a
+  record button with a timer, and while recording a **Live** panel shows the streaming
+  state and the transcript as it arrives (on-device `SpeechAnalyzer`, or server Whisper in
+  15 s slices). At stop, the streamed copy becomes the recording if its length matches
+  what the Pocket reports; otherwise the file is downloaded (unpaired: the streamed copy
+  is kept as is). Below that: Download new recordings, device details and the protocol log.
 - **Recordings.** Named by place and time, searchable, and filterable by Pocket. Each
   recording has a player, a title, a location, a transcript in a chosen language (with speakers if
   enabled, which you can rename), a summary, and "Ask about this recording".
 - **Ask.** Questions about one recording or all of them in a date range. Long transcripts
   are read in parts and the answers combined.
 - **Settings.**
-  - Devices: add by scanning, and per-device name, key, clock, auto-download and auto-transcribe.
+  - Devices: add by scanning (no key needed; pair from the Recorder tab), and per-device
+    name, key, clock, auto-download and auto-transcribe.
   - Stay connected.
   - USB drive: free up space.
   - Speech to text and Language model: each on the iPhone or on a server.
@@ -36,14 +39,14 @@ and server keys are kept in the Keychain.
 ## Build
 
 ```bash
-xcodegen generate && open PrivatePocket.xcodeproj   # set your team, run
+./gen-defaults.sh && xcodegen generate && open PrivatePocket.xcodeproj   # set your team, run
 # or, without an Apple ID in Xcode:
 cp signing.env.example signing.env && ./sign-install.sh
 ```
 
 `gen-defaults.sh` runs before each build. It turns `../../ble/.env` (see
 `.env.example`) into the gitignored `Generated/DefaultDevice.swift`: the first Pocket
-and its key, and optionally a default server. With no server, speech to text and
+(with its key, if you have one), and optionally a default server. With no server, speech to text and
 summaries default to the iPhone.
 
 ## Caveats

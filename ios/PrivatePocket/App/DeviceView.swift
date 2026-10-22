@@ -30,6 +30,7 @@ struct DeviceView: View {
     private var isConnected: Bool { link.connectedDeviceID != nil && link.connectedDeviceID == devices.selectedID }
     private var busy: Bool { if case .busy = link.phase { true } else { link.phase == .scanning || link.phase == .connecting } }
     private var recording: Bool { link.status.recordingSince != nil }
+    private var paired: Bool { devices.selected?.isPaired ?? false }
 
     var body: some View {
         NavigationStack {
@@ -38,13 +39,16 @@ struct DeviceView: View {
                     ContentUnavailableView {
                         Label("No Pocket yet", systemImage: "record.circle")
                     } description: {
-                        Text("Add your Pocket in Settings → Devices.")
+                        Text("Have your Pocket nearby, then add it.")
+                    } actions: {
+                        Button("Add Pocket") { adding = true }.buttonStyle(.borderedProminent)
                     }
                 } else {
                     deviceSection
+                    if !paired || link.keyRejected { pairSection }
                     recordSection
                     if recording || live.isActive { liveSection }
-                    syncSection
+                    if paired { syncSection }
                     infoSection
                 }
             }
@@ -99,25 +103,47 @@ struct DeviceView: View {
         }
     }
 
+    private var pairSection: some View {
+        Section {
+            Text("Hold the Pocket's side button for 5 seconds until its light blinks blue, then tap Pair. The light keeps blinking for a short while afterwards, then turns solid.")
+            Button { Task { await model.pairSelected() } } label: {
+                Label(link.keyRejected ? "Pair again" : "Pair", systemImage: "link")
+            }
+            .disabled(busy)
+        } header: {
+            Text(link.keyRejected ? "Key rejected" : "Not paired")
+        } footer: {
+            Text(link.keyRejected
+                 ? "The Pocket dropped this phone's key, which happens after another app pairs it. Pairing gives it a new key."
+                 : "Recordings started with the Pocket's button already stream to this phone. Pairing adds start and stop from here, downloading recordings made while the phone was away, and battery and storage details.")
+        }
+    }
+
     private var recordSection: some View {
         Section {
             VStack(spacing: 10) {
-                Button { Task { await model.toggleRecording() } } label: {
-                    ZStack {
-                        Circle().fill(recording ? Color.orange.opacity(0.15) : Color.red.opacity(0.12))
-                            .frame(width: 112, height: 112)
-                        Image(systemName: recording ? "stop.fill" : "circle.fill")
-                            .font(.system(size: recording ? 40 : 64))
-                            .foregroundStyle(recording ? .orange : .red)
+                if paired {
+                    Button { Task { await model.toggleRecording() } } label: {
+                        ZStack {
+                            Circle().fill(recording ? Color.orange.opacity(0.15) : Color.red.opacity(0.12))
+                                .frame(width: 112, height: 112)
+                            Image(systemName: recording ? "stop.fill" : "circle.fill")
+                                .font(.system(size: recording ? 40 : 64))
+                                .foregroundStyle(recording ? .orange : .red)
+                        }
                     }
+                    .buttonStyle(.plain)
+                    .disabled(busy && !recording)
+                    .accessibilityLabel(recording ? "Stop recording" : "Start recording")
                 }
-                .buttonStyle(.plain)
-                .disabled(busy && !recording)
-                .accessibilityLabel(recording ? "Stop recording" : "Start recording")
                 if let since = link.status.recordingSince {
                     Text(timerInterval: since...Date.distantFuture, countsDown: false)
                         .font(.title2.monospacedDigit().weight(.medium))
                     Text("Recording on the Pocket").font(.caption).foregroundStyle(.secondary)
+                } else if !paired {
+                    Text(isConnected ? "Press the Pocket's button to record. It streams to this phone as it records."
+                                     : "Press the Pocket's button to record. It streams here once the phone connects.")
+                        .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 } else {
                     Text(isConnected ? "Tap to record on the Pocket" : "Connect to record from here, or use the Pocket's button")
                         .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -147,7 +173,8 @@ struct DeviceView: View {
                     Text("Listening…").foregroundStyle(.secondary)
                 }
             } else {
-                Text("Started before the phone connected, so this one is not streaming. It will be downloaded when it stops.")
+                Text(paired ? "Started before the phone connected, so this one is not streaming. It will be downloaded when it stops."
+                            : "Started before the phone connected, so this one is not streaming. Pair to download it when it stops.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
         } header: {
@@ -224,7 +251,7 @@ struct DeviceView: View {
         case .idle: "Not connected"
         case .scanning: "Looking for the Pocket…"
         case .connecting: "Connecting…"
-        case .ready: "Connected"
+        case .ready: paired ? "Connected" : "Connected, not paired"
         case .busy(let what): "\(what)…"
         }
     }

@@ -37,7 +37,7 @@ There are no tests and no linter. To exercise app logic without the phone, copy 
 
 ## Secrets
 
-`ble/.env` (mode 600, template `ble/.env.example`) holds `POCKET_SK`, the device session key, plus device and server defaults and `SERVER_KEY`. Server values stay blank by default (examples only in `.env.example`). Never print the keys.
+`ble/.env` (mode 600, template `ble/.env.example`) optionally holds `POCKET_SK`, a device session key (the app pairs on its own; the Mac tools need one), plus device and server defaults and `SERVER_KEY`. Server values stay blank by default (examples only in `.env.example`). Never print the keys.
 
 - The pre-build `gen-defaults.sh` bakes them into the gitignored `Generated/DefaultDevice.swift` (`DefaultDevice`, `DefaultServer`).
 - On first launch `AppModel.init` copies `SERVER_KEY` into the Keychain, once, guarded by the `seededServerKey` flag.
@@ -49,7 +49,7 @@ There are no tests and no linter. To exercise app logic without the phone, copy 
   - `…a2`: commands, ASCII `APP&…`
   - `…a3`: replies and events, `MCU&…`
   - `…a1`: raw MP3 (MPEG-2 L3, 16 kHz mono, 32 kbps, about 4,000 B/s)
-- **Session key:** `APP&SK&<key>` must be sent first, or the device silently ignores every command.
+- **Session key:** `APP&SK&<key>` must be sent first, or the device silently ignores every command. In pairing mode (side button held 5 s, light blinking blue) the device accepts any 16-character key and keeps it: `PocketLink.pair` sends a fresh one. Outside pairing mode a wrong key drops the connection at once (`keyRejected`). Without any key the link still delivers `MCU&STA`/`MCU&STO` events and the live stream, which is how an unpaired device works in the app.
 - **Live streaming needs no command.** While recording, live MP3 arrives on `…a1` unprompted, whether started by `APP&STA` or the button. Downloads (`APP&U&…`) arrive on the same characteristic, so `PocketLink` routes `…a1` bytes to the download in progress if there is one, otherwise to `onLiveAudio`.
 - **Deleting:** there is no delete over BLE. Deletion is only via USB mass storage: `APP&USB&1`, re-plug, delete under `RECORD/<date>/`, unplug. While the cable is in, the device reports 0 space and ignores `LIST`.
 - File names are UTC timestamps.
@@ -60,10 +60,10 @@ Every source file is in `App/`.
 
 - **`PocketLink`** is the CoreBluetooth central. It handles scan, connect, the command/reply exchange, downloads and status, and exposes the hooks `onLiveAudio`, `onRecordingStarted` and `onLinkLost`.
 - **`AppModel`** is the orchestrator:
-  - A keep-alive loop (`setActive`) reconnects every 15 s while the app is in the foreground. It is skipped when the user disconnected, during Add-device discovery, or when no key is set.
+  - A keep-alive loop (`setActive`) reconnects every 15 s while the app is in the foreground. It is skipped when the user disconnected, during Add-device discovery, or after the Pocket rejected the key (`link.keyRejected`). An unpaired device (no key, `DeviceConfig.isPaired == false`) is still connected so button-started recordings stream; the record button and sync are hidden until it is paired.
   - Sync, plus transcription and diarisation, which run concurrently.
   - Summary and Ask.
-  - `completeRecording`, which runs at stop and decides whether to keep the streamed copy: kept only if the stream had no gap and its duration is within ±2 s of the device's `LIST` seconds; otherwise the file is downloaded.
+  - `completeRecording`, which runs at stop and decides whether to keep the streamed copy: kept only if the stream had no gap and its duration is within ±2 s of the device's `LIST` seconds; otherwise the file is downloaded. Unpaired: whatever streamed is kept, since nothing can be listed or downloaded.
 - **`LiveSession` (`Live.swift`)** handles the live stream:
   - It writes the stream to `Caches/Live/`.
   - `MP3Packetizer` (AudioFileStream) splits it into packets, which feed one of two transcribers:

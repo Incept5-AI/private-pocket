@@ -22,6 +22,10 @@ struct DeviceConfig: Codable, Identifiable, Hashable {
         get { Keychain.get("sk.\(id.uuidString)") ?? "" }
         nonmutating set { Keychain.set(newValue, for: "sk.\(id.uuidString)") }
     }
+
+    /// Has a key, so the Pocket answers commands (start, stop, list, download).
+    /// Without one it still streams recordings started with its button.
+    var isPaired: Bool { !sessionKey.isEmpty }
 }
 
 @MainActor
@@ -37,9 +41,9 @@ final class DeviceStore: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: key),
            let list = try? JSONDecoder().decode([DeviceConfig].self, from: data) {
             devices = list
-        } else if !DefaultDevice.sessionKey.isEmpty {
+        } else if !DefaultDevice.advertisedName.isEmpty {
             let d = DeviceConfig(name: DefaultDevice.name, advertisedName: DefaultDevice.advertisedName)
-            d.sessionKey = DefaultDevice.sessionKey
+            if !DefaultDevice.sessionKey.isEmpty { d.sessionKey = DefaultDevice.sessionKey }
             devices = [d]
         }
         renameToShortIDs()

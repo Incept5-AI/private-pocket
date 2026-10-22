@@ -31,7 +31,7 @@ Verified by replaying from a Mac with `pocket.py`.
 
 | App sends | Device replies | Meaning |
 |---|---|---|
-| `APP&SK&<16 chars>` | `MCU&SK&OK` | session key, sent first after connect (enforcement untested) |
+| `APP&SK&<16 chars>` | `MCU&SK&OK` | session key, sent first after connect; a wrong one drops the connection (see below) |
 | `APP&BAT` | `MCU&BAT&99` | battery % |
 | `APP&FW` | `MCU&FW&1.8` | firmware version |
 | `APP&WF` | `MCU&WF&V9` | Wi-Fi firmware version |
@@ -48,13 +48,17 @@ Verified by replaying from a Mac with `pocket.py`.
 | `APP&STA` | `MCU&REC&CON`, `MCU&STA&<YYYYMMDDhhmmss>` | **start recording** (timestamp = file name) |
 | `APP&STO` | `MCU&STO` | **stop recording** |
 
-The session key is **required**: without `APP&SK&<key>` the device silently ignores
-every command. The captured key replayed fine from a different central (a Mac) in a
-later session, so it is static at least across sessions. It is sent in cleartext over
-an unpaired link. Keep it in `.env` (`POCKET_SK`), never in this file.
+The session key is **required for commands**: without `APP&SK&<key>` the device silently
+ignores every command. It is set in pairing mode and static after that (see
+[Session key and pairing](#session-key-and-pairing)). It is sent in cleartext over an
+unpaired link. Keep it in `.env` (`POCKET_SK`), never in this file.
 
 Unsolicited events: `MCU&REC&CON` + `MCU&STA&<timestamp>` when recording starts
-(button press), live MP3 streamed on `…a1` while recording, `MCU&STO` on stop.
+(button press), live MP3 streamed on `…a1` while recording, `MCU&STO` on stop. These
+arrive **with or without a session key**. A recording started by the button with the
+card sitting on the back of the phone announced `MCU&REC&CALL` and a file named
+`PH<YYMMDDhhmmss>` instead (the contact-mic "call" mode), and `LIST_DIRS` did not list
+it afterwards, so those files live outside the dated folders.
 
 ## Observed sync flow
 
@@ -78,10 +82,36 @@ Pocket support's sanctioned method is deleting over USB, and it works cleanly:
 Tested 2026-10-17: deleted `20261017164256.mp3` over USB → `MCU&LIST&008`, file gone.
 `SPACE` stays `059620&059634`, so its units are coarser than the 6 KB freed (MB, or GB×1000).
 
-## Capturing your session key
+## Session key and pairing
 
-The app needs your Pocket's 16-character session key, which the official app sends as
-`APP&SK&<key>` right after connecting. To read it:
+Tested 2026-10-22 on firmware 1.8 from a Mac with `bleak`:
+
+- **Pairing mode sets the key.** Hold the side button for 5 s until the light blinks
+  blue (the official app's "Pair your Pocket" step). The device then accepts
+  **whatever 16-character key the next connection sends**, answers `MCU&SK&OK`, and
+  requires that key from then on. There is no challenge, pairing prompt or account
+  check on the device; the "already assigned" check the official app shows lives in
+  Pocket's cloud. Nothing else is needed: with the connection kept open and no further
+  command, the light went from blinking to solid blue within the first minute. Right
+  after the key the device sends `MCU&WIFIO`, and `MCU&WIFIC` about 15 s later (its
+  Wi-Fi coming up and giving up, it seems).
+- **Outside pairing mode a wrong key drops the connection** immediately, with no reply.
+  The key set in pairing mode kept working across later connections.
+- **No key still gets the live stream.** A central that only enables notifications on
+  `…a1` and `…a3` receives `MCU&STA&<name>` and `MCU&STO` for button-started recordings
+  and the full live MP3 on `…a1`, and can read the standard Battery Service
+  (`180f`/`2a19`). Commands get no reply. The device dropped such a connection about
+  12 s after `MCU&STO`.
+
+So a third-party app pairs exactly as the official one does: hold the button, send a
+key of its own. That is what Private Pocket's **Pair** button does, and the official app
+simply needs to pair again afterwards. The Mac tools take the key from `.env`.
+
+### Reading the official app's key instead
+
+If you want the key the official app already uses (both apps then share it, though only
+one can be connected at a time), it is sent in clear text as `APP&SK&<key>` on every
+connection:
 
 1. Install Apple's **Bluetooth logging profile** for iOS (developer.apple.com →
    *Bug Reporting → Profiles and Logs*), approve it in Settings, restart the phone.

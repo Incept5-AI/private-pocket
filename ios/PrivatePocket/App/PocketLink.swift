@@ -8,6 +8,9 @@ enum PocketUUID {
     static let audio = CBUUID(string: "001120A1-2233-4455-6677-889912345678")
     static let command = CBUUID(string: "001120A2-2233-4455-6677-889912345678")
     static let reply = CBUUID(string: "001120A3-2233-4455-6677-889912345678")
+    /// Standard Battery Service: readable without a session key.
+    static let batteryService = CBUUID(string: "180F")
+    static let batteryLevel = CBUUID(string: "2A19")
     static let namePrefix = "PKT01"
 }
 
@@ -35,7 +38,7 @@ struct Discovered: Identifiable, Hashable {
 }
 
 enum PocketError: LocalizedError {
-    case bluetoothOff, notFound, timeout(String), notReady, rejected, noKey
+    case bluetoothOff, notFound, timeout(String), notReady, rejected, notPairing
 
     var errorDescription: String? {
         switch self {
@@ -43,8 +46,8 @@ enum PocketError: LocalizedError {
         case .notFound: "Pocket not found. Is it on, nearby, and not connected to another phone or app?"
         case .timeout(let what): "Timed out waiting for \(what)."
         case .notReady: "Not connected."
-        case .rejected: "The Pocket did not accept the session key."
-        case .noKey: "This device has no session key. Add it in Settings."
+        case .rejected: "The Pocket rejected this phone's key, which happens after another app pairs it. Hold its side button for 5 seconds until the light blinks blue, then tap Pair."
+        case .notPairing: "The Pocket did not take a new key. Hold its side button for 5 seconds until the light blinks blue, then tap Pair straight away."
         }
     }
 }
@@ -62,6 +65,8 @@ final class PocketLink: NSObject, ObservableObject {
     @Published private(set) var progress: (label: String, done: Int, total: Int)?
     @Published private(set) var log: [String] = []
     @Published var lastError: String?
+    /// The Pocket dropped the connection on the stored key: another app has paired it since.
+    @Published private(set) var keyRejected = false
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -114,10 +119,42 @@ final class PocketLink: NSObject, ObservableObject {
 
     // MARK: - Connection
 
+    /// Connects and, if the device has a key, sends it. Without a key the link still
+    /// delivers recording events and live audio; the Pocket just answers no commands.
     func connect(_ d: DeviceConfig) async throws {
         if connectedDeviceID == d.id, isReady { return }
+        try await establish(d)
+        try await handshake()
+    }
+
+    /// Pairs the way the official app does. With the Pocket in pairing mode (side
+    /// button held for 5 s, light blinking blue) it accepts whatever key is sent next
+    /// and requires that key from then on. Makes a key, sets it and stores it for `d`.
+    func pair(_ d: DeviceConfig) async throws {
+        let key = Self.newKey()
+        if !(connectedDeviceID == d.id && isReady) { try await establish(d) }
+        do { try await sendKey(key) } catch {
+            disconnect()
+            throw PocketError.notPairing
+        }
+        d.sessionKey = key   // Keychain; the struct itself is unchanged
+        keyRejected = false
+        note("paired: the Pocket took a new key")
+        if d.setClockOnConnect {
+            _ = try await send("T&\(PocketTime.now())", until: { $0.hasPrefix("MCU&T&") })
+        }
+        try await refreshStatus()
+    }
+
+    /// 16 characters, like the official app's keys, without look-alike letters.
+    static func newKey() -> String {
+        let chars = Array("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789")
+        return String((0..<16).map { _ in chars.randomElement()! })
+    }
+
+    /// Scan, connect and subscribe, without sending any key.
+    private func establish(_ d: DeviceConfig) async throws {
         disconnect()
-        guard !d.sessionKey.isEmpty else { throw PocketError.noKey }
         try await waitForPoweredOn()
         device = d
         lines = []
@@ -138,7 +175,6 @@ final class PocketLink: NSObject, ObservableObject {
         }
         phase = .ready
         connectedDeviceID = d.id
-        try await handshake()
     }
 
     func disconnect() {
@@ -166,12 +202,32 @@ final class PocketLink: NSObject, ObservableObject {
 
     private func handshake() async throws {
         guard let d = device else { throw PocketError.notReady }
-        let r = try await send("SK&\(d.sessionKey)", until: { $0.hasPrefix("MCU&SK&") }, timeout: 5)
-        guard r.last == "MCU&SK&OK" else { disconnect(); throw PocketError.rejected }
+        guard !d.sessionKey.isEmpty else {
+            note("not paired: recording events and live audio only")
+            status = DeviceStatus(battery: status.battery)
+            return
+        }
+        do { try await sendKey(d.sessionKey) } catch {
+            keyRejected = true
+            disconnect()
+            throw error
+        }
+        keyRejected = false
         if d.setClockOnConnect {
             _ = try await send("T&\(PocketTime.now())", until: { $0.hasPrefix("MCU&T&") })
         }
         try await refreshStatus()
+    }
+
+    /// `APP&SK&<key>`: the Pocket answers `MCU&SK&OK`, or drops the connection at once
+    /// when the key is wrong (outside pairing mode).
+    private func sendKey(_ key: String) async throws {
+        do {
+            let r = try await send("SK&\(key)", until: { $0.hasPrefix("MCU&SK&") }, timeout: 5)
+            guard r.last == "MCU&SK&OK" else { throw PocketError.rejected }
+        } catch PocketError.notReady {
+            throw PocketError.rejected
+        }
     }
 
     // MARK: - Commands
@@ -368,7 +424,7 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
             wantedName = nil
             note("connected to \(p.name ?? "Pocket")")
             if let d = device, d.peripheralID != p.identifier { onPeripheralLearned?(d.id, p.identifier) }
-            p.discoverServices([PocketUUID.service])
+            p.discoverServices([PocketUUID.service, PocketUUID.batteryService])
         }
     }
 
@@ -394,6 +450,9 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
                 note("Pocket service not found"); disconnect(); return
             }
             p.discoverCharacteristics([PocketUUID.audio, PocketUUID.command, PocketUUID.reply], for: s)
+            if let b = p.services?.first(where: { $0.uuid == PocketUUID.batteryService }) {
+                p.discoverCharacteristics([PocketUUID.batteryLevel], for: b)
+            }
         }
     }
 
@@ -403,6 +462,7 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
                 switch c.uuid {
                 case PocketUUID.command: commandChar = c
                 case PocketUUID.reply, PocketUUID.audio: p.setNotifyValue(true, for: c)
+                case PocketUUID.batteryLevel: p.readValue(for: c); p.setNotifyValue(true, for: c)
                 default: break
                 }
             }
@@ -423,6 +483,8 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
                 if capturingAudio { audio.append(v) } else { onLiveAudio?(v) }
             } else if c.uuid == PocketUUID.reply, let s = String(data: v, encoding: .utf8) {
                 handleLine(s.trimmingCharacters(in: .whitespacesAndNewlines))
+            } else if c.uuid == PocketUUID.batteryLevel, let b = v.first {
+                status.battery = Int(b)
             }
         }
     }

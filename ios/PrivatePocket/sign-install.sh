@@ -13,6 +13,7 @@ DEVICE=${cli_device:-$DEVICE}
 for v in DEVICE PROFILE IDENTITY APP_ID_PREFIX TEAM_ID; do [[ -n ${(P)v} ]] || { echo "$v is not set in signing.env"; exit 1; }; done
 APP=build/Build/Products/Debug-iphoneos/PrivatePocket.app
 
+./gen-defaults.sh          # before xcodegen, so Generated/ exists and gets into the project
 xcodegen generate -q
 xcodebuild -project PrivatePocket.xcodeproj -scheme PrivatePocket -destination 'generic/platform=iOS' \
   -derivedDataPath build CODE_SIGNING_ALLOWED=NO build -quiet

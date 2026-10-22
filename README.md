@@ -55,8 +55,8 @@ software.
 | Pocket says (trust page) | What we observed |
 |---|---|
 | "Audio is written to encrypted storage the moment it leaves the microphone. Pull the device apart and there is nothing readable on it without your account." | With USB access (Web Sync) on, the card mounts on any computer as an ordinary drive of **plain, unencrypted MP3 files**. No account is involved. Over Bluetooth, the same plain MP3s can be downloaded by anyone who has the session key. |
-| "The recording is never in the clear on the wire, on your network or on ours." | From card to phone, recordings travel over Bluetooth as **plain MP3 frames**, with no Bluetooth pairing or link encryption, so the audio is in the clear over the air. *(We didn't examine the Wi-Fi or cloud upload path.)* |
-| "Built on rigorous security standards, strong encryption…", "security at every layer" | **The Bluetooth link has no cryptography.** The card accepts connections from any device without pairing, and anyone in range can read its battery level. The only access control is a 16-character key that the official app sends **in clear text** at every connection. It doesn't change between sessions, and it unlocks listing, downloading, live streaming and starting or stopping recordings. |
+| "The recording is never in the clear on the wire, on your network or on ours." | From card to phone, recordings travel over Bluetooth as **plain MP3 frames**, with no Bluetooth pairing or link encryption, so the audio is in the clear over the air. **While a recording is being made, the card streams it to any device that has connected, with no key at all.** *(We didn't examine the Wi-Fi or cloud upload path.)* |
+| "Built on rigorous security standards, strong encryption…", "security at every layer" | **The Bluetooth link has no cryptography.** The card accepts connections from any device without pairing, and anyone in range can read its battery level or receive the live recording. The only access control is a 16-character key sent **in clear text** at every connection, which unlocks listing, downloading and starting or stopping recordings. The key is set by **whoever connects while the card is in pairing mode** (side button held for 5 seconds), with no check of who that is, and it never changes otherwise. |
 
 To Pocket's credit, USB access has been **off by default** since firmware 1.2.
 
@@ -67,6 +67,9 @@ notice. Until then, Private Pocket keeps your recordings on your own phone.
 
 ## What it does
 
+- **Pairs like the official app.** Hold the Pocket's side button for 5 seconds until it
+  blinks blue, tap Pair, and the light goes solid a little later. No account, nothing to
+  type. Even before pairing, every recording started with the button streams to the phone.
 - **Record and stream.** Start and stop the Pocket from the phone, or use its button.
   While the phone is connected, the Pocket streams its audio live, so the recording is
   saved and transcribed as you speak, with no download afterwards.
@@ -101,26 +104,29 @@ Place names use Apple's geocoder (coordinates only), and can be turned off.
 - An iPhone on iOS 27, built with Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
   On-device summaries need Apple Intelligence.
 - A Pocket recorder. Tested on firmware 1.8 / Wi-Fi V9 with two cards.
-- Your Pocket's **session key**. The device ignores every command without it. It's a
-  one-time capture of what the official app sends; see
-  [Capturing your session key](ble/PROTOCOL.md#capturing-your-session-key).
+- Nothing else. The app pairs with the Pocket itself, the same way the official app
+  does; see [Session key and pairing](ble/PROTOCOL.md#session-key-and-pairing) for
+  what happens underneath.
 
 ## Getting started
 
 ```bash
 git clone https://github.com/incept5-ai/private-pocket && cd private-pocket
-cp ble/.env.example ble/.env          # optional: your Pocket, key and server defaults
+cp ble/.env.example ble/.env          # optional: your Pocket and server defaults
 cd ios/PrivatePocket
-xcodegen generate && open PrivatePocket.xcodeproj    # set your team, run on your phone
+./gen-defaults.sh && xcodegen generate && open PrivatePocket.xcodeproj   # set your team, run on your phone
 ```
 
-You can skip `.env` and add the Pocket in **Settings → Devices → Add device** instead.
-If Xcode has no Apple ID signed in, `sign-install.sh` builds unsigned and signs with an
-existing development profile (see `signing.env.example`).
+You can skip `.env`: open the app, tap **Add Pocket** and pick yours, then hold the
+Pocket's side button for 5 seconds until it blinks blue and tap **Pair** (the light keeps
+blinking for a short while, then turns solid). If Xcode has no
+Apple ID signed in, `sign-install.sh` builds unsigned and signs with an existing
+development profile (see `signing.env.example`).
 
 **Important:** the Pocket talks to one phone at a time. If the official app is installed
 with Bluetooth on, it may connect first and sync recordings to its cloud as designed. Use
-one app or the other.
+one app or the other. Pairing here gives the Pocket a new key, so the official app will
+ask you to pair again (the same button press) if you go back to it.
 
 ## Using your own server
 
@@ -152,8 +158,9 @@ this possible.
 ## Caveats
 
 - A Pocket firmware update could change the protocol. Tested on 1.8.
-- The session key is a shared secret sent without Bluetooth pairing. Treat it like a
-  password and keep it out of screenshots and repos (`ble/.env` is gitignored).
+- The session key is a shared secret sent without Bluetooth pairing. The app makes one
+  when you pair and keeps it in the Keychain. If you put one in `ble/.env` for the Mac
+  tools, keep it out of screenshots and repos (the file is gitignored).
 - With Web Sync (USB access) on, anyone who plugs the Pocket into a computer can read
   the recordings. The app shows the setting and lets you switch it off.
 
