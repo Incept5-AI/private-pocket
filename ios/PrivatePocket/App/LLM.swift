@@ -65,7 +65,7 @@ enum LLM {
                         : "Apple's on-device model. Nothing leaves this iPhone."
     }
 
-    static func complete(_ c: LLMConfig, instructions: String, prompt: String) async throws -> String {
+    static func complete(_ c: LLMConfig, instructions: String, prompt: String, temperature: Double = 0.2) async throws -> String {
         guard c.remote else {
             let session = LanguageModelSession(model: .default, instructions: instructions)
             return try await session.respond(to: prompt).content
@@ -77,7 +77,7 @@ enum LLM {
         if !c.key.isEmpty { req.setValue("Bearer \(c.key)", forHTTPHeaderField: "Authorization") }
         var body: [String: Any] = [
             "model": c.model,
-            "temperature": 0.2,
+            "temperature": temperature,
             "messages": [["role": "system", "content": instructions], ["role": "user", "content": prompt]],
         ]
         if c.noThinking { body["chat_template_kwargs"] = ["enable_thinking": false] }

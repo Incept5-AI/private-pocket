@@ -104,7 +104,7 @@ struct MomentInsight: Codable, Hashable {
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 5
+    static let readerVersion = 6
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -313,7 +313,7 @@ enum Analyst {
             "\"questions\" (an array of strings: questions that still had no answer when the conversation ended, never ones answered later in it); " +
             "\"figures\" (an array of strings: amounts that matter, money, quantities or counts, each as the amount and what it is for, " +
             "like '£3,000 for the offsite' or '30 people at the workshop', never a date, a day of the month or a clock time)."
-        let reply = try await LLM.complete(c, instructions: json, prompt: prompt)
+        let reply = try await LLM.complete(c, instructions: json, prompt: prompt, temperature: 0)   // the same transcript reads the same way twice
         guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close else { throw LLMError.empty }
         return try JSONDecoder().decode(Draft.self, from: Data(reply[open...close].utf8))
     }
@@ -557,20 +557,25 @@ enum Planner {
     static func rebase(_ d: Date, phrase: String, said: Date?) -> Date {
         guard let said else { return d }
         let cal = Calendar.current
-        let delta = cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: said)).day ?? 0
-        guard delta != 0 else { return d }
         let lower = phrase.lowercased()
         if let re = absoluteDate, re.firstMatch(in: lower, range: NSRange(location: 0, length: (lower as NSString).length)) != nil { return d }
-        guard var moved = cal.date(byAdding: .day, value: delta, to: d) else { return d }
-        if weekdayNames.contains(where: { lower.contains($0) }) {
-            let want = cal.component(.weekday, from: d)
+        if let idx = weekdayNames.firstIndex(where: { lower.contains($0) }) {
+            // The first such weekday after the day it was said, at the time the detector read.
+            // The detector's own day is not trusted here: "until Friday" reads as today.
+            let want = idx == 6 ? 1 : idx + 2
+            let time = cal.dateComponents([.hour, .minute], from: d)
+            var day = cal.startOfDay(for: said)
             var k = 0
-            while cal.component(.weekday, from: moved) != want, k < 7 {
-                moved = cal.date(byAdding: .day, value: 1, to: moved) ?? moved
+            repeat {
+                day = cal.date(byAdding: .day, value: 1, to: day) ?? day
                 k += 1
-            }
+            } while cal.component(.weekday, from: day) != want && k < 8
+            if lower.contains("next ") { day = cal.date(byAdding: .day, value: 7, to: day) ?? day }
+            return cal.date(bySettingHour: time.hour ?? 12, minute: time.minute ?? 0, second: 0, of: day) ?? day
         }
-        return moved
+        let delta = cal.dateComponents([.day], from: cal.startOfDay(for: Date()), to: cal.startOfDay(for: said)).day ?? 0
+        guard delta != 0 else { return d }
+        return cal.date(byAdding: .day, value: delta, to: d) ?? d
     }
 
     // Reminders
