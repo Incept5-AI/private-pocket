@@ -108,6 +108,8 @@ final class PocketLink: NSObject, ObservableObject {
     /// reconnect, so the stream carries on.
     private var pairAttemptPending = true
     private var lastKeySentAt = Date.distantPast
+    /// When the stored key was last refused, so it can be tried again after a while.
+    private var rejectedAt = Date.distantPast
     /// Called when a key was accepted, with the device that now holds it.
     var onPaired: ((DeviceConfig) -> Void)?
 
@@ -305,30 +307,59 @@ final class PocketLink: NSObject, ObservableObject {
     }
 
     /// After the link is up. With a key the Pocket has accepted before: send it and
-    /// read the status. Without one, or after a rejection: stay connected for events
-    /// and live audio, and once per connection try a fresh key in case the Pocket is
-    /// in pairing mode.
+    /// read the status. Without one, or after a refusal: stay connected for events
+    /// and live audio, and try to pair in case the Pocket is in pairing mode. The
+    /// foreground loop keeps trying every few seconds (`AppModel.setActive`).
     private func handshake() async throws {
         guard let d = device else { throw PocketError.notReady }
         let key = d.sessionKey
         if !key.isEmpty, !keyRejected {
-            do { try await sendKey(key) } catch {
-                // The Pocket drops the link on a wrong key. AppModel reconnects, and
-                // this runs again on the keyless path below.
+            do { try await sendKey(key) } catch PocketError.rejected {
+                // The Pocket drops the link on a key it does not hold (it was reset, or
+                // another app paired it). AppModel reconnects, and this runs again on
+                // the keyless path below. A timeout is not a refusal: it propagates, and
+                // the next connection sends the key again.
                 keyRejected = true
-                note("key rejected: carrying on without one")
+                rejectedAt = Date()
+                note("key refused: carrying on without one")
                 throw PocketError.rejected
             }
             try await afterKey(d)
             return
         }
         note(key.isEmpty ? "not paired: recording events and live audio only"
-                         : "key rejected earlier: recording events and live audio only")
+                         : "key refused earlier: recording events and live audio only")
         status = DeviceStatus(battery: status.battery)
-        if pairAttemptPending, status.recordingSince == nil {
+        if pairAttemptPending {
             pairAttemptPending = false
-            try await tryNewKey(d, quiet: true)
+            try await tryPairing(quiet: true)
         }
+    }
+
+    /// Tries to pair, in the order most likely to work. The stored key first, unless it
+    /// was refused in the last while: a refusal is sometimes a missed reply, and a reset
+    /// Pocket is not the common case. Else a fresh key, which the Pocket takes in
+    /// pairing mode (side button held 5 s, light blinking blue) and keeps from then on.
+    /// Outside pairing mode a wrong key drops the link, which costs a reconnect and
+    /// nothing else: the link had no key anyway. Skipped while the Pocket records, so a
+    /// stream started with the button is never cut.
+    func tryPairing(quiet: Bool) async throws {
+        guard let d = device, isReady, status.recordingSince == nil else { return }
+        let key = d.sessionKey
+        if !key.isEmpty, !keyRejected || Date().timeIntervalSince(rejectedAt) > 45 {
+            do { try await sendKey(key) } catch PocketError.rejected {
+                keyRejected = true
+                rejectedAt = Date()
+                note("key refused again")
+                if quiet { return }
+                throw PocketError.rejected
+            }
+            note("the Pocket took the stored key after all")
+            try await afterKey(d)
+            onPaired?(d)
+            return
+        }
+        try await tryNewKey(d, quiet: quiet)
     }
 
     /// `APP&SK&<key>`: the Pocket answers `MCU&SK&OK`, or drops the connection at once

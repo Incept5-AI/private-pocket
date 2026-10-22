@@ -46,6 +46,8 @@ final class AppModel: ObservableObject {
     /// The user tapped Disconnect: do not reconnect until they tap Connect.
     @Published var userDisconnected = false
     private var keepAlive: Task<Void, Never>?
+    /// Pairing tries since the app came to the foreground (see `setActive`).
+    private var pairTicks = 0
     /// Scene is active: reconnect by scanning; otherwise leave a background standby.
     private var active = false
 
@@ -139,13 +141,26 @@ final class AppModel: ObservableObject {
         keepAlive?.cancel()
         guard active else { standby(); return }
         if link.phase == .waiting { link.disconnect() }   // scan instead, which also notices new Pockets
+        pairTicks = 0
         keepAlive = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.ensureConnected()
                 self?.refreshPresence()
+                await self?.keepPairing()
                 try? await Task.sleep(for: .seconds(15))
             }
         }
+    }
+
+    /// Connected but without a key the Pocket accepts: try to pair, every 15 s for the
+    /// first two minutes in the foreground and every minute after, never while it
+    /// records. In pairing mode the try succeeds; outside it the Pocket drops the link,
+    /// which `ensureConnected` restores a moment later.
+    private func keepPairing() async {
+        guard link.isReady, !canCommand, link.status.recordingSince == nil else { return }
+        pairTicks += 1
+        guard pairTicks <= 8 || pairTicks % 4 == 0 else { return }
+        await link.run("Pairing", quiet: true) { try await link.tryPairing(quiet: true) }
     }
 
     /// Keep the Dynamic Island in step with the Pocket: light and battery while

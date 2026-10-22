@@ -160,13 +160,16 @@ struct HoldRing: View {
 }
 
 struct PairPage: View {
+    @EnvironmentObject var model: AppModel
     @State private var paired = false
 
     var body: some View {
+        let done = model.canCommand || paired
         WalkPage(glow: Lamp.ready,
-                 headline: paired ? "Paired. Solid blue." : "Pairing. Keep it close…",
-                 line: paired ? "Pocket and your iPhone know each other now. Nothing to type, ever." : "The app does it by itself.") {
-            PocketIllustration(light: Lamp.ready, blink: !paired)
+                 headline: done ? "Paired. Solid blue." : "Pairing. Keep it close…",
+                 line: model.canCommand ? "Your Pocket is paired with this iPhone. Nothing to type, ever."
+                     : done ? "Pocket and your iPhone know each other now. Nothing to type, ever." : "The app does it by itself, while this is open.") {
+            PocketIllustration(light: Lamp.ready, blink: !done)
         }
         .task {
             while !Task.isCancelled {
