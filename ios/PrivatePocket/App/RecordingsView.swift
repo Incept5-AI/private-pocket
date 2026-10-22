@@ -7,6 +7,11 @@ struct RecordingsView: View {
     @EnvironmentObject var devices: DeviceStore
     @State private var search = ""
     @State private var pocketFilter: UUID?
+    /// Rows on screen, for where the date finder's handle rests.
+    @State private var visible: Set<String> = []
+    /// The list is moving, or stopped less than a moment ago: the handle shows.
+    @State private var scrolling = false
+    @State private var hideHandle: Task<Void, Never>?
 
     /// Pockets that have recordings here, with their names.
     private var pockets: [(id: UUID, name: String)] {
@@ -62,6 +67,8 @@ struct RecordingsView: View {
                         ForEach(items) { r in
                             NavigationLink(value: r.id) { MomentRow(recording: r, showDevice: pockets.count > 1) }
                                 .id(r.id)
+                                .onAppear { visible.insert(r.id) }
+                                .onDisappear { visible.remove(r.id) }
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
@@ -75,12 +82,26 @@ struct RecordingsView: View {
                 .scrollContentBackground(.hidden)
                 .background(Brand.ground)
                 .scrollIndicators(.hidden)
+                .onScrollPhaseChange { _, phase in
+                    hideHandle?.cancel()
+                    if phase == .idle {
+                        hideHandle = Task {
+                            try? await Task.sleep(for: .seconds(1.4))
+                            guard !Task.isCancelled else { return }
+                            withAnimation(.easeOut(duration: 0.35)) { scrolling = false }
+                        }
+                    } else if !scrolling {
+                        withAnimation(.spring(duration: 0.35)) { scrolling = true }
+                    }
+                }
                 .overlay(alignment: .trailing) {
                     if shown.count >= 2, search.isEmpty {
-                        TimeRail(moments: shown.compactMap { r in r.startedAt.map { (id: r.id, at: $0) } }) { id in
+                        DateFinder(moments: shown.compactMap { r in r.startedAt.map { (id: r.id, at: $0) } },
+                                   topDate: shown.first { visible.contains($0.id) }?.startedAt,
+                                   active: scrolling) { id in
                             withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .top) }
                         }
-                        .padding(.vertical, 28).padding(.trailing, 2)
+                        .padding(.vertical, 6).padding(.trailing, 2)
                     }
                 }
             }
@@ -320,19 +341,23 @@ struct MomentRow: View {
 }
 
 
-// MARK: - The time rail
+// MARK: - Finding a date
 
-/// The date filter on the right edge of Moments: slide a thumb and the list follows.
-/// The rail is time itself, now at the top and the earliest moment at the foot, so a
-/// quiet week takes more of it than a busy hour. Ticks mark midnights, or weeks or
-/// months when the span is long; a glass lens shows the date and time under the thumb.
-struct TimeRail: View {
+/// The date finder on the right edge of Moments. Nothing when the list is still. While
+/// it scrolls, a glass handle shows where you are in time, now at the top and the
+/// earliest moment at the foot. Hold the handle and it grows into a lens with the date
+/// and time under your thumb, a faint track of midnights appears, and the list follows.
+/// Let go and it all melts away.
+struct DateFinder: View {
     let moments: [(id: String, at: Date)]   // newest first
+    let topDate: Date?
+    let active: Bool
     let scrollTo: (String) -> Void
     @State private var dragging = false
     @State private var y: CGFloat = 0
     @State private var time = Date()
     @State private var target: String?
+    @State private var day = Date()
 
     private var now: Date { Date() }
     private var earliest: Date { min(moments.last?.at ?? now, now.addingTimeInterval(-86_400)) }
@@ -341,69 +366,97 @@ struct TimeRail: View {
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height
-            let inset: CGFloat = 24
+            let inset: CGFloat = 28
             let inner = max(1, h - 2 * inset)
+            let restY = inset + inner * CGFloat(min(1, max(0, now.timeIntervalSince(topDate ?? now) / span)))
+            let handleY = dragging ? min(max(y, inset), h - inset) : restY
             ZStack(alignment: .topTrailing) {
-                VStack(spacing: 4) {
-                    Text("Now").font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted)
-                    Canvas { ctx, size in
-                        let cal = Calendar.current
-                        let days = span / 86_400
-                        let step: Calendar.Component = days > 400 ? .month : days > 60 ? .weekOfYear : .day
-                        var t = cal.dateInterval(of: step, for: now)?.start ?? now
-                        var k = 0
-                        while t > earliest, k < 2000 {
-                            let f = now.timeIntervalSince(t) / span
-                            let ty = size.height * CGFloat(f)
-                            let big = step == .day ? cal.component(.weekday, from: t) == 2 : step == .weekOfYear ? cal.component(.day, from: t) <= 7 : cal.component(.month, from: t) == 1
-                            let w: CGFloat = big ? 10 : 6
-                            ctx.fill(Path(roundedRect: CGRect(x: size.width - w, y: ty - 1, width: w, height: 2), cornerRadius: 1),
-                                     with: .color(Color.white.opacity(0.4)))
-                            t = cal.date(byAdding: step, value: -1, to: t) ?? earliest
-                            k += 1
-                        }
-                        if dragging {
-                            let ty = size.height * CGFloat(now.timeIntervalSince(time) / span)
-                            ctx.fill(Path(roundedRect: CGRect(x: size.width - 16, y: ty - 1.5, width: 16, height: 3), cornerRadius: 1.5), with: .color(Brand.act))
-                        }
-                    }
-                    .frame(width: 16)
-                    Text(earliest.formatted(.dateTime.day().month(.abbreviated))).font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted).lineLimit(1).fixedSize()
-                }
-                .padding(.horizontal, 6).padding(.vertical, 8)
-                .glassEffect(.regular.interactive(), in: Capsule())
-                .frame(height: h)
                 if dragging {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .trailing, spacing: 1) {
-                            Text(dayLabel(time)).font(.subheadline.weight(.semibold)).lineLimit(1).fixedSize()
-                            Text(time.formatted(date: .omitted, time: .shortened)).font(.caption.monospacedDigit()).foregroundStyle(Brand.muted)
-                        }
-                        Circle().fill(Brand.act).frame(width: 8, height: 8)
-                    }
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .glassEffect(.regular.tint(Brand.act.opacity(0.18)), in: Capsule())
-                    .offset(x: -40, y: min(max(y - 22, 0), h - 44))
-                    .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
+                    track(h: h, inset: inset, inner: inner)
+                        .transition(.opacity)
+                }
+                if active || dragging {
+                    handle
+                        .frame(width: dragging ? 22 : 18, height: dragging ? 52 : 44)
+                        .position(x: geo.size.width - (dragging ? 15 : 13), y: handleY)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+                if dragging {
+                    lens
+                        .offset(x: -40, y: handleY - 24)
+                        .transition(.scale(scale: 0.4, anchor: .trailing).combined(with: .opacity))
                 }
             }
             .frame(width: geo.size.width, height: h, alignment: .topTrailing)
             .contentShape(Rectangle())
+            .allowsHitTesting(active || dragging)
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { g in
-                        y = min(max(0, g.location.y), h)
+                        y = g.location.y
                         let f = min(max(0, (y - inset) / inner), 1)
                         time = now.addingTimeInterval(-span * f)
                         if !dragging { withAnimation(.spring(duration: 0.3)) { dragging = true } }
+                        day = Calendar.current.startOfDay(for: time)
                         let hit = moments.first { $0.at <= time } ?? moments.last
                         if let hit, hit.id != target { target = hit.id; scrollTo(hit.id) }
                     }
-                    .onEnded { _ in withAnimation(.spring(duration: 0.35)) { dragging = false } }
+                    .onEnded { _ in withAnimation(.spring(duration: 0.4)) { dragging = false } }
             )
-            .sensoryFeedback(.selection, trigger: target)
+            .animation(.easeOut(duration: 0.18), value: restY)
+            .sensoryFeedback(.selection, trigger: day)
         }
         .frame(width: 44)
+    }
+
+    private var handle: some View {
+        ZStack {
+            Capsule().fill(.clear)
+                .glassEffect(.regular.interactive(), in: Capsule())
+            VStack(spacing: 3) {
+                Capsule().fill(Color.white.opacity(0.6)).frame(width: 8, height: 2)
+                Capsule().fill(Color.white.opacity(0.6)).frame(width: 8, height: 2)
+            }
+        }
+        .overlay(Capsule().strokeBorder(Brand.act.opacity(dragging ? 0.6 : 0), lineWidth: 1))
+    }
+
+    private var lens: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(dayLabel(time)).font(.subheadline.weight(.semibold)).lineLimit(1).fixedSize()
+                Text(time.formatted(date: .omitted, time: .shortened)).font(.caption.monospacedDigit()).foregroundStyle(Brand.muted)
+            }
+            Circle().fill(Brand.act).frame(width: 9, height: 9).shadow(color: Brand.act.opacity(0.7), radius: 5)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .glassEffect(.regular.tint(Brand.act.opacity(0.16)), in: Capsule())
+    }
+
+    private func track(h: CGFloat, inset: CGFloat, inner: CGFloat) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Capsule().fill(Color.white.opacity(0.08)).frame(width: 4, height: inner).offset(x: -7, y: inset)
+            Canvas { ctx, size in
+                let cal = Calendar.current
+                let days = span / 86_400
+                let step: Calendar.Component = days > 400 ? .month : days > 60 ? .weekOfYear : .day
+                var t = cal.dateInterval(of: step, for: now)?.start ?? now
+                var k = 0
+                while t > earliest, k < 2000 {
+                    let ty = inset + inner * CGFloat(now.timeIntervalSince(t) / span)
+                    let big = step == .day ? cal.component(.weekday, from: t) == 2 : step == .weekOfYear ? cal.component(.day, from: t) <= 7 : cal.component(.month, from: t) == 1
+                    let w: CGFloat = big ? 10 : 6
+                    ctx.fill(Path(roundedRect: CGRect(x: size.width - 5 - w, y: ty - 1, width: w, height: 2), cornerRadius: 1),
+                             with: .color(Color.white.opacity(big ? 0.45 : 0.28)))
+                    t = cal.date(byAdding: step, value: -1, to: t) ?? earliest
+                    k += 1
+                }
+            }
+            Text("Now").font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted).offset(x: -4, y: inset - 18)
+            Text(earliest.formatted(.dateTime.day().month(.abbreviated))).font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted)
+                .fixedSize().offset(x: -2, y: inset + inner + 6)
+        }
+        .frame(height: h, alignment: .topTrailing)
     }
 
     private func dayLabel(_ d: Date) -> String {
