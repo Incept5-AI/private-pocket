@@ -1,9 +1,9 @@
 import Foundation
 
-/// What a span of moments adds up to, worked out from their readings: what needs you
-/// now, the threads running through them, the people and what stands between you, and
-/// the numbers. All counted on the phone; the briefing in `Briefings` is the one part a
-/// model writes, from the briefs, never from the transcripts.
+/// What a span of moments adds up to, worked out from their readings: the days, the
+/// commitments either way, what was decided, asked and counted, the threads, the
+/// people, and what needs you now. All counted on the phone; the briefing in
+/// `Briefings` is the one part a model writes, from the briefs, never the transcripts.
 struct Digest {
     struct Need: Identifiable {
         let recording: Recording
@@ -19,6 +19,7 @@ struct Digest {
         /// The most recent sentence that mentions it.
         let latest: String?
         var id: String { term }
+        var dates: [Date] { moments.compactMap(\.startedAt) }
     }
 
     struct Person: Identifiable {
@@ -27,22 +28,49 @@ struct Digest {
         var waitingOn: [NextItem] = []
         var youOwe = 0
         var id: String { name }
+        var lastSeen: Date? { moments.compactMap(\.startedAt).max() }
+    }
+
+    struct Day: Identifiable {
+        let date: Date
+        var work = 0
+        var life = 0
+        var other = 0
+        var id: Date { date }
+        var total: Int { work + life + other }
+    }
+
+    /// A line that came out of a moment: a decision, a question, a figure.
+    struct Line: Identifiable {
+        let recording: Recording
+        let text: String
+        var id: String { recording.id + "|" + text }
     }
 
     let window: DateInterval
     let moments: [Recording]
+    let days: [Day]
     let needs: [Need]
     let threads: [Thread]
     let people: [Person]
-    let workSeconds: Int
-    let lifeSeconds: Int
-    let otherSeconds: Int
+    let decisions: [Line]
+    let questions: [Line]
+    let figures: [Line]
+    let yours: [(Recording, NextItem)]
+    let theirs: [(Recording, NextItem)]
     let calls: Int
     let meetings: Int
-    let busiestDay: String?
 
+    var workSeconds: Int { days.map(\.work).reduce(0, +) }
+    var lifeSeconds: Int { days.map(\.life).reduce(0, +) }
+    var otherSeconds: Int { days.map(\.other).reduce(0, +) }
     var totalSeconds: Int { workSeconds + lifeSeconds + otherSeconds }
+    var busiestDay: Day? { days.max { $0.total < $1.total }.flatMap { $0.total > 0 ? $0 : nil } }
     var unread: [Recording] { moments.filter { $0.meta.transcript != nil && $0.meta.insight?.readByModel != true } }
+    var outdated: [Recording] { moments.filter { $0.meta.insight?.readByModel == true && ($0.meta.insight?.version ?? 1) < MomentInsight.readerVersion } }
+    var yoursOpen: [(Recording, NextItem)] { yours.filter { !$0.1.isDone } }
+    var yoursDone: [(Recording, NextItem)] { yours.filter { $0.1.isDone } }
+    var theirsOverdue: [(Recording, NextItem)] { theirs.filter { $0.1.date.map { $0 < Date() } ?? false } }
 
     /// Changes when the briefing should be written again.
     var stamp: String {
@@ -53,25 +81,41 @@ struct Digest {
     }
 
     static func make(_ all: [Recording], window: DateInterval) -> Digest {
+        let cal = Calendar.current
         let moments = all.filter { $0.startedAt.map(window.contains) == true }
             .sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
-        var work = 0, life = 0, other = 0, calls = 0, meetings = 0
-        var byDay: [String: Int] = [:]
+        // One entry per day of the span, so the chart has its quiet days too.
+        var days: [Day] = []
+        var d = cal.startOfDay(for: window.start)
+        while d < window.end, days.count < 62 {
+            days.append(Day(date: d))
+            d = cal.date(byAdding: .day, value: 1, to: d) ?? window.end
+        }
+        var calls = 0, meetings = 0
+        var yours: [(Recording, NextItem)] = [], theirs: [(Recording, NextItem)] = []
+        var decisions: [Line] = [], questions: [Line] = [], figures: [Line] = []
         for r in moments {
             let s = r.meta.seconds ?? 0
-            if r.kind.isWork { work += s } else if r.kind.isLife { life += s } else { other += s }
+            if let at = r.startedAt, let i = days.firstIndex(where: { cal.isDate($0.date, inSameDayAs: at) }) {
+                if r.kind.isWork { days[i].work += s } else if r.kind.isLife { days[i].life += s } else { days[i].other += s }
+            }
             switch r.kind {
             case .businessCall, .personalCall, .call: calls += 1
             case .businessMeeting, .personalMeeting, .meeting: meetings += 1
             default: break
             }
-            if let d = r.startedAt { byDay[d.formatted(.dateTime.weekday(.wide)), default: 0] += s }
+            let items = (r.meta.insight?.items ?? []).filter { !$0.isDismissed }
+            yours += items.filter(\.isAction).map { (r, $0) }
+            theirs += items.filter(\.isPromise).map { (r, $0) }
+            decisions += (r.meta.insight?.decisions ?? []).map { Line(recording: r, text: $0) }
+            questions += (r.meta.insight?.questions ?? []).map { Line(recording: r, text: $0) }
+            figures += (r.meta.insight?.figures ?? []).map { Line(recording: r, text: $0) }
         }
         let names = Set(moments.flatMap(\.people))
-        return Digest(window: window, moments: moments,
+        return Digest(window: window, moments: moments, days: days,
                       needs: needs(all), threads: threads(moments, people: names), people: people(moments),
-                      workSeconds: work, lifeSeconds: life, otherSeconds: other, calls: calls, meetings: meetings,
-                      busiestDay: byDay.max { $0.value < $1.value }?.key)
+                      decisions: decisions, questions: questions, figures: figures,
+                      yours: yours, theirs: theirs, calls: calls, meetings: meetings)
     }
 
     /// Open items across every moment, not just the span: what needs you now.
@@ -110,7 +154,7 @@ struct Digest {
         var latest: [String: (Date, String)] = [:]
         for r in moments {
             guard let i = r.meta.insight else { continue }
-            let sentences = [i.title ?? ""] + (i.brief ?? []).map(\.text) + (i.keyLines ?? []).map(\.text)
+            let sentences = [i.title ?? ""] + (i.brief ?? []).map(\.text) + (i.keyLines ?? []).map(\.text) + (i.decisions ?? [])
             var terms = Set<String>()
             for s in sentences {
                 let words = s.split { !($0.isLetter || $0 == "'" || $0 == "-") }.map(String.init)
@@ -164,6 +208,7 @@ struct Digest {
             var lines = ["— \(r.startedAt?.formatted(date: .abbreviated, time: .shortened) ?? r.day) · \(r.kind.label) · \(r.displayTitle)"
                          + (r.people.isEmpty ? "" : " · with \(r.people.joined(separator: ", "))")]
             if let b = i?.brief, !b.isEmpty { lines.append("Brief: " + b.map(\.text).joined(separator: " ")) }
+            if let d = i?.decisions, !d.isEmpty { lines.append("Decided: " + d.joined(separator: "; ")) }
             let items = (i?.items ?? []).filter { !$0.isDismissed }
             let todo = items.filter(\.isAction)
             if !todo.isEmpty { lines.append("To do: " + todo.map { $0.text + ($0.isDone ? " (done)" : $0.when.map { " (\($0))" } ?? "") }.joined(separator: "; ")) }
@@ -171,6 +216,8 @@ struct Digest {
             if !promised.isEmpty { lines.append("Promised: " + promised.map { [$0.who, $0.text, $0.when].compactMap { $0 }.joined(separator: " · ") }.joined(separator: "; ")) }
             let dates = items.filter(\.isDate)
             if !dates.isEmpty { lines.append("Dates: " + dates.map { [$0.text, $0.when].compactMap { $0 }.joined(separator: ", ") }.joined(separator: "; ")) }
+            if let q = i?.questions, !q.isEmpty { lines.append("Open questions: " + q.joined(separator: "; ")) }
+            if let f = i?.figures, !f.isEmpty { lines.append("Figures: " + f.joined(separator: "; ")) }
             return lines.joined(separator: "\n")
         }.joined(separator: "\n\n")
     }

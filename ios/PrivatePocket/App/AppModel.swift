@@ -536,6 +536,14 @@ final class AppModel: ObservableObject {
         await placeNext(r)
     }
 
+    /// Moments read by an older reader, read again one at a time, quietly.
+    func rereadOutdated(_ rs: [Recording]) async {
+        for r in rs where r.meta.transcript != nil && !working.contains(r.id)
+            && r.meta.insight?.readByModel == true && (r.meta.insight?.version ?? 1) < MomentInsight.readerVersion {
+            await analyse(r, quiet: true)
+        }
+    }
+
     func analyseMissing(_ rs: [Recording]) async {
         for r in rs where r.meta.transcript != nil && !working.contains(r.id) { await analyse(r, quiet: true) }
     }
@@ -661,6 +669,8 @@ final class AppModel: ObservableObject {
             sweptThisSession.insert(r.id)
             await transcribe(r, quiet: true)
         }
+        // Moments read by an older reader are read again, so Insights has what the new one finds.
+        await rereadOutdated(library.recordings)
     }
 
     // MARK: - Starting over

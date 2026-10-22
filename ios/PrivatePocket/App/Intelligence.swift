@@ -96,9 +96,13 @@ struct MomentInsight: Codable, Hashable {
     var keyLines: [Anchored]?
     /// Speaker names the conversation revealed, keyed like `speakerNames` ("0", "1"…).
     var inferredSpeakers: [String: String]?
+    /// What was decided, what was asked and left open, and the figures that came up.
+    var decisions: [String]?
+    var questions: [String]?
+    var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 2
+    static let readerVersion = 3
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -226,6 +230,12 @@ struct InsightDraft {
     var people: [String]
     @Guide(description: "For each Speaker label whose name the conversation reveals, the label and the name; empty if none")
     var speakers: [DraftSpeaker]
+    @Guide(description: "Decisions made, each one short sentence; empty if none")
+    var decisions: [String]
+    @Guide(description: "Questions raised and left unanswered, each one short sentence; empty if none")
+    var questions: [String]
+    @Guide(description: "Figures that came up, money, quantities or counts, each as the figure and what it was for, like '£3,000 for the offsite'; empty if none")
+    var figures: [String]
 }
 
 /// A plain copy of the draft, so a server's JSON and the on-device model meet in one place.
@@ -240,6 +250,9 @@ private struct Draft: Decodable {
     var keyLines: [String]?
     var people: [String]?
     var speakers: [Speaker]?
+    var decisions: [String]?
+    var questions: [String]?
+    var figures: [String]?
 
     init(_ d: InsightDraft) {
         kind = d.kind
@@ -249,6 +262,9 @@ private struct Draft: Decodable {
         keyLines = d.keyLines
         people = d.people
         speakers = d.speakers.map { Speaker(label: $0.label, name: $0.name) }
+        decisions = d.decisions
+        questions = d.questions
+        figures = d.figures
     }
 }
 
@@ -288,7 +304,8 @@ enum Analyst {
         let json = instructions + "\nReply with JSON only, no prose and no code fence, with exactly these keys: " +
             "\"kind\" (one of business_call, personal_call, business_meeting, personal_meeting, note, other); \"title\" (a string); " +
             "\"brief\" (an array of {\"text\", \"quote\"}); \"next\" (an array of {\"kind\": action|date|promise, \"text\", \"who\", \"place\", \"when\", \"quote\"}); " +
-            "\"keyLines\" (an array of strings); \"people\" (an array of strings); \"speakers\" (an array of {\"label\", \"name\"})."
+            "\"keyLines\" (an array of strings); \"people\" (an array of strings); \"speakers\" (an array of {\"label\", \"name\"}); " +
+            "\"decisions\", \"questions\", \"figures\" (each an array of strings)."
         let reply = try await LLM.complete(c, instructions: json, prompt: prompt)
         guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close else { throw LLMError.empty }
         return try JSONDecoder().decode(Draft.self, from: Data(reply[open...close].utf8))
@@ -338,6 +355,9 @@ enum Analyst {
         out.promises = items.filter(\.isPromise).map(\.text)
         out.upcoming = items.filter(\.isDate).map { [$0.text, $0.when].compactMap { $0 }.joined(separator: ", ") }
         out.keyLines = unique(drafts.flatMap { $0.keyLines ?? [] }, cap: 3).map { Anchored(text: $0, at: anchor($0)) }
+        out.decisions = unique(drafts.flatMap { $0.decisions ?? [] }, cap: 6)
+        out.questions = unique(drafts.flatMap { $0.questions ?? [] }, cap: 5)
+        out.figures = unique(drafts.flatMap { $0.figures ?? [] }, cap: 8)
         out.people = unique((drafts.flatMap { $0.people ?? [] } + out.people).filter { !isLabel($0) }, cap: 10)
 
         var inferred: [String: String] = [:]
