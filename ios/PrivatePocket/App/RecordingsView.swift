@@ -31,11 +31,6 @@ struct RecordingsView: View {
         return byDay.sorted { ($0.value.first?.startedAt ?? .distantPast) > ($1.value.first?.startedAt ?? .distantPast) }
     }
 
-    /// The month of the oldest moment shown, for the foot of the rail.
-    private var earliestLabel: String {
-        shown.compactMap(\.startedAt).min().map { $0.formatted(.dateTime.month(.abbreviated).year(.twoDigits)) } ?? ""
-    }
-
     /// "Today", "Yesterday", then "Monday 20 October" (with the year once it differs).
     static func dayLabel(_ r: Recording) -> String {
         guard let d = r.startedAt else { return r.day }
@@ -66,6 +61,7 @@ struct RecordingsView: View {
                     Section {
                         ForEach(items) { r in
                             NavigationLink(value: r.id) { MomentRow(recording: r, showDevice: pockets.count > 1) }
+                                .id(r.id)
                                 .listRowBackground(Color.clear)
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
@@ -81,8 +77,8 @@ struct RecordingsView: View {
                 .scrollIndicators(.hidden)
                 .overlay(alignment: .trailing) {
                     if grouped.count >= 3, search.isEmpty {
-                        DateRail(days: grouped.map(\.0), earliest: earliestLabel) { day in
-                            withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(day, anchor: .top) }
+                        TimeRail(moments: shown.compactMap { r in r.startedAt.map { (id: r.id, at: $0) } }) { id in
+                            withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .top) }
                         }
                         .padding(.vertical, 28).padding(.trailing, 2)
                     }
@@ -324,50 +320,70 @@ struct MomentRow: View {
 }
 
 
-// MARK: - The date rail
+// MARK: - The time rail
 
-/// The date filter on the right edge of Moments: slide a thumb up or down and the
-/// list follows, now at the top, the past at the bottom, one tick per day that has
-/// moments. A glass lens names the day under the thumb.
-struct DateRail: View {
-    let days: [String]
-    let earliest: String
+/// The date filter on the right edge of Moments: slide a thumb and the list follows.
+/// The rail is time itself, now at the top and the earliest moment at the foot, so a
+/// quiet week takes more of it than a busy hour. Ticks mark midnights, or weeks or
+/// months when the span is long; a glass lens shows the date and time under the thumb.
+struct TimeRail: View {
+    let moments: [(id: String, at: Date)]   // newest first
     let scrollTo: (String) -> Void
     @State private var dragging = false
-    @State private var index = 0
     @State private var y: CGFloat = 0
+    @State private var time = Date()
+    @State private var target: String?
+
+    private var now: Date { Date() }
+    private var earliest: Date { min(moments.last?.at ?? now, now.addingTimeInterval(-86_400)) }
+    private var span: TimeInterval { max(3600, now.timeIntervalSince(earliest)) }
 
     var body: some View {
         GeometryReader { geo in
             let h = geo.size.height
+            let inset: CGFloat = 24
+            let inner = max(1, h - 2 * inset)
             ZStack(alignment: .topTrailing) {
                 VStack(spacing: 4) {
                     Text("Now").font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted)
                     Canvas { ctx, size in
-                        let n = max(2, min(days.count, Int(size.height / 7)))
-                        for k in 0..<n {
-                            let ty = size.height * CGFloat(k) / CGFloat(n - 1)
-                            let day = Int((CGFloat(k) / CGFloat(n - 1) * CGFloat(days.count - 1)).rounded())
-                            let active = dragging && day == index
-                            let w: CGFloat = active ? 14 : (k % 5 == 0 ? 10 : 6)
+                        let cal = Calendar.current
+                        let days = span / 86_400
+                        let step: Calendar.Component = days > 400 ? .month : days > 60 ? .weekOfYear : .day
+                        var t = cal.dateInterval(of: step, for: now)?.start ?? now
+                        var k = 0
+                        while t > earliest, k < 2000 {
+                            let f = now.timeIntervalSince(t) / span
+                            let ty = size.height * CGFloat(f)
+                            let big = step == .day ? cal.component(.weekday, from: t) == 2 : step == .weekOfYear ? cal.component(.day, from: t) <= 7 : cal.component(.month, from: t) == 1
+                            let w: CGFloat = big ? 10 : 6
                             ctx.fill(Path(roundedRect: CGRect(x: size.width - w, y: ty - 1, width: w, height: 2), cornerRadius: 1),
-                                     with: .color(active ? Brand.act : Color.white.opacity(0.4)))
+                                     with: .color(Color.white.opacity(0.4)))
+                            t = cal.date(byAdding: step, value: -1, to: t) ?? earliest
+                            k += 1
+                        }
+                        if dragging {
+                            let ty = size.height * CGFloat(now.timeIntervalSince(time) / span)
+                            ctx.fill(Path(roundedRect: CGRect(x: size.width - 16, y: ty - 1.5, width: 16, height: 3), cornerRadius: 1.5), with: .color(Brand.act))
                         }
                     }
                     .frame(width: 16)
-                    Text(earliest).font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted).lineLimit(1).fixedSize()
+                    Text(earliest.formatted(.dateTime.day().month(.abbreviated))).font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted).lineLimit(1).fixedSize()
                 }
                 .padding(.horizontal, 6).padding(.vertical, 8)
                 .glassEffect(.regular.interactive(), in: Capsule())
                 .frame(height: h)
                 if dragging {
-                    HStack(spacing: 8) {
-                        Text(days[min(max(index, 0), days.count - 1)]).font(.subheadline.weight(.semibold)).lineLimit(1).fixedSize()
+                    HStack(spacing: 10) {
+                        VStack(alignment: .trailing, spacing: 1) {
+                            Text(dayLabel(time)).font(.subheadline.weight(.semibold)).lineLimit(1).fixedSize()
+                            Text(time.formatted(date: .omitted, time: .shortened)).font(.caption.monospacedDigit()).foregroundStyle(Brand.muted)
+                        }
                         Circle().fill(Brand.act).frame(width: 8, height: 8)
                     }
-                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
                     .glassEffect(.regular.tint(Brand.act.opacity(0.18)), in: Capsule())
-                    .offset(x: -40, y: min(max(y - 18, 0), h - 36))
+                    .offset(x: -40, y: min(max(y - 22, 0), h - 44))
                     .transition(.scale(scale: 0.5, anchor: .trailing).combined(with: .opacity))
                 }
             }
@@ -376,17 +392,24 @@ struct DateRail: View {
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { g in
-                        let inner = max(1, h - 48)   // the track, inside the Now and month labels
                         y = min(max(0, g.location.y), h)
-                        let f = min(max(0, (y - 24) / inner), 1)
-                        let i = days.isEmpty ? 0 : Int((f * CGFloat(days.count - 1)).rounded())
+                        let f = min(max(0, (y - inset) / inner), 1)
+                        time = now.addingTimeInterval(-span * f)
                         if !dragging { withAnimation(.spring(duration: 0.3)) { dragging = true } }
-                        if i != index || !dragging { index = i; scrollTo(days[i]) }
+                        let hit = moments.first { $0.at <= time } ?? moments.last
+                        if let hit, hit.id != target { target = hit.id; scrollTo(hit.id) }
                     }
                     .onEnded { _ in withAnimation(.spring(duration: 0.35)) { dragging = false } }
             )
-            .sensoryFeedback(.selection, trigger: index)
+            .sensoryFeedback(.selection, trigger: target)
         }
         .frame(width: 44)
+    }
+
+    private func dayLabel(_ d: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(d) { return "Today" }
+        if cal.isDateInYesterday(d) { return "Yesterday" }
+        return d.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
     }
 }
