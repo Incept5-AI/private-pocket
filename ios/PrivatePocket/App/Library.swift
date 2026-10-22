@@ -221,6 +221,13 @@ final class Library: ObservableObject {
         reload()
     }
 
+    /// Everything under Recordings, then an empty library.
+    func deleteAll() {
+        try? FileManager.default.removeItem(at: root)
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        reload()
+    }
+
     private func metaURL(_ audio: URL) -> URL { audio.deletingPathExtension().appendingPathExtension("json") }
 
     private func loadMeta(_ audio: URL) -> RecordingMeta {

@@ -660,6 +660,39 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - Starting over
+
+    /// Every moment on this iPhone, with the reminders and calendar events made from
+    /// them, the briefings and the Ask history. Pockets and settings stay.
+    func clearMoments() {
+        for r in library.recordings {
+            for item in r.meta.insight?.next ?? [] {
+                if let id = item.reminderID { Planner.removeReminder(id) }
+                if let id = item.eventID { Planner.removeEvent(id) }
+            }
+        }
+        library.deleteAll()
+        conversations = [:]
+        sweptThisSession = []
+        UserDefaults.standard.removeObject(forKey: "briefings")
+        let live = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Live", isDirectory: true)
+        try? FileManager.default.removeItem(at: live)
+        link.note("cleared every moment")
+    }
+
+    /// Everything: the moments, the Pockets and their keys, every setting and server key.
+    /// The app is as it was when first installed, and the walkthrough shows again.
+    func resetEverything() {
+        clearMoments()
+        userDisconnect()
+        for d in devices.devices { devices.remove(d) }
+        LLM.key = ""
+        RemoteSTT.key = ""
+        if let bundle = Bundle.main.bundleIdentifier { UserDefaults.standard.removePersistentDomain(forName: bundle) }
+        activity.end()
+        link.note("reset: everything cleared")
+    }
+
     /// Transcribes, one at a time, recordings that have no transcript.
     func transcribeMissing(_ rs: [Recording]) async {
         for r in rs where r.meta.transcript == nil && !working.contains(r.id) {

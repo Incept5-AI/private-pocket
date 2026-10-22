@@ -3,10 +3,13 @@ import Speech
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject var model: AppModel
     @EnvironmentObject var devices: DeviceStore
     /// Shown as a sheet from the Pocket tab: a Done button that closes it.
     var onDone: (() -> Void)? = nil
     @State private var showWalkthrough = false
+    @State var confirmClear = false
+    @State var confirmReset = false
     @EnvironmentObject var locator: Locator
     @State private var adding = false
     @State private var locale = Prefs.transcriptionLocale
@@ -130,13 +133,40 @@ struct SettingsView: View {
                          "Other network requests: Apple's one-off speech model downloads and, if on, place-name lookups.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+
+                startOver
             }
                 .scrollContentBackground(.hidden)
                 .background(Brand.ground)
+                .confirmationDialog("Clear all moments?", isPresented: $confirmClear, titleVisibility: .visible) {
+                    Button("Clear all moments", role: .destructive) { model.clearMoments() }
+                } message: {
+                    Text("Every recording on this iPhone, what was read from it, and the reminders and events made from them. The Pocket keeps its own copies until you clear it over USB.")
+                }
+                .confirmationDialog("Reset everything?", isPresented: $confirmReset, titleVisibility: .visible) {
+                    Button("Reset everything", role: .destructive) {
+                        model.resetEverything()
+                        showWalkthrough = true
+                    }
+                } message: {
+                    Text("All moments, your Pockets and their keys, and every setting. The app will be as it was when installed.")
+                }
             .navigationTitle("Settings")
             .sheet(isPresented: $adding) { AddDeviceSheet() }
             .toolbar { if let onDone { ToolbarItem(placement: .confirmationAction) { Button("Done", action: onDone) } } }
             .fullScreenCover(isPresented: $showWalkthrough) { WalkthroughView() }
+        }
+    }
+}
+
+extension SettingsView {
+    /// Clear all moments, and Reset everything.
+    var startOver: some View {
+        Section {
+            Button("Clear all moments", role: .destructive) { confirmClear = true }
+            Button("Reset everything", role: .destructive) { confirmReset = true }
+        } header: { Text("Start over") } footer: {
+            Text("Clear all moments deletes every recording on this iPhone and what was read from it, and the reminders and calendar events made from them; your Pockets and settings stay. Reset everything also forgets your Pockets and their keys and puts every setting back to how it was when the app was installed.")
         }
     }
 }
