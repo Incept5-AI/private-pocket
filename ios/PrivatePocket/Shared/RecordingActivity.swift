@@ -86,8 +86,24 @@ struct StopRecordingIntent: LiveActivityIntent {
     }
 }
 
-/// "Start recording on Private Pocket": Control Center, Siri, Shortcuts and the Action
-/// button. Same arrangement as Stop.
+/// Control Center's one toggle: on starts a recording, off stops it. Performed in the
+/// app, like the two above.
+struct ToggleRecordingIntent: SetValueIntent, LiveActivityIntent {
+    static let title: LocalizedStringResource = "Pocket recording"
+    static let description = IntentDescription("Starts or stops recording on your Pocket, like its side button.")
+
+    @Parameter(title: "Recording") var value: Bool
+
+    nonisolated(unsafe) static var handler: (@MainActor (Bool) async throws -> Void)?
+
+    func perform() async throws -> some IntentResult {
+        try await Self.handler?(value)
+        return .result()
+    }
+}
+
+/// "Start recording on Private Pocket": Siri, Shortcuts and the Action button. Same
+/// arrangement as Stop.
 struct StartRecordingIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Start recording"
     static let description = IntentDescription("Starts a recording on your Pocket, like pressing its side button.")

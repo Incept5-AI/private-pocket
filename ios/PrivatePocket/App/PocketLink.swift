@@ -1,5 +1,6 @@
 import CoreBluetooth
 import Foundation
+import WidgetKit
 
 /// Pocket BLE protocol (see ble/PROTOCOL.md): ASCII commands `APP&…` written to
 /// 001120a2, ASCII replies `MCU&…` notified on 001120a3, raw MP3 notified on 001120a1.
@@ -67,7 +68,16 @@ final class PocketLink: NSObject, ObservableObject {
     enum Phase: Equatable { case idle, waiting, scanning, connecting, ready, busy(String) }
 
     @Published private(set) var phase: Phase = .idle
-    @Published private(set) var status = DeviceStatus()
+    @Published private(set) var status = DeviceStatus() {
+        didSet {
+            // Control Center's toggle reads this through the shared Keychain.
+            let recording = status.recordingSince != nil
+            if recording != (oldValue.recordingSince != nil) {
+                SharedState.recording = recording
+                ControlCenter.shared.reloadAllControls()
+            }
+        }
+    }
     @Published private(set) var connectedDeviceID: UUID?
     @Published private(set) var discovered: [Discovered] = []
     /// Other Pockets heard while looking for the selected one (e.g. a new card not added yet).

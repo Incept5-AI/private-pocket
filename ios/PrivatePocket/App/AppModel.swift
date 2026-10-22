@@ -75,6 +75,15 @@ final class AppModel: ObservableObject {
             guard self.link.status.recordingSince != nil else { return }
             await self.toggleRecording()
         }
+        ToggleRecordingIntent.handler = { [weak self] on in
+            guard let self else { return }
+            guard self.canCommand else { throw PocketIntentError(message: "Pair your Pocket in the app first.") }
+            guard on != (self.link.status.recordingSince != nil) else { return }
+            await self.toggleRecording()
+            if on, self.link.status.recordingSince == nil {
+                throw PocketIntentError(message: self.link.lastError ?? "Could not reach your Pocket.")
+            }
+        }
         StartRecordingIntent.handler = { [weak self] in
             guard let self else { return }
             guard self.canCommand else { throw PocketIntentError(message: "Pair your Pocket in the app first.") }

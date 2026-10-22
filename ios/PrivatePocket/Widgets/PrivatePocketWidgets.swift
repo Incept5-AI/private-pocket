@@ -6,38 +6,30 @@ import WidgetKit
 struct PrivatePocketWidgets: WidgetBundle {
     var body: some Widget {
         PocketLiveActivity()
-        StartRecordingControl()
-        StopRecordingControl()
+        PocketRecordingControl()
     }
 }
 
 // MARK: - Control Center
 
-/// A button for Control Center and the Lock Screen: the side button, on the phone.
-struct StartRecordingControl: ControlWidget {
+/// The side button, on the phone: one toggle in Control Center and on the Lock Screen.
+/// Its state comes from the app through the shared Keychain (`SharedState`).
+struct PocketRecordingControl: ControlWidget {
     var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.incept5.private-pocket.record") {
-            ControlWidgetButton(action: StartRecordingIntent()) {
-                Label("Record on Pocket", systemImage: "record.circle")
+        StaticControlConfiguration(kind: "com.incept5.private-pocket.record", provider: RecordingStateProvider()) { recording in
+            ControlWidgetToggle("Pocket", isOn: recording, action: ToggleRecordingIntent()) { on in
+                Label(on ? "Recording" : "Record", systemImage: on ? "record.circle.fill" : "record.circle")
             }
             .tint(.orange)
         }
-        .displayName("Record on Pocket")
-        .description("Starts a recording on your Pocket, like its side button.")
+        .displayName("Pocket")
+        .description("Starts or stops recording on your Pocket, like its side button.")
     }
 }
 
-struct StopRecordingControl: ControlWidget {
-    var body: some ControlWidgetConfiguration {
-        StaticControlConfiguration(kind: "com.incept5.private-pocket.stop") {
-            ControlWidgetButton(action: StopRecordingIntent()) {
-                Label("Stop Pocket", systemImage: "stop.circle")
-            }
-            .tint(.orange)
-        }
-        .displayName("Stop Pocket recording")
-        .description("Stops the recording on your Pocket.")
-    }
+struct RecordingStateProvider: ControlValueProvider {
+    var previewValue: Bool { false }
+    func currentValue() async throws -> Bool { SharedState.recording }
 }
 
 /// The Pocket in the Dynamic Island and on the Lock Screen: its light and battery

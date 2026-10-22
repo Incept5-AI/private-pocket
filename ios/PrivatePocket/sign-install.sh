@@ -26,7 +26,8 @@ done
 PREFIX=$APP_ID_PREFIX
 BUNDLE=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Info.plist")
 
-# Entitlements for a bundle id, as Xcode writes them for a development build.
+# Entitlements for a bundle id, as Xcode writes them for a development build. A second
+# bundle id adds that bundle's Keychain group (the extension reads the app's SharedState).
 entitlements() {
   local f=$(mktemp -t ent).plist
   cat > "$f" <<PLIST
@@ -36,7 +37,7 @@ entitlements() {
   <key>application-identifier</key><string>$PREFIX.$1</string>
   <key>com.apple.developer.team-identifier</key><string>$TEAM_ID</string>
   <key>get-task-allow</key><true/>
-  <key>keychain-access-groups</key><array><string>$PREFIX.$1</string></array>
+  <key>keychain-access-groups</key><array><string>$PREFIX.$1</string>${2:+<string>$PREFIX.$2</string>}</array>
 </dict></plist>
 PLIST
   echo "$f"
@@ -47,7 +48,7 @@ find "$APP" -name '*.dylib' -o -name '*.framework' | while read f; do codesign -
 # and are signed before the app, whose seal covers them.
 for x in "$APP"/PlugIns/*.appex(N); do
   cp "$APP/embedded.mobileprovision" "$x/embedded.mobileprovision"
-  codesign -f -s $IDENTITY --entitlements "$(entitlements "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$x/Info.plist")")" "$x"
+  codesign -f -s $IDENTITY --entitlements "$(entitlements "$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$x/Info.plist")" "$BUNDLE")" "$x"
 done
 codesign -f -s $IDENTITY --entitlements "$(entitlements "$BUNDLE")" "$APP"
 codesign -v "$APP"
