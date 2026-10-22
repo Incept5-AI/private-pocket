@@ -345,7 +345,7 @@ enum Findings {
         return Array(out.sorted { $0.weight > $1.weight }.prefix(2))
     }
 
-    /// Open commitments that name someone, two days old or more, by who has waited longest.
+    /// Open commitments that name someone, two days old or more, oldest first.
     private static func waitingOnYou(_ recent: [Recording], names: Set<String>, now: Date) -> Finding? {
         var waiting: [(name: String, days: Int, r: Recording, item: NextItem)] = []
         for r in recent {
@@ -364,10 +364,10 @@ enum Findings {
         }
         guard let longest = waiting.max(by: { $0.days < $1.days }) else { return nil }
         let text = waiting.count == 1
-            ? "\(longest.name) has been waiting \(longest.days) days on you: “\(longest.item.text)”."
-            : "\(waiting.count) people are waiting on you. \(longest.name) longest, \(longest.days) days: “\(longest.item.text)”."
+            ? "Your oldest open commitment involving someone else is \(longest.days) days old: “\(longest.item.text)”, with \(longest.name)."
+            : "\(waiting.count) of your open commitments involve other people. The oldest, \(longest.days) days: “\(longest.item.text)”, with \(longest.name)."
         let rows = waiting.sorted { $0.days > $1.days }.prefix(5).map { (name: $0.name, days: $0.days) }
-        return Finding(id: "waiting", tag: "Waiting on you", tint: Brand.record, text: text, visual: .waiting(rows),
+        return Finding(id: "waiting", tag: "Owed to others", tint: Brand.record, text: text, visual: .waiting(rows),
                        choices: [Choice(label: longest.item.reminderID == nil ? "Add to Reminders" : "In Reminders", action: .place(longest.r, longest.item)),
                                  Choice(label: "Open", action: .open(ids: [longest.r.id], title: longest.r.displayTitle))],
                        weight: 95)
