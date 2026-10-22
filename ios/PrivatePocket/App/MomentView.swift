@@ -1,4 +1,5 @@
 import AVFoundation
+import MapKit
 import SwiftUI
 
 /// A moment, on one screen: what happened, in your terms, and what's next, already
@@ -248,6 +249,7 @@ struct MomentHeader: View {
                 .padding(.top, 6)
                 .onTapGesture(perform: rename)
             Text(meta).font(.subheadline).foregroundStyle(Brand.muted)
+            if let place = r.meta.place { MomentMap(place: place).padding(.top, 12) }
             if !faces.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -290,6 +292,33 @@ struct MomentHeader: View {
         if let s = r.meta.seconds { parts.append(PocketFacts.length(s)) }
         if let p = r.meta.place?.name { parts.append(p) }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Where it was recorded: a small map with a pin, which opens Maps.
+struct MomentMap: View {
+    let place: Place
+
+    var body: some View {
+        let c = CLLocationCoordinate2D(latitude: place.latitude, longitude: place.longitude)
+        Link(destination: place.mapsURL) {
+            Map(initialPosition: .region(MKCoordinateRegion(center: c, latitudinalMeters: 700, longitudinalMeters: 700)),
+                interactionModes: []) {
+                Marker(place.name ?? "Here", coordinate: c).tint(Brand.record)
+            }
+            .mapStyle(.standard(elevation: .flat, pointsOfInterest: .excludingAll))
+            .frame(height: 130)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Brand.hairline, lineWidth: 1))
+            .overlay(alignment: .bottomLeading) {
+                Text(place.approximate ? "\(place.label) · about" : place.label)
+                    .font(.caption.weight(.semibold)).foregroundStyle(Brand.text)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Brand.ground.opacity(0.75), in: Capsule())
+                    .padding(8)
+            }
+        }
+        .buttonStyle(.plain)
     }
 }
 
