@@ -70,16 +70,32 @@ struct RecordingAttributes: ActivityAttributes {
     var advertised: String
 }
 
-/// The Stop button on the Live Activity. Performed in the app, which holds the
-/// Bluetooth link; the app installs `handler` at launch.
+/// The Stop button on the Live Activity and in Control Center. Performed in the app,
+/// which holds the Bluetooth link; the app installs `handler` at launch. (Live Activity
+/// intents are among the few kinds Control Center runs in the app rather than in the
+/// extension.)
 struct StopRecordingIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Stop recording"
     static let description = IntentDescription("Stops the recording on your Pocket.")
 
-    nonisolated(unsafe) static var handler: (@MainActor () async -> Void)?
+    nonisolated(unsafe) static var handler: (@MainActor () async throws -> Void)?
 
     func perform() async throws -> some IntentResult {
-        await Self.handler?()
+        try await Self.handler?()
+        return .result()
+    }
+}
+
+/// "Start recording on Private Pocket": Control Center, Siri, Shortcuts and the Action
+/// button. Same arrangement as Stop.
+struct StartRecordingIntent: LiveActivityIntent {
+    static let title: LocalizedStringResource = "Start recording"
+    static let description = IntentDescription("Starts a recording on your Pocket, like pressing its side button.")
+
+    nonisolated(unsafe) static var handler: (@MainActor () async throws -> Void)?
+
+    func perform() async throws -> some IntentResult {
+        try await Self.handler?()
         return .result()
     }
 }

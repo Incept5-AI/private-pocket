@@ -70,7 +70,9 @@ final class AppModel: ObservableObject {
             self.startActivity(name: name)
         }
         StopRecordingIntent.handler = { [weak self] in
-            guard let self, self.canCommand, self.link.status.recordingSince != nil else { return }
+            guard let self else { return }
+            guard self.canCommand else { throw PocketIntentError(message: "Pair your Pocket in the app first.") }
+            guard self.link.status.recordingSince != nil else { return }
             await self.toggleRecording()
         }
         StartRecordingIntent.handler = { [weak self] in

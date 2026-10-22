@@ -6,6 +6,37 @@ import WidgetKit
 struct PrivatePocketWidgets: WidgetBundle {
     var body: some Widget {
         PocketLiveActivity()
+        StartRecordingControl()
+        StopRecordingControl()
+    }
+}
+
+// MARK: - Control Center
+
+/// A button for Control Center and the Lock Screen: the side button, on the phone.
+struct StartRecordingControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.incept5.private-pocket.record") {
+            ControlWidgetButton(action: StartRecordingIntent()) {
+                Label("Record on Pocket", systemImage: "record.circle")
+            }
+            .tint(.orange)
+        }
+        .displayName("Record on Pocket")
+        .description("Starts a recording on your Pocket, like its side button.")
+    }
+}
+
+struct StopRecordingControl: ControlWidget {
+    var body: some ControlWidgetConfiguration {
+        StaticControlConfiguration(kind: "com.incept5.private-pocket.stop") {
+            ControlWidgetButton(action: StopRecordingIntent()) {
+                Label("Stop Pocket", systemImage: "stop.circle")
+            }
+            .tint(.orange)
+        }
+        .displayName("Stop Pocket recording")
+        .description("Stops the recording on your Pocket.")
     }
 }
 

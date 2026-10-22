@@ -79,8 +79,9 @@ notice. Until then, Private Pocket keeps your recordings on your own phone.
   that turns amber with the timer and the words as they arrive, with a Stop button, and
   shows the saved length for a moment after. Inside the app a bar above the tabs shows the
   recording on every screen.
-- **Siri, Shortcuts and the Action button.** "Start recording on Private Pocket" and
-  "Stop recording on Private Pocket" work wherever Shortcuts do.
+- **Control Center, Siri, Shortcuts and the Action button.** "Record on Pocket" and
+  "Stop Pocket" are Control Center buttons, so a recording starts from the Lock Screen
+  without unlocking; "Start recording on Private Pocket" works wherever Shortcuts do.
 - **Fetches by itself.** Anything recorded while the phone was away comes over
   Bluetooth as soon as the Pocket reconnects, at about 40–60 KB/s (an hour of audio in
   about five minutes). No tap, cable, Wi-Fi or account needed.

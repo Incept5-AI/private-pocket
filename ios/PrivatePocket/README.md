@@ -29,8 +29,10 @@ goes to Pocket's cloud. See the [top-level README](../../README.md) for the over
   words while recording, "Saved · 2 min" for a moment after. iOS only lets an app start a
   Live Activity in the foreground, which is why it is kept while connected rather than
   started at each recording; it can be turned off in Settings. Its Stop button runs
-  `StopRecordingIntent` in the app. "Start recording on Private Pocket" is an App
-  Shortcut for Siri and the Action button.
+  `StopRecordingIntent` in the app. "Record on Pocket" and "Stop Pocket" are Control
+  Center controls (`ControlWidget`); Live Activity intents are among the kinds Control
+  Center performs in the app itself, which is what lets them reach the Bluetooth link.
+  "Start recording on Private Pocket" is an App Shortcut for Siri and the Action button.
 - **Recordings.** Named by place and time, searchable, and filterable by Pocket, grouped
   into Today, Yesterday and dated days. Each recording has a player with ±15 s and a glass
   play button, a title, a location, the transcript as paragraphs (speaker turns, or runs
