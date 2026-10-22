@@ -23,6 +23,9 @@ struct DeviceStatus: Equatable {
     var totalMiB: Int?
     var webSync: Bool?
     var recordingSince: Date?
+    /// The device's file name for the recording in progress (`yyyyMMddHHmmss`, or
+    /// `PH…` for call mode), as announced by `MCU&STA&`.
+    var recordingName: String?
 }
 
 struct RemoteFile: Hashable {
@@ -342,18 +345,18 @@ final class PocketLink: NSObject, ObservableObject {
     }
 
     func startRecording() async throws {
-        let r = try await send("STA", until: { $0.hasPrefix("MCU&STA&") })
-        if let ts = r.last?.split(separator: "&").last { status.recordingSince = PocketTime.parse(String(ts)) }
+        _ = try await send("STA", until: { $0.hasPrefix("MCU&STA&") })   // handleLine records the name and time
     }
 
-    /// Returns the file name of the recording that was stopped.
+    /// Returns the device's file name of the recording that was stopped.
     func stopRecording() async throws -> String? {
-        let started = status.recordingSince
+        let name = status.recordingName
         stoppingFromApp = true
         defer { stoppingFromApp = false }
         _ = try await send("STO", until: { $0 == "MCU&STO" })
         status.recordingSince = nil
-        return started.map { PocketTime.fileName.string(from: $0) }
+        status.recordingName = nil
+        return name
     }
 
     func listFiles() async throws -> [RemoteFile] {
@@ -455,13 +458,18 @@ final class PocketLink: NSObject, ObservableObject {
     private func handleLine(_ l: String) {
         note("← \(l)")
         if l.hasPrefix("MCU&STA&") {
+            // The name is the device's file name: a UTC timestamp, or `PH…` in call
+            // mode. Unknown forms still count as a recording, timed from now.
             let name = String(l.dropFirst("MCU&STA&".count))
-            let started = PocketTime.parse(name)
-            if started != nil, started != status.recordingSince { onRecordingStarted?(name) }
+            let started = PocketTime.parse(name) ?? Date()
+            let isNew = status.recordingName != name
             status.recordingSince = started
+            status.recordingName = name
+            if isNew { onRecordingStarted?(name) }
         } else if l == "MCU&STO" {
-            let name = status.recordingSince.map { PocketTime.fileName.string(from: $0) }
+            let name = status.recordingName
             status.recordingSince = nil
+            status.recordingName = nil
             if let name, !stoppingFromApp { onRecordingStopped?(name) }
         }
         lines.append(l)

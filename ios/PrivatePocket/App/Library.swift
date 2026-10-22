@@ -100,7 +100,27 @@ enum PocketTime {
         return f
     }()
 
-    static func parse(_ name: String) -> Date? { fileName.date(from: name) }
+    /// Call-mode recordings (the card on the back of the phone, contact mic) are named
+    /// `PH` + `yyMMddHHmmss` instead.
+    static let shortName: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyMMddHHmmss"
+        return f
+    }()
+
+    /// `yyyyMMddHHmmss`, or any letter prefix followed by 12 or 14 digits.
+    static func parse(_ name: String) -> Date? {
+        if let d = fileName.date(from: name) { return d }
+        let digits = String(name.drop { !$0.isNumber })
+        guard digits.allSatisfy(\.isNumber) else { return nil }
+        switch digits.count {
+        case 12: return shortName.date(from: digits)
+        case 14: return fileName.date(from: digits)
+        default: return nil
+        }
+    }
     static func now() -> String { fileName.string(from: Date()) }
 }
 

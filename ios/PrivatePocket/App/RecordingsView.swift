@@ -108,6 +108,7 @@ struct RecordingRow: View {
             }
             HStack(spacing: 10) {
                 if let s = recording.meta.seconds { Label(PocketFacts.length(s), systemImage: "clock") }
+                if recording.name.hasPrefix("PH") { Label("Call", systemImage: "phone") }
                 if recording.meta.title != nil, let p = recording.meta.place?.name {
                     Label(p, systemImage: "mappin").lineLimit(1)
                 }
