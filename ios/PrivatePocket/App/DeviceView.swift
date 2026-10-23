@@ -13,6 +13,8 @@ struct RootView: View {
     @State private var splash = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab = 0
+    /// The app went to the background, not just inactive for a glance at Control Center.
+    @State private var wasAway = false
 
     private var recording: Bool { link.status.recordingSince != nil }
 
@@ -51,6 +53,7 @@ struct RootView: View {
             if model.takeover {
                 RecordingTakeover { withAnimation(.spring(duration: 0.5)) { model.takeover = false } }
                     .transition(reduceMotion ? .opacity : .islandReveal)
+                    .accessibilityAddTraits(.isModal)
             }
         }
         // On start, the splash above everything; the walkthrough follows it the first time.
@@ -66,8 +69,14 @@ struct RootView: View {
         .onChange(of: recording, initial: true) { _, now in
             if now { withAnimation(.spring(duration: 0.7)) { model.takeover = true } }
         }
-        .onChange(of: scenePhase) {
-            if scenePhase == .active, recording, !model.takeover { withAnimation(.spring(duration: 0.7)) { model.takeover = true } }
+        .onChange(of: scenePhase) { _, now in
+            // Back from the background during a recording: the takeover again. Not after a glance
+            // at Control Center or an alert, which only make the app inactive for a moment.
+            if now == .background { wasAway = true }
+            if now == .active {
+                if wasAway, recording, !model.takeover { withAnimation(.spring(duration: 0.7)) { model.takeover = true } }
+                wasAway = false
+            }
         }
         .task {
             // Location is set up after launch: doing it while the app is being created can stall past the watchdog.
@@ -83,6 +92,7 @@ struct RootView: View {
 /// The home tab: the card itself, large, with the light that mirrors the real one and
 /// the atmosphere in that light's colour; what it is doing; the shutter; today's moments.
 struct PocketView: View {
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var devices: DeviceStore
     @EnvironmentObject var link: PocketLink
@@ -145,6 +155,9 @@ struct PocketView: View {
                     Button { showSettings = true } label: { Image(systemName: "gearshape") }
                         .accessibilityLabel("Settings")
                 }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
                 if !devices.devices.isEmpty { toolbarMenu }
             }
             .refreshable { await model.sync() }
@@ -153,6 +166,8 @@ struct PocketView: View {
             .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
             .fullScreenCover(isPresented: $showWalkthrough) { WalkthroughView() }
             .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
+            .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
+            .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
             .onChange(of: devices.selectedID) {
                 link.disconnect()
                 Task { await model.ensureConnected() }

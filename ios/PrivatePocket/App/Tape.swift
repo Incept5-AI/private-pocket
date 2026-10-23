@@ -21,6 +21,32 @@ enum TapeDays {
 
     static func id(_ day: Date) -> String { "day-" + day.formatted(.iso8601.year().month().day()) }
 
+    /// Seconds said each day, work and life apart, keyed by the start of the day: built once
+    /// for a whole grid, rather than every cell walking every moment.
+    struct Totals { var work = 0, life = 0, all = 0 }
+
+    static func totals(_ moments: [Recording]) -> [Date: Totals] {
+        let cal = Calendar.current
+        var out: [Date: Totals] = [:]
+        for r in moments {
+            guard let s = r.startedAt else { continue }
+            let day = cal.startOfDay(for: s), secs = r.meta.seconds ?? 0, kind = r.kind
+            var t = out[day] ?? Totals()
+            t.all += secs
+            if kind.isWork { t.work += secs }
+            if kind.isLife { t.life += secs }
+            out[day] = t
+        }
+        return out
+    }
+
+    static func byDay(_ moments: [Recording]) -> [Date: [Recording]] {
+        let cal = Calendar.current
+        var out: [Date: [Recording]] = [:]
+        for r in moments { if let s = r.startedAt { out[cal.startOfDay(for: s), default: []].append(r) } }
+        return out
+    }
+
     /// Moments grouped by calendar day, newest day first, newest moment first within it.
     static func grouped(_ all: [Recording]) -> [(day: Date, moments: [Recording])] {
         let cal = Calendar.current
@@ -125,6 +151,7 @@ struct TapeWeek: View {
         let cal = Calendar.current
         let week = cal.dateInterval(of: .weekOfYear, for: focus) ?? DateInterval(start: focus, duration: 7 * 86_400)
         let days = (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: week.start) }
+        let byDay = TapeDays.byDay(all)
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 6) {
                 VStack(spacing: 0) {
@@ -135,7 +162,7 @@ struct TapeWeek: View {
                 }
                 .frame(width: 22, height: 300)
                 ForEach(days, id: \.self) { day in
-                    let moments = all.filter { $0.startedAt.map { cal.isDate($0, inSameDayAs: day) } == true }
+                    let moments = byDay[cal.startOfDay(for: day)] ?? []
                     let total = moments.map { $0.meta.seconds ?? 0 }.reduce(0, +)
                     Button { land(day) } label: {
                         VStack(spacing: 6) {
@@ -185,6 +212,7 @@ struct TapeMonth: View {
         let count = cal.range(of: .day, in: .month, for: first)?.count ?? 30
         let cells = (0..<(leading + count)).map { i -> Date? in i < leading ? nil : cal.date(byAdding: .day, value: i - leading, to: first) }
         let columns = Array(repeating: GridItem(.flexible(), spacing: 6), count: 7)
+        let totals = TapeDays.totals(all)
         VStack(alignment: .leading, spacing: 10) {
             Text(first.formatted(.dateTime.month(.wide).year())).font(.headline)
             LazyVGrid(columns: columns, spacing: 6) {
@@ -193,10 +221,8 @@ struct TapeMonth: View {
                 }
                 ForEach(cells.indices, id: \.self) { i in
                     if let day = cells[i] {
-                        let moments = all.filter { $0.startedAt.map { cal.isDate($0, inSameDayAs: day) } == true }
-                        let work = moments.filter { $0.kind.isWork }.map { $0.meta.seconds ?? 0 }.reduce(0, +)
-                        let life = moments.filter { $0.kind.isLife }.map { $0.meta.seconds ?? 0 }.reduce(0, +)
-                        let total = moments.map { $0.meta.seconds ?? 0 }.reduce(0, +)
+                        let t = totals[cal.startOfDay(for: day)] ?? TapeDays.Totals()
+                        let work = t.work, life = t.life, total = t.all
                         let tint: Color = total == 0 ? Brand.surface : (work >= life ? Brand.work : Brand.life).opacity(min(1, 0.35 + Double(total) / 7200))
                         Button { land(day) } label: {
                             ZStack {
@@ -228,6 +254,7 @@ struct TapeYear: View {
         let year = cal.component(.year, from: focus)
         let total = all.filter { $0.startedAt.map { cal.component(.year, from: $0) == year } == true }
         let seconds = total.map { $0.meta.seconds ?? 0 }.reduce(0, +)
+        let totals = TapeDays.totals(total)
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(String(year)).font(.headline)
@@ -242,15 +269,17 @@ struct TapeYear: View {
                     HStack(spacing: 2) {
                         ForEach(1...days, id: \.self) { d in
                             let day = cal.date(from: DateComponents(year: year, month: m, day: d)) ?? focus
-                            let moments = total.filter { $0.startedAt.map { cal.isDate($0, inSameDayAs: day) } == true }
-                            let work = moments.filter { $0.kind.isWork }.map { $0.meta.seconds ?? 0 }.reduce(0, +)
-                            let life = moments.filter { $0.kind.isLife }.map { $0.meta.seconds ?? 0 }.reduce(0, +)
-                            let secs = moments.map { $0.meta.seconds ?? 0 }.reduce(0, +)
+                            let t = totals[cal.startOfDay(for: day)] ?? TapeDays.Totals()
+                            let work = t.work, life = t.life, secs = t.all
                             RoundedRectangle(cornerRadius: 2)
                                 .fill(cal.isDateInToday(day) ? Brand.record : secs == 0 ? Brand.surface : (work >= life ? Brand.work : Brand.life).opacity(min(1, 0.35 + Double(secs) / 5400)))
                                 .frame(maxWidth: .infinity)
                                 .frame(height: 18)
                                 .onTapGesture { land(day) }
+                                .accessibilityElement()
+                                .accessibilityLabel(day.formatted(date: .complete, time: .omitted) + (secs > 0 ? ", \(PocketFacts.length(secs))" : ", nothing recorded"))
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityAction { land(day) }
                         }
                         if days < 31 { ForEach(days..<31, id: \.self) { _ in Color.clear.frame(maxWidth: .infinity).frame(height: 18) } }
                     }

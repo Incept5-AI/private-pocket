@@ -73,8 +73,12 @@ struct USBView: View {
         Section {
             LabeledContent("Recordings on drive", value: "\(drive.files.count)")
             LabeledContent("Backed up on this phone", value: "\(backed.count)")
-            if !missing.isEmpty {
-                Button { model.importFromDrive(missing, device: d) } label: {
+            if let p = model.importing {
+                ProgressView(value: Double(p.done), total: Double(max(1, p.total))) {
+                    Text("Copying \(p.done) of \(p.total) to this phone")
+                }
+            } else if !missing.isEmpty {
+                Button { Task { await model.importFromDrive(missing, device: d) } } label: {
                     Label("Copy \(missing.count) missing to this phone", systemImage: "square.and.arrow.down")
                 }
             }

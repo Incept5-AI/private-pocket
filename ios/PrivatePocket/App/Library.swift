@@ -11,7 +11,17 @@ struct Recording: Identifiable, Hashable {
     var meta: RecordingMeta
 
     var id: String { "\(deviceID.uuidString)/\(day)/\(name)" }
-    var startedAt: Date? { PocketTime.parse(name) }
+    /// When it started, read from the file name once: every list and tape asks for it, often.
+    let startedAt: Date?
+
+    init(deviceID: UUID, day: String, name: String, audioURL: URL, meta: RecordingMeta) {
+        self.deviceID = deviceID
+        self.day = day
+        self.name = name
+        self.audioURL = audioURL
+        self.meta = meta
+        startedAt = PocketTime.parse(name)
+    }
     /// The user's title, else the place, else the start time.
     var displayTitle: String {
         meta.title ?? meta.place?.name ?? startedAt?.formatted(date: .omitted, time: .shortened) ?? name

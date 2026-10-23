@@ -314,11 +314,6 @@ struct Digest {
 }
 
 /// The lists under the findings, one at a time.
-enum RecordTab: String, CaseIterable, Identifiable {
-    case commitments = "Commitments", decided = "Decided", open = "Still open", figures = "Figures", threads = "Threads", people = "People"
-    var id: String { rawValue }
-}
-
 /// Something only adding up many conversations shows: a sentence the user would not
 /// have arrived at alone, a picture of it, and what to do about it.
 struct Finding: Identifiable {
@@ -345,7 +340,6 @@ struct Finding: Identifiable {
         case chase(Recording, NextItem)
         case place(Recording, NextItem)
         case placeAll([(Recording, NextItem)])
-        case record(RecordTab)
     }
 
     struct Choice: Identifiable {
@@ -511,6 +505,13 @@ enum Findings {
         return nil
     }
 
+    /// The moments behind a finding, newest first, each once.
+    private static func momentIDs(_ rs: [Recording]) -> [String] {
+        var seen = Set<String>()
+        return rs.sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
+            .compactMap { seen.insert($0.id).inserted ? $0.id : nil }
+    }
+
     private static func followThrough(_ d: Digest, previous: Digest?, thisSpan: String, lastSpan: String) -> Finding? {
         let total = d.yours.count, done = d.yoursDone.count
         guard total >= 3 else { return nil }
@@ -521,7 +522,7 @@ enum Findings {
             text += " The oldest still open is from \(dayName(oldest))."
         }
         let open = d.yoursOpen.filter { $0.1.reminderID == nil }
-        var choices = [Choice(label: "See them", action: .record(.commitments))]
+        var choices = [Choice(label: "See them", action: .open(ids: momentIDs(d.yours.map(\.0)), title: "What you took on"))]
         if !open.isEmpty { choices.insert(Choice(label: open.count == 1 ? "Add it to Reminders" : "Add the open ones to Reminders", action: .placeAll(open)), at: 0) }
         return Finding(id: "follow", tag: "Follow-through", tint: Brand.act, text: text,
                        visual: .ring(done: done, total: total, previous: prev), choices: choices, weight: 80)
@@ -551,14 +552,14 @@ enum Findings {
             return Finding(id: "load", tag: "Load", tint: Brand.act,
                            text: "Open commitments have grown from \(open[firstNZ]) on \(dayName(d.days[firstNZ].date)) to \(last) now, \(tail).",
                            visual: .growth(open: open, labels: Array(labels)),
-                           choices: [Choice(label: "See them", action: .record(.commitments))], weight: 75)
+                           choices: [Choice(label: "See them", action: .open(ids: momentIDs(d.yours.map(\.0)), title: "What you took on"))], weight: 75)
         }
         let busyDays = taken.filter { $0 > 0 }.count
         if total >= 4, busyDays >= 2, let peak = (0...today).max(by: { taken[$0] < taken[$1] }), taken[peak] * 2 >= total, taken[peak] >= 3 {
             return Finding(id: "spike", tag: "Load", tint: Brand.act,
                            text: "\(d.days[peak].date.formatted(.dateTime.weekday(.wide))) alone added \(taken[peak]) of the \(total) things you took on \(thisSpan).",
                            visual: .spike(intake: Array(taken.prefix(today + 1)), labels: Array(labels), peak: peak),
-                           choices: [Choice(label: "See them", action: .record(.commitments))], weight: 72)
+                           choices: [Choice(label: "See them", action: .open(ids: momentIDs(d.yours.map(\.0)), title: "What you took on"))], weight: 72)
         }
         return nil
     }
@@ -573,13 +574,13 @@ enum Findings {
             }
             return Finding(id: "questions", tag: "Open questions", tint: Brand.act, text: text,
                            visual: .pair(a: q, b: dec, aLabel: "raised", bLabel: "settled"),
-                           choices: [Choice(label: "See what is open", action: .record(.open))], weight: 70)
+                           choices: [Choice(label: "See what is open", action: .open(ids: momentIDs(d.questions.map(\.recording)), title: "Open questions"))], weight: 70)
         }
         if dec >= 4, dec >= q {
             return Finding(id: "decided", tag: "Decided", tint: Brand.good,
                            text: "\(thisSpan.capitalizedFirst) settled \(dec) things and left \(q) open.",
                            visual: .pair(a: dec, b: q, aLabel: "settled", bLabel: "open"),
-                           choices: [Choice(label: "See them", action: .record(.decided))], weight: 35)
+                           choices: [Choice(label: "See them", action: .open(ids: momentIDs(d.decisions.map(\.recording)), title: "Decided"))], weight: 35)
         }
         return nil
     }

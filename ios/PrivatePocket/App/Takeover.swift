@@ -207,6 +207,7 @@ struct RecordingTakeover: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .disabled(model.toggling)
                 .accessibilityLabel("Stop recording")
                 Text("Stop").font(.footnote.weight(.bold))
             } else {
@@ -300,8 +301,8 @@ struct RecordButton: View {
             .shadow(color: Brand.record.opacity(usable ? 0.45 : 0), radius: size * 0.22, y: size * 0.08)
         }
         .buttonStyle(.plain)
-        .disabled(!usable)
-        .opacity(usable ? 1 : 0.35)
+        .disabled(!usable || model.toggling)
+        .opacity(!usable ? 0.35 : model.toggling ? 0.6 : 1)
         .accessibilityLabel(recording ? "Show the recording" : model.pageContext.map { "Record, \($0.label.lowercased())" } ?? "Record")
     }
 }

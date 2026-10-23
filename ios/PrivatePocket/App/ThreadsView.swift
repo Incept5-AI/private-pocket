@@ -433,7 +433,7 @@ struct ThreadView: View {
     private func recordingBand(_ t: LiveThread) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Recording into \(t.name)").font(.caption2.weight(.bold)).tracking(0.7).textCase(.uppercase).opacity(0.75)
-            Text(live.text.isEmpty ? "Listening…" : String(live.text.suffix(140))).font(.callout.weight(.semibold)).lineLimit(2)
+            LiveLine().font(.callout.weight(.semibold)).lineLimit(2)
             Text("The reader is told it is probably \(t.name).").font(.caption2.weight(.semibold)).opacity(0.7)
         }
         .padding(.horizontal, 24).padding(.vertical, 12)
@@ -834,6 +834,7 @@ struct MomentThreads: View {
                     }
                 }
             }
+            .sideScrollZone()
             ForEach(doubted) { t in
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Recorded into \(t.name), but it reads as something else.").font(.callout.weight(.semibold))
@@ -873,5 +874,14 @@ struct MomentThreads: View {
         .padding(.horizontal, 10).padding(.vertical, 6)
         .background(bg, in: Capsule())
         .foregroundStyle(fg)
+    }
+}
+
+/// The last words heard, in a view of its own, so only it redraws as they come.
+struct LiveLine: View {
+    @EnvironmentObject var live: LiveSession
+
+    var body: some View {
+        Text(live.text.isEmpty ? "Listening…" : String(live.text.suffix(140)))
     }
 }

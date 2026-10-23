@@ -96,6 +96,16 @@ struct TranscriptBlockRow: View {
     }
 }
 
+/// The date finder's touch area: a band around the handle, or the whole strip while dragging.
+struct FinderHitArea: Shape {
+    var center: CGFloat
+    var whole: Bool
+
+    func path(in rect: CGRect) -> Path {
+        whole ? Path(rect) : Path(CGRect(x: rect.minX, y: center - 36, width: rect.width, height: 72))
+    }
+}
+
 @MainActor
 final class Player: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var playing = false
@@ -103,6 +113,24 @@ final class Player: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published var duration: TimeInterval = 0
     private var player: AVAudioPlayer?
     private var timer: Timer?
+
+    override init() {
+        super.init()
+        NotificationCenter.default.addObserver(self, selector: #selector(interrupted(_:)),
+                                               name: AVAudioSession.interruptionNotification, object: nil)
+    }
+
+    /// A call, Siri or an alarm pauses the player: it shows paused, rather than playing on
+    /// with a stopped clock, and the next tap plays.
+    @objc nonisolated private func interrupted(_ n: Notification) {
+        guard let raw = n.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+        Task { @MainActor in
+            self.timer?.invalidate()
+            self.playing = false
+            self.position = self.player?.currentTime ?? self.position
+        }
+    }
 
     func load(_ url: URL) {
         guard player?.url != url else { return }
@@ -119,6 +147,7 @@ final class Player: NSObject, ObservableObject, AVAudioPlayerDelegate {
         try? AVAudioSession.sharedInstance().setActive(true)
         p.play()
         playing = true
+        timer?.invalidate()   // one clock, never two
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.position = self?.player?.currentTime ?? 0 }
         }
@@ -208,6 +237,8 @@ struct DateFinder: View {
     let active: Bool
     let scrollTo: (String) -> Void
     @State private var dragging = false
+    /// The finger is down; reset by the system when the touch is cancelled, unlike `dragging`.
+    @GestureState private var touching = false
     @State private var y: CGFloat = 0
     @State private var time = Date()
     @State private var target: String?
@@ -242,10 +273,13 @@ struct DateFinder: View {
                 }
             }
             .frame(width: geo.size.width, height: h, alignment: .topTrailing)
-            .contentShape(Rectangle())
+            // Only the handle takes a touch until it is dragged: the rest of the strip is the list's,
+            // for scrolling and for swiping a moment away.
+            .contentShape(FinderHitArea(center: handleY, whole: dragging))
             .allowsHitTesting(active || dragging)
             .gesture(
                 DragGesture(minimumDistance: 0)
+                    .updating($touching) { _, state, _ in state = true }
                     .onChanged { g in
                         y = g.location.y
                         let f = min(max(0, (y - inset) / inner), 1)
@@ -259,6 +293,9 @@ struct DateFinder: View {
             )
             .animation(.easeOut(duration: 0.18), value: restY)
             .sensoryFeedback(.selection, trigger: day)
+            .onChange(of: touching) { _, now in
+                if !now, dragging { withAnimation(.spring(duration: 0.4)) { dragging = false } }
+            }
         }
         .frame(width: 44)
     }

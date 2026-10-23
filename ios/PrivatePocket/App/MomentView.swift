@@ -21,6 +21,8 @@ struct MomentView: View {
     @State private var renamingSpeaker: Int?
     @State private var newName = ""
     @State private var confirmDelete = false
+    /// Sideways scrollers and the map, where a swipe left is theirs, not Details'.
+    @State private var sideZones: [CGRect] = []
 
     private var recording: Recording? { library.recordings.first { $0.id == id } }
 
@@ -73,15 +75,20 @@ struct MomentView: View {
                         .padding(.horizontal, 24)
                         .padding(.top, 8)
                         .padding(.bottom, 24)
+                        .coordinateSpace(name: MomentSpace.name)
+                        .onPreferenceChange(SideScrollZones.self) { sideZones = $0 }
+                        .contentShape(Rectangle())
+                        // Swipe left anywhere on the moment for its details, except on a row that
+                        // scrolls sideways or the map; right is the way back.
+                        .simultaneousGesture(
+                            DragGesture(minimumDistance: 30, coordinateSpace: .named(MomentSpace.name))
+                                .onEnded { v in
+                                    guard v.translation.width < -90, abs(v.translation.height) < abs(v.translation.width) * 0.5,
+                                          !sideZones.contains(where: { $0.contains(v.startLocation) }) else { return }
+                                    showDetails = true
+                                }
+                        )
                     }
-                    // Swipe left anywhere on the moment for its details; right is the way back.
-                    .simultaneousGesture(
-                        DragGesture(minimumDistance: 30, coordinateSpace: .local)
-                            .onEnded { v in
-                                guard v.translation.width < -90, abs(v.translation.height) < abs(v.translation.width) * 0.5 else { return }
-                                showDetails = true
-                            }
-                    )
                     .onChange(of: current) {
                         guard player.playing, showAll, let c = current else { return }
                         withAnimation { proxy.scrollTo(c, anchor: .center) }
@@ -277,7 +284,7 @@ struct MomentHeader: View {
                 .padding(.top, 6)
                 .onTapGesture(perform: rename)
             Text(meta).font(.subheadline).foregroundStyle(Brand.muted)
-            if let place = r.meta.place { MomentMap(place: place).padding(.top, 12) }
+            if let place = r.meta.place { MomentMap(place: place).padding(.top, 12).sideScrollZone() }
             if !faces.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -305,6 +312,7 @@ struct MomentHeader: View {
                     }
                 }
                 .padding(.top, 10)
+                .sideScrollZone()
             }
         }
     }
@@ -649,6 +657,13 @@ struct PlayerBar: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("Playback position")
                     .accessibilityValue("\(Int((player.position / max(1, total)) * 100)) percent")
+                    .accessibilityAdjustableAction { direction in
+                        switch direction {
+                        case .increment: player.seek(min(total, player.position + 15))
+                        case .decrement: player.seek(max(0, player.position - 15))
+                        @unknown default: break
+                        }
+                    }
                     .frame(height: 26)
                 HStack {
                     Text(Speakers.stamp(player.position))
@@ -1179,5 +1194,24 @@ struct MomentDetailsPage: View {
             .padding(.horizontal, 14).padding(.vertical, 9)
             .background(tint, in: Capsule())
             .foregroundStyle(ink)
+    }
+}
+
+/// The moment page's own coordinate space, for telling where a swipe began.
+enum MomentSpace { static let name = "moment" }
+
+/// Where a swipe left on a moment belongs to something else: a row that scrolls sideways,
+/// or the map. Their frames, in the moment's space, so the swipe for Details skips them.
+struct SideScrollZones: PreferenceKey {
+    static let defaultValue: [CGRect] = []
+    static func reduce(value: inout [CGRect], nextValue: () -> [CGRect]) { value += nextValue() }
+}
+
+extension View {
+    /// Marks a sideways scroller, so the moment's swipe for Details leaves it alone.
+    func sideScrollZone() -> some View {
+        background(GeometryReader { g in
+            Color.clear.preference(key: SideScrollZones.self, value: [g.frame(in: .named(MomentSpace.name))])
+        })
     }
 }

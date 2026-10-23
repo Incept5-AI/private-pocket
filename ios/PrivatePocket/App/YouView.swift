@@ -47,8 +47,11 @@ struct YouView: View {
                         SectionTitle("This week")
                         ForEach(findings) { f in
                             FindingCard(finding: f, perform: { perform($0) }, notRight: {
-                                withAnimation { _ = dismissed.insert("week|" + f.id) }
-                                Prefs.dismissedFindings = dismissed
+                                // Read and written against what is stored: Now keeps its own copy, and neither undoes the other.
+                                var stored = Prefs.dismissedFindings
+                                stored.insert("week|" + f.id)
+                                Prefs.dismissedFindings = stored
+                                withAnimation { dismissed = stored }
                             })
                         }
                     }
@@ -63,6 +66,7 @@ struct YouView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
             .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
+            .onAppear { dismissed = Prefs.dismissedFindings }
             .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
             .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
         }
@@ -146,13 +150,19 @@ struct YouView: View {
         case .remind(let title, let due, let note):
             Task { if await model.quickReminder(title, due: due, note: note) { show("Added to Reminders") } }
         case .chase(let r, let item):
-            Task { await model.remindMe(r, item: item); show("Reminder set") }
+            Task { if await model.remindMe(r, item: item) { show("Reminder set") } }
         case .place(let r, let item):
-            Task { await model.place(r, item); show("Added to Reminders") }
+            Task { if await model.place(r, item) { show("Added to Reminders") } }
         case .placeAll(let pairs):
-            Task { for (r, i) in pairs { await model.place(r, i) }; show("\(pairs.count) added to Reminders") }
-        case .record:
-            break
+            Task {
+                // Said only for what went in: a refusal shows its own notice, and stops the rest.
+                var added = 0
+                for (r, i) in pairs {
+                    guard await model.place(r, i) else { break }
+                    added += 1
+                }
+                if added > 0 { show("\(added) added to Reminders") }
+            }
         }
     }
 

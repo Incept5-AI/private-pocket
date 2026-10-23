@@ -74,6 +74,7 @@ struct SamplesView: View {
         .background(Brand.ground)
         .navigationTitle("Sample moments")
         .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
+        .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
     }
 
     private func row(_ s: SampleMoment, _ r: Recording?) -> some View {

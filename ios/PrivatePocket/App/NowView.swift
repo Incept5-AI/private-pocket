@@ -8,7 +8,6 @@ struct NowView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var devices: DeviceStore
     @EnvironmentObject var link: PocketLink
-    @EnvironmentObject var live: LiveSession
     @EnvironmentObject var threads: ThreadStore
     @State private var path = NavigationPath()
     @State private var showPocket = false
@@ -23,6 +22,8 @@ struct NowView: View {
     @State private var hidden: Set<String> = Prefs.hiddenBlocks
     @State private var toast: String?
     @State private var brief: Brief?
+    /// The next meeting's brief, read from the calendar once a minute rather than on every redraw.
+    @State private var upcoming: Brief?
     @State private var briefsAsked = Prefs.askedBriefs
     @State private var deleting: Recording?
     /// Choosing moments to delete together: entered from a moment's menu.
@@ -101,6 +102,17 @@ struct NowView: View {
                     model.openMomentID = nil
                     path.append(id)
                 }
+                .task(id: all.count) {
+                    while !Task.isCancelled {
+                        upcoming = Briefs.calendarAllowed ? Briefs.upcoming(library.recordings).first : nil
+                        try? await Task.sleep(for: .seconds(60))
+                    }
+                }
+                // Listen back stops when a moment opens, the page is left, or a recording starts.
+                .onChange(of: path.count) { replay.stop() }
+                .onChange(of: recording) { _, now in if now { replay.stop() } }
+                .onAppear { dismissed = Prefs.dismissedFindings }
+                .onDisappear { replay.stop() }
             }
         }
     }
@@ -147,7 +159,7 @@ struct NowView: View {
     @ViewBuilder private func blocks(_ all: [Recording]) -> some View {
         let hour = Calendar.current.component(.hour, from: Date())
         let cal = Calendar.current
-        let today = Date().formatted(.iso8601.year().month().day())
+        let today = Self.localDay()
         if devices.devices.isEmpty {
             NowBlock(tint: Brand.paper, ink: Brand.onPaper, tag: "Your Pocket", title: "Press once. Hear everything.",
                      line: "Have your Pocket nearby and switched on. No account, no cloud.",
@@ -159,14 +171,14 @@ struct NowView: View {
                      action: "Show me") { showPocket = true }
                 .cardGestures(primary: "Show me", act: { showPocket = true }, dismiss: nil)
         }
-        if recording || live.isActive {
+        if recording || !model.saving.isEmpty {
             liveBlock.cardGestures(primary: "Open", act: { withAnimation(.spring(duration: 0.6)) { model.takeover = true } }, dismiss: nil)
         }
         if let a = model.cardAnswers.last, !hidden.contains("card|" + a.id.uuidString) {
             NowBlock(tint: Brand.record, ink: Brand.onRecord, tag: "Said to the card", title: a.answer, line: "“Pocket, \(a.question)”")
                 .cardGestures(primary: nil, act: nil, dismiss: { hide("card|" + a.id.uuidString) })
         }
-        if !recording, Briefs.calendarAllowed, let b = Briefs.upcoming(all).first, !hidden.contains("brief|" + b.id) {
+        if !recording, Briefs.calendarAllowed, let b = upcoming, !hidden.contains("brief|" + b.id) {
             NowBlock(tint: Brand.act, ink: Brand.onAct,
                      tag: "At \(b.start.formatted(date: .omitted, time: .shortened)) · \(b.person.name)" + (b.minutesAway > 0 ? " · in \(b.minutesAway) min" : ""),
                      title: b.count == 0 ? "Nothing open with \(b.person.name)." : "\(b.count) thing\(b.count == 1 ? "" : "s") open with \(b.person.name).",
@@ -183,13 +195,13 @@ struct NowView: View {
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .onTapGesture {
                 Task {
-                    if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all) }
+                    if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all); upcoming = Briefs.upcoming(all).first }
                     Prefs.askedBriefs = true; briefsAsked = true
                 }
             }
             .cardGestures(primary: "Allow Calendar", act: {
                 Task {
-                    if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all) }
+                    if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all); upcoming = Briefs.upcoming(all).first }
                     Prefs.askedBriefs = true; briefsAsked = true
                 }
             }, dismiss: { Prefs.askedBriefs = true; withAnimation { briefsAsked = true } })
@@ -245,8 +257,11 @@ struct NowView: View {
         }
         if let f = topFinding(all) {
             let notRight = {
-                withAnimation { _ = dismissed.insert("week|" + f.id) }
-                Prefs.dismissedFindings = dismissed
+                // Read and written against what is stored: You keeps its own copy, and neither undoes the other.
+                var stored = Prefs.dismissedFindings
+                stored.insert("week|" + f.id)
+                Prefs.dismissedFindings = stored
+                withAnimation { dismissed = stored }
             }
             FindingBlock(finding: f, perform: { perform($0) }, notRight: notRight)
                 .cardGestures(primary: f.choices.first?.label, act: f.choices.first.map { c in { perform(c.action) } }, dismiss: notRight)
@@ -265,11 +280,7 @@ struct NowView: View {
                 Spacer()
                 Text(model.recordingContext.map { $0.label.uppercased() } ?? "LIVE").font(.caption.weight(.bold)).tracking(1).lineLimit(1)
             }
-            if !live.text.isEmpty {
-                Text(String(live.text.suffix(160))).font(.callout.weight(.medium)).lineLimit(3)
-            } else {
-                Text(live.isActive ? "Listening…" : "Started before the phone connected; it's fetched when it stops.").font(.callout.weight(.medium))
-            }
+            NowLiveWords()
             if let h = model.liveThread {
                 ThreadHintBox(hint: h).onTapGesture { path.append(ThreadLink(id: h.id)) }
             }
@@ -280,8 +291,8 @@ struct NowView: View {
                         HStack(spacing: 10) {
                             Text(item.isAction ? "TO DO" : item.isDate ? "DATE" : "PROMISE").font(.caption2.weight(.bold)).tracking(0.6).foregroundStyle(Brand.record).frame(width: 56, alignment: .leading)
                             Text((item.isPromise ? (item.who.map { "\($0): " } ?? "") : "") + item.text).font(.subheadline.weight(.semibold)).foregroundStyle(Color(hex: 0xFFF7E8)).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-                            Button { model.confirmLive(item) } label: { Image(systemName: "checkmark").font(.caption.weight(.bold)).frame(width: 30, height: 30).background(confirmed ? Brand.act : Color(hex: 0x4A3410), in: Circle()).foregroundStyle(confirmed ? Brand.onAct : Color(hex: 0xFFF7E8)) }.buttonStyle(.plain)
-                            Button { model.dismissLive(item) } label: { Image(systemName: "xmark").font(.caption.weight(.bold)).frame(width: 30, height: 30).background(Color(hex: 0x4A3410), in: Circle()).foregroundStyle(Color(hex: 0xFFF7E8)) }.buttonStyle(.plain)
+                            Button { model.confirmLive(item) } label: { Image(systemName: "checkmark").font(.caption.weight(.bold)).frame(width: 30, height: 30).background(confirmed ? Brand.act : Color(hex: 0x4A3410), in: Circle()).foregroundStyle(confirmed ? Brand.onAct : Color(hex: 0xFFF7E8)) }.buttonStyle(.plain).accessibilityLabel("Keep it")
+                            Button { model.dismissLive(item) } label: { Image(systemName: "xmark").font(.caption.weight(.bold)).frame(width: 30, height: 30).background(Color(hex: 0x4A3410), in: Circle()).foregroundStyle(Color(hex: 0xFFF7E8)) }.buttonStyle(.plain).accessibilityLabel("Drop it")
                         }
                         .padding(10)
                         .background(Brand.onRecord, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
@@ -375,14 +386,27 @@ struct NowView: View {
         case .remind(let title, let due, let note):
             Task { if await model.quickReminder(title, due: due, note: note) { show("Added to Reminders") } }
         case .chase(let r, let item):
-            Task { await model.remindMe(r, item: item); show("Reminder set") }
+            Task { if await model.remindMe(r, item: item) { show("Reminder set") } }
         case .place(let r, let item):
-            Task { await model.place(r, item); show("Added to Reminders") }
+            Task { if await model.place(r, item) { show("Added to Reminders") } }
         case .placeAll(let pairs):
-            Task { for (r, i) in pairs { await model.place(r, i) }; show("\(pairs.count) added to Reminders") }
-        case .record:
-            break
+            Task {
+                // Said only for what went in: a refusal shows its own notice, and stops the rest.
+                var added = 0
+                for (r, i) in pairs {
+                    guard await model.place(r, i) else { break }
+                    added += 1
+                }
+                if added > 0 { show("\(added) added to Reminders") }
+            }
         }
+    }
+
+    /// Today in the person's own time zone, for what is put away for the day (the ISO style
+    /// counts days in UTC, so a card put away in the morning came back before noon in Sydney).
+    private static func localDay() -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: Date())
+        return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
     private func show(_ text: String) {
@@ -684,5 +708,18 @@ struct CardGestures: ViewModifier {
 extension View {
     func cardGestures(primary: String?, act: (() -> Void)?, dismiss: (() -> Void)?) -> some View {
         modifier(CardGestures(primary: primary, act: act, dismiss: dismiss))
+    }
+}
+
+/// The words as they come, on Now's live block: its own view, so only it redraws with them.
+private struct NowLiveWords: View {
+    @EnvironmentObject var live: LiveSession
+
+    var body: some View {
+        if !live.text.isEmpty {
+            Text(String(live.text.suffix(160))).font(.callout.weight(.medium)).lineLimit(3)
+        } else {
+            Text(live.isActive ? "Listening…" : "Started before the phone connected; it's fetched when it stops.").font(.callout.weight(.medium))
+        }
     }
 }

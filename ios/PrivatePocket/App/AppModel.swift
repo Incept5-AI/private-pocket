@@ -1343,14 +1343,25 @@ final class AppModel: ObservableObject {
     // MARK: - USB
 
     /// Copies drive files that are missing on the phone into the library.
-    func importFromDrive(_ files: [DriveFile], device: DeviceConfig) {
-        for f in files where !library.has(device: device.id, day: f.day, name: f.name) && !library.wasDeleted(device: device.id, day: f.day, name: f.name) {
+    /// A copy from the Pocket's drive under way: how many of how many.
+    @Published private(set) var importing: (done: Int, total: Int)?
+
+    /// Copies what the phone lacks from the Pocket's drive. Each file is read off the main
+    /// thread (a drive is slow), so the screen stays live and shows how far it has got.
+    func importFromDrive(_ files: [DriveFile], device: DeviceConfig) async {
+        let todo = files.filter { !library.has(device: device.id, day: $0.day, name: $0.name) && !library.wasDeleted(device: device.id, day: $0.day, name: $0.name) }
+        guard !todo.isEmpty, importing == nil else { return }
+        importing = (0, todo.count)
+        defer { importing = nil }
+        for (i, f) in todo.enumerated() {
             do {
-                try library.save(device: device.id, day: f.day, name: f.name, audio: try drive.read(f), seconds: nil,
-                                 pocket: PocketID(device))
+                let url = f.url
+                let audio = try await Task.detached(priority: .userInitiated) { try Data(contentsOf: url) }.value
+                try library.save(device: device.id, day: f.day, name: f.name, audio: audio, seconds: nil, pocket: PocketID(device))
             } catch {
                 drive.error = "Import of \(f.name) failed: \(error.localizedDescription)"
             }
+            importing = (i + 1, todo.count)
         }
     }
 

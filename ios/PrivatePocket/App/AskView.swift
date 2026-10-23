@@ -51,7 +51,10 @@ struct AskView: View {
     private var people: [String] {
         var counts: [String: Int] = [:]
         for r in inRange { for p in r.people { counts[p, default: 0] += 1 } }
-        return counts.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(6).map(\.key)
+        var top = counts.sorted { ($0.value, $1.key) > ($1.value, $0.key) }.prefix(6).map(\.key)
+        // The chosen person stays after the span changes, so the choice can always be undone.
+        if let person, !top.contains(person) { top.insert(person, at: 0) }
+        return top
     }
 
     private var suggestions: [String] {
