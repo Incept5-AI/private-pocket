@@ -69,7 +69,7 @@ struct RecordingTakeover: View {
             // After the stop: Saving… while the stream is put away, Saved for a moment, then gone.
             guard !recording else { return }
             var waited = 0.0
-            while live.isActive, waited < 8 {
+            while !model.saving.isEmpty, waited < 8 {
                 try? await Task.sleep(for: .milliseconds(300))
                 waited += 0.3
             }
@@ -219,11 +219,12 @@ struct RecordingTakeover: View {
 
     private var saved: some View {
         VStack(spacing: 14) {
-            Image(systemName: live.isActive ? "arrow.down.circle.fill" : "checkmark.circle.fill")
+            let busy = !model.saving.isEmpty
+            Image(systemName: busy ? "arrow.down.circle.fill" : "checkmark.circle.fill")
                 .font(.system(size: markSize, weight: .bold))
                 .contentTransition(.symbolEffect(.replace))
-                .symbolEffect(.bounce, value: live.isActive)
-            Text(live.isActive ? "Saving…" : "Saved").font(.largeTitle.weight(.bold))
+                .symbolEffect(.bounce, value: busy)
+            Text(busy ? "Saving…" : "Saved").font(.largeTitle.weight(.bold))
             Text("On this iPhone. It's read in a moment.").font(.subheadline.weight(.semibold)).opacity(0.75)
         }
         .accessibilityElement(children: .combine)

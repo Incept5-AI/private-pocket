@@ -26,6 +26,8 @@ final class Locator: NSObject, ObservableObject, CLLocationManagerDelegate {
     @Published private(set) var authorization: CLAuthorizationStatus = .notDetermined
     private var made: CLLocationManager?
     private var waiting: [CheckedContinuation<CLLocation?, Never>] = []
+    /// Location requests made, so a timeout only ends the one it was set for.
+    private var asked = 0
 
     /// Made on first use, never while the app is being created: making one, and reading its
     /// status, wait on the location service, and at launch (or a Bluetooth relaunch in the
@@ -121,7 +123,17 @@ final class Locator: NSObject, ObservableObject, CLLocationManagerDelegate {
         }
         let l = await withCheckedContinuation { c in
             waiting.append(c)
-            if waiting.count == 1 { manager.requestLocation() }
+            guard waiting.count == 1 else { return }
+            asked += 1
+            let mine = asked
+            manager.requestLocation()
+            // No answer in ten seconds (in the background there may be none): the recording is
+            // saved without a place rather than waiting on one.
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(10))
+                guard let self, self.asked == mine, !self.waiting.isEmpty else { return }
+                self.finish(nil)
+            }
         }
         return l ?? manager.location
     }

@@ -156,7 +156,7 @@ enum RemoteSTT {
     }
 
     /// Text plus word times (`verbose_json` with word timestamps), for speakers.
-    static func transcribe(_ audio: Data, filename: String, type: String, localeID: String) async throws -> TimedTranscript {
+    static func transcribe(_ audio: Data, filename: String, type: String, localeID: String, timeout: TimeInterval = 1_800) async throws -> TimedTranscript {
         if let why = await RemoteSTT.availability { throw AIError.modelUnavailable(why) }
         let (base, model, key) = await MainActor.run {
             // An empty key falls back to the language model's key (same server by default).
@@ -180,7 +180,7 @@ enum RemoteSTT {
         body.append(audio)
         body.append(Data("\r\n--\(boundary)--\r\n".utf8))
 
-        var req = URLRequest(url: url, timeoutInterval: 1_800)
+        var req = URLRequest(url: url, timeoutInterval: timeout)
         req.httpMethod = "POST"
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         if !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }

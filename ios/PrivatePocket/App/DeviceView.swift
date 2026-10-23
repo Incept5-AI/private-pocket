@@ -443,7 +443,7 @@ struct PocketView: View {
     private var streamText: String {
         if live.isActive {
             return live.gap ? "Stream interrupted. Your Pocket keeps recording; the file is fetched when it stops."
-                            : "Streaming to this iPhone · \(Int(Double(live.bytes) / PocketFacts.bytesPerSecond)) s"
+                            : "Streaming to this iPhone · \(live.seconds) s"
         }
         return paired ? "Started before the phone connected, so it is not streaming. It is fetched when it stops."
                       : "Started before the phone connected, so it is not streaming. Pair to fetch it when it stops."

@@ -19,6 +19,40 @@ final class RecordingActivity {
 
     var isRecording: Bool { current?.isRecording == true }
 
+    /// An activity left by an earlier run of the app (closed, or killed while it recorded) is
+    /// taken up again rather than orphaned; any others end.
+    init() {
+        let all = Activity<RecordingAttributes>.activities
+        activity = all.first { $0.activityState == .active }
+        for a in all where a.id != activity?.id {
+            Task { await a.end(nil, dismissalPolicy: .immediate) }
+        }
+    }
+
+    /// Stopped and being saved: the timer stops at once rather than running on through the save.
+    func showSaving() {
+        guard var s = current, s.isRecording else { return }
+        s.phase = .stopped
+        s.startedAt = nil
+        s.levels = nil
+        s.caught = nil
+        s.recall = nil
+        update(s)
+    }
+
+    /// A recording shown by an earlier run of the app that is not going on: back to ready.
+    func clearRecording() {
+        guard var s = current, s.isRecording else { return }
+        s.phase = .ready
+        s.startedAt = nil
+        s.line = ""
+        s.levels = nil
+        s.context = nil
+        s.caught = nil
+        s.recall = nil
+        update(s)
+    }
+
     /// Connected and idle. Starts the activity if there is none (foreground only).
     func showReady(device: DeviceConfig, battery: Int?, hoursFree: String?, paired: Bool = true) {
         revert?.cancel()

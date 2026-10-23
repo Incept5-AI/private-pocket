@@ -47,7 +47,7 @@ struct Discovered: Identifiable, Hashable {
 }
 
 enum PocketError: LocalizedError {
-    case bluetoothOff, notFound, timeout(String), notReady, rejected, notPairing
+    case bluetoothOff, notFound, timeout(String), notReady, rejected, notPairing, superseded, interrupted
 
     var errorDescription: String? {
         switch self {
@@ -57,6 +57,8 @@ enum PocketError: LocalizedError {
         case .notReady: "Not connected."
         case .rejected: "The Pocket rejected this phone's key, which happens after another app pairs it. Hold its side button for 5 seconds until the light blinks blue, then tap Pair."
         case .notPairing: "The Pocket didn't take the key. Hold its side button for five seconds until the light blinks blue, then tap Pair while it blinks."
+        case .superseded: "The Pocket couldn't be reached just then. Try again in a moment."
+        case .interrupted: "Fetching stopped because the Pocket started recording. It carries on after the recording."
         }
     }
 }
@@ -129,6 +131,23 @@ final class PocketLink: NSObject, ObservableObject {
     private var audio = Data()
     private var capturingAudio = false
     private var stoppingFromApp = false
+    /// A command is being exchanged. The Pocket answers on one channel, so a second command
+    /// sent meanwhile took the first one's reply (seen: the key and a listing, both timing out).
+    private var exchanging = false
+    /// A download in flight is to stop: a recording has started on the same channel.
+    private var downloadStop = false
+    /// Each connection attempt's number. A teardown or a newer attempt ends an older one's
+    /// wait, so a stale wait never tears down the connection that replaced it.
+    private var attempt = 0
+    /// Connections this app cancelled. iOS answers a cancel with a disconnect, which is not a
+    /// link loss: taken for one, it re-armed the wait, whose cancel was answered the same way,
+    /// some forty times a second in the background, and the Pocket never reconnected.
+    private var cancelling: Set<UUID> = []
+    /// When live audio last arrived (outside a download): the Pocket is recording.
+    private(set) var lastLiveAudioAt = Date.distantPast
+    /// When the link last came up, to tell a recording that was stopped while the phone was away.
+    private(set) var linkedAt = Date.distantPast
+    private var staleWatch: Task<Void, Never>?
 
     /// Called with the learned CoreBluetooth identifier so it can be stored per device.
     var onPeripheralLearned: ((UUID, UUID) -> Void)?
@@ -138,8 +157,9 @@ final class PocketLink: NSObject, ObservableObject {
     var onLinkLost: (() -> Void)?
     /// Called with the file name when a recording starts (button or app).
     var onRecordingStarted: ((String) -> Void)?
-    /// Called when the device reports a recording stopped (button or app).
-    var onRecordingStopped: ((String) -> Void)?
+    /// Called when a recording stopped (button or app), with false when the stop was not heard
+    /// but worked out: the link came back silent after it was lost during the recording.
+    var onRecordingStopped: ((String, Bool) -> Void)?
 
     override init() {
         super.init()
@@ -148,6 +168,11 @@ final class PocketLink: NSObject, ObservableObject {
         // peripheral in `willRestoreState`.
         central = CBCentralManager(delegate: self, queue: .main,
                                    options: [CBCentralManagerOptionRestoreIdentifierKey: "PocketLink"])
+        // A run of the app that ended while recording left Control Center's toggle on.
+        if SharedState.recording {
+            SharedState.recording = false
+            ControlCenter.shared.reloadAllControls()
+        }
     }
 
     var isReady: Bool { if case .ready = phase { true } else { if case .busy = phase { true } else { false } } }
@@ -177,6 +202,7 @@ final class PocketLink: NSObject, ObservableObject {
         if connectedDeviceID == d.id, isReady { return }
         try await establish(d)
         try await handshake()
+        watchForStaleRecording()
     }
 
     /// Pair now, on request: the same fresh-key try `handshake` makes by itself, but
@@ -254,7 +280,9 @@ final class PocketLink: NSObject, ObservableObject {
     /// Scan, connect and subscribe, without sending any key.
     private func establish(_ d: DeviceConfig) async throws {
         disconnect()
+        let mine = attempt
         try await waitForPoweredOn()
+        guard attempt == mine else { throw PocketError.superseded }
         if device?.id != d.id {
             keyRejected = false
             pairAttemptPending = true
@@ -272,12 +300,13 @@ final class PocketLink: NSObject, ObservableObject {
         // changed, and notices other Pockets nearby. Stopped once connected.
         wantedName = d.advertisedName
         central.scanForPeripherals(withServices: nil, options: nil)
-        try await waitUntil(timeout: 20, what: "the Pocket to connect") { [weak self] in
+        try await waitUntil(timeout: 20, what: "the Pocket to connect", attempt: mine) { [weak self] in
             guard let self else { return true }
             return self.notifyingReply && self.notifyingAudio && self.commandChar != nil
         }
         phase = .ready
         connectedDeviceID = d.id
+        linkedAt = Date()
         bouncingAfterKey = false
     }
 
@@ -288,12 +317,17 @@ final class PocketLink: NSObject, ObservableObject {
         if central.isScanning { central.stopScan() }
     }
 
-    func disconnect() {
+    func disconnect() { teardown(cancel: true) }
+
+    /// Back to idle. `cancel` cancels the connection, live or pending; once iOS has reported
+    /// it gone there is nothing to cancel, and a cancel would be answered with another disconnect.
+    private func teardown(cancel: Bool) {
+        attempt += 1
         stopScanning()
         wantedName = nil
         standingBy = false
         standbyDevice = nil
-        if let p = peripheral { central.cancelPeripheralConnection(p) }   // also cancels a pending connection
+        if cancel, let p = peripheral { cancelConnection(p) }
         peripheral = nil
         commandChar = nil
         notifyingReply = false
@@ -303,8 +337,15 @@ final class PocketLink: NSObject, ObservableObject {
         progress = nil
     }
 
+    /// Cancels a live or pending connection, marked so that its disconnect is not taken for a loss.
+    private func cancelConnection(_ p: CBPeripheral) {
+        guard p.state == .connected || p.state == .connecting else { return }
+        cancelling.insert(p.identifier)
+        central.cancelPeripheralConnection(p)
+    }
+
     private func attach(_ p: CBPeripheral) {
-        if let old = peripheral, old != p { central.cancelPeripheralConnection(old) }
+        if let old = peripheral, old != p { cancelConnection(old) }
         stopScanning()
         wantedName = nil
         peripheral = p
@@ -332,10 +373,14 @@ final class PocketLink: NSObject, ObservableObject {
         standbyDevice = nil
         phase = .ready
         connectedDeviceID = d.id
+        linkedAt = Date()
         bouncingAfterKey = false
         Task {
             await run("Connecting", quiet: true) { try await handshake() }
-            if isReady { onConnected?() }
+            if isReady {
+                watchForStaleRecording()
+                onConnected?()
+            }
         }
     }
 
@@ -365,7 +410,13 @@ final class PocketLink: NSObject, ObservableObject {
         }
         note(key.isEmpty ? "not paired: recording events and live audio only"
                          : "key refused earlier: recording events and live audio only")
-        status = DeviceStatus(battery: status.battery)
+        // What only a key can read is forgotten. Whether it records, and the switch, are not:
+        // a recording under way when the link came back is still under way.
+        var s = DeviceStatus(battery: status.battery)
+        s.recordingSince = status.recordingSince
+        s.recordingName = status.recordingName
+        s.mode = status.mode
+        status = s
         if pairAttemptPending {
             pairAttemptPending = false
             try await tryPairing(quiet: true, force: true)
@@ -380,7 +431,9 @@ final class PocketLink: NSObject, ObservableObject {
     /// nothing else: the link had no key anyway. Skipped while the Pocket records, so a
     /// stream started with the button is never cut.
     func tryPairing(quiet: Bool, force: Bool = false) async throws {
-        guard let d = device, isReady, status.recordingSince == nil, !pairing,
+        // Never while audio streams either: that is a recording, perhaps one started before this
+        // connection, and a wrong key would drop the link under it.
+        guard let d = device, isReady, status.recordingSince == nil, Date().timeIntervalSince(lastLiveAudioAt) > 5, !pairing,
               force || !quiet || Date().timeIntervalSince(lastPairTryAt) > 8 else { return }
         pairing = true
         defer { pairing = false }
@@ -454,6 +507,7 @@ final class PocketLink: NSObject, ObservableObject {
     }
 
     func startRecording() async throws {
+        if capturingAudio { downloadStop = true }   // recording comes first: a fetch stops, and carries on later
         _ = try await send("STA", until: { $0.hasPrefix("MCU&STA&") })   // handleLine records the name and time
     }
 
@@ -482,27 +536,40 @@ final class PocketLink: NSObject, ObservableObject {
         return files.sorted { $0.name < $1.name }
     }
 
-    func download(_ f: RemoteFile) async throws -> Data {
+    /// A recording's file. The command channel is held throughout, and a recording starting
+    /// stops it. `whole` is false when fewer bytes came than the Pocket announced: what came is
+    /// kept, marked partial, and a later sync fetches it again.
+    func download(_ f: RemoteFile) async throws -> FetchedFile {
+        try await takeTurn()
+        defer { exchanging = false }
         audio = Data()
+        downloadStop = false
         capturingAudio = true
-        defer { capturingAudio = false; progress = nil }
+        defer { capturingAudio = false; downloadStop = false; progress = nil }
         let label = f.startedLabel
-        let head = try await send("U&\(f.day)&\(f.name)", until: { $0.hasPrefix("MCU&U&") }, timeout: 10)
+        let head = try await exchange("U&\(f.day)&\(f.name)", until: { $0.hasPrefix("MCU&U&") }, timeout: 10)
         let size = Int(head.last?.split(separator: "&").last ?? "") ?? 0
         progress = (label, 0, size)
         var lastCount = 0
         var lastChange = Date()
+        var lastShown = Date()
         while true {
+            if downloadStop {
+                note("fetching \(f.name) stopped: a recording started")
+                throw PocketError.interrupted
+            }
             if lines.contains("MCU&OFF") { lines.removeAll { $0 == "MCU&OFF" }; break }
             if size > 0, audio.count >= size { break }
             if audio.count != lastCount { lastCount = audio.count; lastChange = Date() }
             if Date().timeIntervalSince(lastChange) > 15 { throw PocketError.timeout("audio data (\(audio.count)/\(size) bytes)") }
             if peripheral?.state != .connected { throw PocketError.notReady }
-            progress = (label, audio.count, size)
+            // Twice a second is plenty for a progress bar, and every screen watching redraws on it.
+            if Date().timeIntervalSince(lastShown) >= 0.5 { progress = (label, audio.count, size); lastShown = Date() }
             try await Task.sleep(for: .milliseconds(150))
         }
-        note("downloaded \(f.name): \(audio.count) bytes")
-        return size > 0 ? audio.prefix(size) : audio
+        let whole = size == 0 || audio.count >= size
+        note(whole ? "downloaded \(f.name): \(audio.count) bytes" : "downloaded \(f.name): only \(audio.count) of \(size) bytes")
+        return FetchedFile(data: size > 0 ? audio.prefix(size) : audio, whole: whole)
     }
 
     /// Runs `body` with the phase shown as busy, recording any error for the UI.
@@ -524,9 +591,27 @@ final class PocketLink: NSObject, ObservableObject {
         return String((r.last ?? "").dropFirst(prefix.count))
     }
 
-    /// Writes `APP&<cmd>` and collects reply lines until one satisfies `until`.
+    /// Writes `APP&<cmd>` and collects reply lines until one satisfies `until`, once any
+    /// command already in flight has had its answer.
     @discardableResult
     func send(_ cmd: String, until done: @escaping (String) -> Bool, timeout: TimeInterval = 5) async throws -> [String] {
+        try await takeTurn()
+        defer { exchanging = false }
+        return try await exchange(cmd, until: done, timeout: timeout)
+    }
+
+    /// Waits for the command channel. A fetch holds it for the whole file; a recording
+    /// starting cuts that short (`downloadStop`).
+    private func takeTurn() async throws {
+        let deadline = Date().addingTimeInterval(30)
+        while exchanging {
+            guard Date() < deadline else { throw PocketError.timeout("the Pocket to finish what it was doing") }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        exchanging = true
+    }
+
+    private func exchange(_ cmd: String, until done: @escaping (String) -> Bool, timeout: TimeInterval) async throws -> [String] {
         guard let p = peripheral, let c = commandChar, p.state == .connected else { throw PocketError.notReady }
         lines.removeAll { !Self.isEvent($0) }
         p.writeValue(Data("APP&\(cmd)".utf8), for: c, type: .withResponse)
@@ -554,15 +639,50 @@ final class PocketLink: NSObject, ObservableObject {
         guard central.state == .poweredOn else { throw PocketError.bluetoothOff }
     }
 
-    private func waitUntil(timeout: TimeInterval, what: String, _ cond: () -> Bool) async throws {
+    private func waitUntil(timeout: TimeInterval, what: String, attempt mine: Int, _ cond: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !cond() {
+            // Torn down, or a newer attempt began: this one is over, and leaves that alone.
+            guard attempt == mine else { throw PocketError.superseded }
             if Date() > deadline {
                 let neverFound = peripheral == nil
                 disconnect()
                 throw neverFound ? PocketError.notFound : PocketError.timeout(what)
             }
-            try await Task.sleep(for: .milliseconds(100))
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                // Cancelled (the app left the foreground, say): no half-made connection is left
+                // behind, unless something newer has already taken its place.
+                if attempt == mine { disconnect() }
+                throw error
+            }
+        }
+        guard attempt == mine else { throw PocketError.superseded }
+    }
+
+    /// After a reconnect during a recording. The Pocket streams while it records, so a link
+    /// that stays silent means it was stopped while the phone was away and its stop never
+    /// came. A paired Pocket's listing is read twice first, and a recording whose length is
+    /// still growing is left alone; else it is finished as if the stop had been heard.
+    private func watchForStaleRecording() {
+        guard let name = status.recordingName, status.recordingSince != nil else { return }
+        let since = linkedAt
+        staleWatch?.cancel()
+        staleWatch = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(20))
+            guard let self, !Task.isCancelled, self.isReady, self.status.recordingName == name, self.lastLiveAudioAt < since else { return }
+            if let d = self.device, d.isPaired, !self.keyRejected {
+                let first = try? await self.listFiles().first { $0.name == name }
+                try? await Task.sleep(for: .seconds(4))
+                let second = try? await self.listFiles().first { $0.name == name }
+                if let a = first, let b = second, b.seconds > a.seconds { return }   // still growing: still recording
+                guard self.status.recordingName == name, self.lastLiveAudioAt < since else { return }
+            }
+            self.note("no audio since reconnecting: \(name) was stopped while the phone was away")
+            self.status.recordingSince = nil
+            self.status.recordingName = nil
+            self.onRecordingStopped?(name, false)
         }
     }
 
@@ -572,6 +692,11 @@ final class PocketLink: NSObject, ObservableObject {
             // The name is the device's file name: a UTC timestamp, or `PH…` in call
             // mode. Unknown forms still count as a recording, timed from now.
             let name = String(l.dropFirst("MCU&STA&".count))
+            if capturingAudio {
+                // A recording takes the audio channel: what follows is the room, not the file.
+                downloadStop = true
+                capturingAudio = false
+            }
             let started = PocketTime.parse(name) ?? Date()
             let isNew = status.recordingName != name
             status.recordingSince = started
@@ -581,7 +706,7 @@ final class PocketLink: NSObject, ObservableObject {
             let name = status.recordingName
             status.recordingSince = nil
             status.recordingName = nil
-            if let name, !stoppingFromApp { onRecordingStopped?(name) }
+            if let name, !stoppingFromApp { onRecordingStopped?(name, true) }
         } else if l.hasPrefix("MCU&REC&") {
             status.mode = String(l.dropFirst("MCU&REC&".count))   // the switch, before a start and on request
         }
@@ -593,6 +718,12 @@ final class PocketLink: NSObject, ObservableObject {
         DiskLog.append(s)
         if log.count > 300 { log.removeFirst(log.count - 300) }
     }
+}
+
+/// A recording fetched from the Pocket; `whole` when every byte it announced arrived.
+struct FetchedFile {
+    let data: Data
+    let whole: Bool
 }
 
 extension RemoteFile {
@@ -662,25 +793,39 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
-        MainActor.assumeIsolated { connected(p) }
+        MainActor.assumeIsolated {
+            cancelling.remove(p.identifier)   // any cancel before this connection has been answered
+            connected(p)
+        }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
         MainActor.assumeIsolated {
             note("connect failed: \(error?.localizedDescription ?? "unknown")")
-            disconnect()
+            guard p == peripheral else { return }
+            let rearm = standingBy ? device : nil
+            teardown(cancel: false)
+            // A background wait that failed is armed again a little later: nothing else would.
+            if let d = rearm {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(5))
+                    guard let self, self.phase == .idle, self.standbyDevice == nil else { return }
+                    self.standby(d)
+                }
+            }
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
         MainActor.assumeIsolated {
+            if cancelling.remove(p.identifier) != nil { return }   // the answer to a cancel of ours, not a loss
             guard p == peripheral else { return }
             note("disconnected")
             // A drop the Pocket made on its own, not on a key just sent, may mean it was
             // put into pairing mode: worth a fresh key on the next connection.
             let afterKey = Date().timeIntervalSince(lastKeySentAt) <= 3
             if !afterKey { pairAttemptPending = true }
-            disconnect()
+            teardown(cancel: false)   // already gone: a cancel now would only be answered with another disconnect
             bouncingAfterKey = afterKey
             onLinkLost?()
         }
@@ -724,7 +869,10 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
         guard let v = c.value else { return }
         MainActor.assumeIsolated {
             if c.uuid == PocketUUID.audio {
-                if capturingAudio { audio.append(v) } else { onLiveAudio?(v) }
+                if capturingAudio { audio.append(v) } else {
+                    lastLiveAudioAt = Date()
+                    onLiveAudio?(v)
+                }
             } else if c.uuid == PocketUUID.reply, let s = String(data: v, encoding: .utf8) {
                 handleLine(s.trimmingCharacters(in: .whitespacesAndNewlines))
             } else if c.uuid == PocketUUID.batteryLevel, let b = v.first {
