@@ -5,6 +5,7 @@ import SwiftUI
 struct YouView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var library: Library
+    @EnvironmentObject var threads: ThreadStore
     @State private var cache = DigestCache()
     @State private var dismissed: Set<String> = Prefs.dismissedFindings
     @State private var path = NavigationPath()
@@ -52,6 +53,7 @@ struct YouView: View {
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
             .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
+            .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
         }
     }
 
@@ -115,11 +117,12 @@ struct YouView: View {
     }
 
     private func stalled(_ all: [Recording]) -> (term: String, count: Int, last: String, ids: [String])? {
-        let threads = Digest.threads(all, people: Set(all.flatMap(\.people)), limit: 30)
-        for t in threads where t.moments.count >= 3 {
-            let decided = t.moments.contains { r in (r.meta.insight?.decisions ?? []).contains { $0.range(of: t.term, options: .caseInsensitive) != nil } }
-            if !decided, let last = t.dates.max() {
-                return (t.term, t.moments.count, Findings.dayName(last), t.moments.map(\.id))
+        for t in threads.live(all).sorted(by: { $0.weight > $1.weight }) where t.moments.count >= 3 {
+            let decided = t.moments.contains { r in
+                (r.meta.insight?.decisions ?? []).contains { d in t.record.aliases.contains { d.range(of: $0, options: .caseInsensitive) != nil } }
+            }
+            if !decided, let last = t.last {
+                return (t.name, t.moments.count, Findings.dayName(last), t.moments.map(\.id))
             }
         }
         return nil

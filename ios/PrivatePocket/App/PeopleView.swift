@@ -4,8 +4,11 @@ import SwiftUI
 /// is something owed either way. Tap one for the whole relationship.
 struct PeopleView: View {
     @EnvironmentObject var library: Library
+    @EnvironmentObject var threads: ThreadStore
     @State private var selected: String?
     @State private var asList = false
+    @State private var renaming: String?
+    @State private var newName = ""
 
     var body: some View {
         let all = library.recordings
@@ -23,12 +26,16 @@ struct PeopleView: View {
                         Text("People appear as the reader names them. Rename a speaker on a moment and they show here.")
                             .font(.subheadline).foregroundStyle(Brand.muted)
                     } else if asList {
-                        ForEach(people) { p in NavigationLink(value: p.name) { PersonRow(person: p) }.buttonStyle(.plain) }
+                        ForEach(people) { p in
+                            NavigationLink(value: p.name) { PersonRow(person: p) }.buttonStyle(.plain)
+                                .contextMenu { PersonMenuItems(name: p.name, others: people.map(\.name), renaming: $renaming, newName: $newName) }
+                        }
                     } else {
                         PeopleMap(people: people, selected: $selected)
                         Text("Bigger: more time talking. Closer: more recent. Amber ring: something owed.").font(.caption).foregroundStyle(Brand.dim)
                         if let s = selected ?? people.first?.name, let p = people.first(where: { $0.name == s }) {
                             PersonCard(person: p)
+                                .contextMenu { PersonMenuItems(name: p.name, others: people.map(\.name), renaming: $renaming, newName: $newName) }
                         }
                     }
                 }
@@ -40,6 +47,51 @@ struct PeopleView: View {
                 if let p = Digest.people(all, limit: 200).first(where: { $0.name == name }) { PersonView(person: p) } else { RecordingDetail(id: name) }
             }
             .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
+            .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
+            .modifier(PersonRenaming(renaming: $renaming, newName: $newName))
+        }
+    }
+}
+
+/// Rename, the same person as another, not a person: on a person, anywhere.
+struct PersonMenuItems: View {
+    @EnvironmentObject var threads: ThreadStore
+    let name: String
+    let others: [String]
+    @Binding var renaming: String?
+    @Binding var newName: String
+    var done: (() -> Void)? = nil
+
+    var body: some View {
+        Button { newName = name; renaming = name } label: { Label("Rename", systemImage: "pencil") }
+        let rest = others.filter { $0 != name }.prefix(10)
+        if !rest.isEmpty {
+            Menu {
+                ForEach(Array(rest), id: \.self) { o in
+                    Button(o) { withAnimation { threads.samePerson(name, as: o) }; done?() }
+                }
+            } label: { Label("Same person as…", systemImage: "person.2") }
+        }
+        Button(role: .destructive) { withAnimation { threads.notAPerson(name) }; done?() } label: { Label("Not a person", systemImage: "xmark") }
+    }
+}
+
+struct PersonRenaming: ViewModifier {
+    @EnvironmentObject var threads: ThreadStore
+    @Binding var renaming: String?
+    @Binding var newName: String
+    var done: (() -> Void)? = nil
+
+    func body(content: Content) -> some View {
+        content.alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("Name", text: $newName)
+            Button("Save") {
+                if let n = renaming { threads.renamePerson(n, to: newName) }
+                done?()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every moment that names them shows the new name. Give the name of someone already here to make them one person.")
         }
     }
 }
@@ -169,7 +221,12 @@ struct PersonCard: View {
 /// you, and everything said with them.
 struct PersonView: View {
     @EnvironmentObject var library: Library
+    @EnvironmentObject var threads: ThreadStore
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
     let person: Digest.Person
+    @State private var renaming: String?
+    @State private var newName = ""
 
     static func between(_ p: Digest.Person) -> String {
         var s: [String] = []
@@ -191,7 +248,8 @@ struct PersonView: View {
         let yours: [(Recording, NextItem)] = p.moments.flatMap { r in
             (r.meta.insight?.items ?? []).filter { $0.isAction && !$0.isDone && !$0.isDismissed && $0.text.localizedCaseInsensitiveContains(p.name) }.map { (r, $0) }
         }
-        let threads = Digest.threads(p.moments, people: Set(all.flatMap(\.people)), limit: 6)
+        let mine = Set(p.moments.map(\.id))
+        let between = threads.live(all).filter { t in t.moments.contains { mine.contains($0.id) } }.sorted { $0.weight > $1.weight }.prefix(6)
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -230,12 +288,12 @@ struct PersonView: View {
                             }
                         }
                     }
-                    if !threads.isEmpty {
+                    if !between.isEmpty {
                         VStack(alignment: .leading, spacing: 8) {
                             SectionTitle("Between you")
-                            ForEach(threads) { t in
-                                NavigationLink(value: MomentsFilter(title: t.term, ids: t.moments.map(\.id))) {
-                                    HStack { Text(t.term).font(.callout.weight(.semibold)); Spacer(); Text("\(t.moments.count)").font(.caption.weight(.bold)).foregroundStyle(Brand.muted) }
+                            ForEach(Array(between)) { t in
+                                NavigationLink(value: ThreadLink(id: t.id)) {
+                                    HStack { Text(t.name).font(.callout.weight(.semibold)); Spacer(); ThreadPill(thread: t) }
                                         .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.plain)
@@ -255,5 +313,16 @@ struct PersonView: View {
         .background(Brand.ground)
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    PersonMenuItems(name: p.name, others: Digest.people(all, limit: 40).map(\.name), renaming: $renaming, newName: $newName) { dismiss() }
+                } label: { Image(systemName: "ellipsis") }
+                .accessibilityLabel("Mend this person")
+            }
+        }
+        .modifier(PersonRenaming(renaming: $renaming, newName: $newName) { dismiss() })
+        .onAppear { model.pageContext = RecordContext(person: p.name) }
+        .onDisappear { if model.pageContext?.person == p.name { model.pageContext = nil } }
     }
 }

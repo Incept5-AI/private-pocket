@@ -157,8 +157,14 @@ extension Recording {
 
     /// Who was there, by name: the reading's people, else the names given to speakers.
     var people: [String] {
-        if let p = meta.insight?.people, !p.isEmpty { return p }
-        return (meta.speakerNames ?? [:]).values.filter { !$0.isEmpty }.sorted()
+        let read = meta.insight?.people ?? []
+        let raw = read.isEmpty ? (meta.speakerNames ?? [:]).values.filter { !$0.isEmpty }.sorted() : read
+        var seen = Set<String>()
+        var out: [String] = []
+        for n in raw + [meta.context?.person].compactMap({ $0 }) {
+            if let c = PeopleNames.canonical(n), seen.insert(c.lowercased()).inserted { out.append(c) }
+        }
+        return out
     }
 
     /// Who, and where: the second line of a card.
@@ -300,7 +306,8 @@ enum Analyst {
         guard let text = r.transcriptForModel?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             throw AIError.emptyTranscript
         }
-        let hint = r.isCall ? "The recorder's switch was on call, so this is a phone call. " : ""
+        let context = (r.meta.context?.hint).map { $0.isEmpty ? "" : $0 + " " } ?? ""
+        let hint = (r.isCall ? "The recorder's switch was on call, so this is a phone call. " : "") + context
         var drafts: [Draft] = []
         for chunk in Summariser.split(text, max: c.chunkChars).prefix(6) {
             drafts.append(try await draft(c, prompt: "\(hint)Transcript:\n\n\(chunk)"))

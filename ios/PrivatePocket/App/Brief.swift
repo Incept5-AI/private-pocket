@@ -168,6 +168,7 @@ struct BriefView: View {
             }
             .toolbarBackground(.hidden, for: .navigationBar)
             .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
+            .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
         }
     }
 

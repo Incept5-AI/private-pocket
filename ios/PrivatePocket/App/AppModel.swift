@@ -17,6 +17,7 @@ struct PrivatePocketApp: App {
                 .environmentObject(model.drive)
                 .environmentObject(model.locator)
                 .environmentObject(model.live)
+                .environmentObject(model.threads)
                 .preferredColorScheme(.dark)
                 .tint(Brand.act)
         }
@@ -43,6 +44,8 @@ final class AppModel: ObservableObject {
     let drive = USBDrive()
     let locator = Locator()
     let live = LiveSession()
+    /// Threads kept, and the people book.
+    let threads = ThreadStore(root: Library.rootURL)
     /// Dynamic Island and Lock Screen while the Pocket records.
     let activity = RecordingActivity()
     private var activityTicker: Task<Void, Never>?
@@ -73,6 +76,14 @@ final class AppModel: ObservableObject {
     @Published var cardAnswers: [CardAnswer] = []
     private var cardSeen: Set<String> = []
     private var cardWatch: AnyCancellable?
+    /// What the screen in front shows, so Record can be pressed into it.
+    @Published var pageContext: RecordContext?
+    /// What the recording now running was pressed into.
+    @Published var recordingContext: RecordContext?
+    /// A thread named in the room, with what was said last time.
+    @Published var liveThread: ThreadHint?
+    private var pendingContext: RecordContext?
+    private var recordContexts: [String: RecordContext] = [:]
     /// Confirmations made in the room, carried into the moment once it is read.
     private var liveCarry: [String: (confirmed: [NextItem], dismissed: [String])] = [:]
     @Published var aiError: String?
@@ -104,9 +115,13 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             self.locator.recordingStarted(name)
             if let d = self.connectedDevice { self.live.begin(name: name, device: d.id) }
+            if let ctx = self.pendingContext { self.recordContexts[name] = ctx; self.pendingContext = nil }
+            self.recordingContext = self.recordContexts[name]
+            self.liveThread = nil
             self.startActivity(name: name)
             self.startLiveReader()
             self.watchForCard()
+            if self.recordingContext?.thread != nil { self.scanForThreads("") }
         }
         StopRecordingIntent.handler = { [weak self] in
             guard let self else { return }
@@ -157,7 +172,7 @@ final class AppModel: ObservableObject {
             Task { await self.autoSync(d) }
         }
         link.onRecordingStopped = { [weak self] name in
-            guard let self, let d = self.connectedDevice else { self?.endActivity(name: name); return }
+            guard let self, let d = self.connectedDevice else { self?.recordingContext = nil; self?.liveThread = nil; self?.endActivity(name: name); return }
             Task {
                 await self.link.run("Saving") { try await self.completeRecording(name: name, device: d) }
                 self.endActivity(name: name)
@@ -312,6 +327,9 @@ final class AppModel: ObservableObject {
 
     func toggleRecording() async {
         guard let d = devices.selected, canCommand else { return }
+        let starting = link.status.recordingSince == nil
+        if starting { pendingContext = pageContext }
+        defer { if starting, link.status.recordingSince == nil { pendingContext = nil } }
         await link.run(link.status.recordingSince == nil ? "Starting" : "Stopping") {
             try await link.connect(d)
             if link.status.recordingSince == nil {
@@ -382,7 +400,7 @@ final class AppModel: ObservableObject {
         cardWatch?.cancel()
         cardWatch = live.$finalText
             .debounce(for: .seconds(1.5), scheduler: DispatchQueue.main)
-            .sink { [weak self] text in self?.scanForCard(text) }
+            .sink { [weak self] text in self?.scanForCard(text); self?.scanForThreads(text) }
     }
 
     private func scanForCard(_ text: String) {
@@ -423,11 +441,48 @@ final class AppModel: ObservableObject {
         finish(conversations["card"]?.last?.answer ?? conversations["card"]?.last?.error ?? "I couldn't find that.")
     }
 
+    /// A thread named in the room that has been quiet a while, or the one Record was
+    /// pressed into: what was said last time, while it is still being talked about.
+    func scanForThreads(_ text: String) {
+        let live = threads.live(library.recordings)
+        if let tid = recordingContext?.thread.flatMap({ threads.resolve($0)?.id }), let t = live.first(where: { $0.id == tid }) {
+            if liveThread?.id != t.id { liveThread = hint(t) }
+            return
+        }
+        guard liveThread == nil, !text.isEmpty else { return }
+        let said = " " + Self.normalised(text) + " "
+        let named = live.filter { t in
+            t.daysSinceLast >= 14 && t.record.aliases.contains { a in a.count >= 4 && said.contains(" " + Self.normalised(a) + " ") }
+        }
+        if let t = named.max(by: { $0.daysSinceLast < $1.daysSinceLast }) { liveThread = hint(t) }
+    }
+
+    private func hint(_ t: LiveThread) -> ThreadHint {
+        if let rc = t.recall(before: Date()) { return ThreadHint(id: t.id, name: t.name, last: rc.date, line: rc.line) }
+        return ThreadHint(id: t.id, name: t.name, last: t.last, line: t.plainStory)
+    }
+
+    /// Lowercase letters and digits with single spaces between words, so a phrase can be found in speech.
+    static func normalised(_ s: String) -> String {
+        String(s.lowercased().map { $0.isLetter || $0.isNumber ? $0 : " " }).split(separator: " ").joined(separator: " ")
+    }
+
+    /// A moment just read: the threads it starts, and every thread it is in, read on with it.
+    func readThreads(containing id: String) async {
+        let all = library.recordings
+        threads.discover(all)
+        for t in threads.live(all) where t.moments.contains(where: { $0.id == id }) {
+            await threads.catchUp(t)
+        }
+    }
+
     func confirmLive(_ item: NextItem) { liveConfirmed.insert(item.id); liveDismissed.remove(item.id) }
     func dismissLive(_ item: NextItem) { liveDismissed.insert(item.id); liveConfirmed.remove(item.id) }
 
     private func completeRecording(name: String, device d: DeviceConfig) async throws {
         liveReader?.cancel()
+        recordingContext = nil
+        liveThread = nil
         if !liveItems.isEmpty {
             liveCarry[name] = (liveItems.filter { liveConfirmed.contains($0.id) },
                                liveItems.filter { liveDismissed.contains($0.id) }.map { $0.text.lowercased() })
@@ -471,6 +526,10 @@ final class AppModel: ObservableObject {
         var r = try library.save(device: d.id, day: remote.day, name: name, audio: audio, seconds: remote.seconds, place: place,
                                  pocket: pocketID(d))
         r.meta.mode = name.hasPrefix("PH") ? "CALL" : link.status.mode
+        if let ctx = recordContexts.removeValue(forKey: name) {
+            r.meta.context = ctx
+            if let t = ctx.thread { threads.pin(r.id, to: t) }
+        }
         library.update(r)
         if let s = streamed, let t = s.transcript {
             r.meta.transcript = t
@@ -671,6 +730,8 @@ final class AppModel: ObservableObject {
         }
         r.meta.analysedAt = Date()
         library.update(r)
+        let read = r.id
+        threads.enqueue { [weak self] in await self?.readThreads(containing: read) }
         await placeNext(r)
     }
 
@@ -898,6 +959,7 @@ final class AppModel: ObservableObject {
     /// Every recording on this phone that was never transcribed, one at a time, quietly:
     /// nothing should need a tap to become a moment. Each is tried once per session.
     func transcribeWhatLanded() async {
+        threads.discover(library.recordings)
         await ServerStatus.shared.check()
         await respreadSamples()
         for r in library.recordings where r.meta.transcript == nil && !working.contains(r.id) && !sweptThisSession.contains(r.id) {
@@ -908,6 +970,15 @@ final class AppModel: ObservableObject {
         await rereadOutdated(library.recordings)
         syncAllPlaced()
         Briefs.schedule(library.recordings)
+        // Threads: new ones found, and the live ones with moments not yet read into them, read on.
+        threads.discover(library.recordings)
+        for t in threads.live(library.recordings).filter({ $0.isLive && !$0.unread.isEmpty }).sorted(by: { $0.weight > $1.weight }).prefix(6) {
+            let tid = t.id
+            threads.enqueue { [weak self] in
+                guard let self, let fresh = self.threads.live(self.library.recordings).first(where: { $0.id == tid }) else { return }
+                await self.threads.catchUp(fresh)
+            }
+        }
     }
 
     /// Everything under Recordings as one zip, for the share sheet: a copy to keep
@@ -939,6 +1010,7 @@ final class AppModel: ObservableObject {
             }
         }
         library.deleteAll()
+        threads.clear()
         conversations = [:]
         sweptThisSession = []
         UserDefaults.standard.removeObject(forKey: "briefings")

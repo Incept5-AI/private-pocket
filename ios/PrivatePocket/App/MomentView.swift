@@ -43,6 +43,7 @@ struct MomentView: View {
                                 newName = r.meta.speakerNames?[String(i)] ?? ""
                                 renamingSpeaker = i
                             })
+                            MomentThreads(recording: r)
                             stage(r)
                             if let brief = r.meta.insight?.brief, !brief.isEmpty {
                                 SectionTitle("Summary")
@@ -112,7 +113,11 @@ struct MomentView: View {
                 let url = r.audioURL
                 envelope = await Task.detached(priority: .utility) { Waveform.envelope(url: url) }.value
             }
-            .onDisappear { player.stop() }
+            .onAppear { model.pageContext = RecordContext(moment: r.id, momentTitle: r.displayTitle) }
+            .onDisappear {
+                player.stop()
+                if model.pageContext?.moment == r.id { model.pageContext = nil }
+            }
         } else {
             ContentUnavailableView("Moment deleted", systemImage: "trash")
         }

@@ -9,6 +9,7 @@ struct NowView: View {
     @EnvironmentObject var devices: DeviceStore
     @EnvironmentObject var link: PocketLink
     @EnvironmentObject var live: LiveSession
+    @EnvironmentObject var threads: ThreadStore
     @State private var path = NavigationPath()
     @State private var showPocket = false
     @State private var showSettings = false
@@ -78,6 +79,7 @@ struct NowView: View {
                 .toolbar(.hidden, for: .navigationBar)
                 .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
                 .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
+                .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
                 .sheet(isPresented: $showPocket) { PocketView() }
                 .fullScreenCover(item: $brief) { BriefView(brief: $0) }
                 .fullScreenCover(isPresented: $tableMode) { LiveView() }
@@ -173,6 +175,11 @@ struct NowView: View {
                 }
             }, dismiss: { Prefs.askedBriefs = true; withAnimation { briefsAsked = true } })
         }
+        let back = threads.live(all).filter(\.isBack).max { ($0.last ?? .distantPast) < ($1.last ?? .distantPast) }
+        if !recording, let t = back, let latest = t.moments.last, !hidden.contains("return|" + t.id + "|" + latest.id) {
+            ReturnBlock(thread: t) { path.append(ThreadLink(id: t.id)) }
+                .cardGestures(primary: "Open the thread", act: { path.append(ThreadLink(id: t.id)) }, dismiss: { hide("return|" + t.id + "|" + latest.id) })
+        }
         if let r = justRead(all), !hidden.contains("read|" + r.id) {
             NowBlock(tint: r.kind.isLife ? Brand.life : Brand.work, ink: r.kind.isLife ? Brand.onLife : Brand.onWork,
                      tag: "Just read · \(r.kind.label)", title: r.quote,
@@ -237,12 +244,15 @@ struct NowView: View {
                     Text("Saving…").font(.title2.weight(.bold))
                 }
                 Spacer()
-                Text("LIVE").font(.caption.weight(.bold)).tracking(1)
+                Text(model.recordingContext.map { $0.label.uppercased() } ?? "LIVE").font(.caption.weight(.bold)).tracking(1).lineLimit(1)
             }
             if !live.text.isEmpty {
                 Text(String(live.text.suffix(160))).font(.callout.weight(.medium)).lineLimit(3)
             } else {
                 Text(live.isActive ? "Listening…" : "Started before the phone connected; it's fetched when it stops.").font(.callout.weight(.medium))
+            }
+            if let h = model.liveThread {
+                ThreadHintBox(hint: h).onTapGesture { path.append(ThreadLink(id: h.id)) }
             }
             if !model.liveItems.isEmpty || !model.liveDecisions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -525,9 +535,10 @@ struct RecordAccessory: View {
     private var connected: Bool { link.connectedDeviceID != nil && link.connectedDeviceID == devices.selectedID }
 
     private var state: String {
-        if recording { return live.isActive ? "Streaming" : "On the card" }
+        if recording { return model.recordingContext?.label ?? (live.isActive ? "Streaming" : "On the card") }
         if !model.canCommand { return "Needs pairing" }
         if !connected { return "Away" }
+        if let c = model.pageContext { return c.label }
         if let b = link.status.battery { return "Ready · \(b)%" }
         return "Ready"
     }
@@ -610,6 +621,7 @@ struct LiveView: View {
                 } else {
                     Text(live.isActive ? "Listening…" : "Not streaming to this iPhone. It's read when it stops.").font(.title2.weight(.semibold))
                 }
+                if let h = model.liveThread { ThreadHintBox(hint: h, large: true) }
                 if !model.liveItems.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         ForEach(model.liveItems) { item in

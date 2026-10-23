@@ -92,6 +92,8 @@ struct RecordingMeta: Codable, Hashable {
     /// Sample moments (see `SampleMoments`): which one, and the kind it is meant to be read as.
     var sampleID: String?
     var expectedKind: String?
+    /// What Record was pressed into: a thread, a person, or a moment it follows on from.
+    var context: RecordContext?
 }
 
 enum PocketTime {
@@ -140,7 +142,9 @@ enum PocketTime {
 final class Library: ObservableObject {
     @Published private(set) var recordings: [Recording] = []
 
-    let root: URL = {
+    let root: URL = Library.rootURL
+
+    static let rootURL: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         var r = docs.appendingPathComponent("Recordings", isDirectory: true)
         try? FileManager.default.createDirectory(at: r, withIntermediateDirectories: true)

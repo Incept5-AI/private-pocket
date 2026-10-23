@@ -85,6 +85,7 @@ struct AskView: View {
             .navigationTitle("Ask the tape")
             .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
             .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
+            .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
         }
     }
 

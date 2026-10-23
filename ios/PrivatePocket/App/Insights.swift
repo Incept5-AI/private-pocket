@@ -156,6 +156,38 @@ struct Digest {
         "Venue", "Date", "Dates", "Time", "Location", "Agenda",
     ]
 
+    /// Capitalised words joined into phrases, from a moment's title, brief, key lines and decisions.
+    static func phrases(_ r: Recording, people: Set<String>) -> [String] {
+        guard let i = r.meta.insight else { return [] }
+        let sentences = [i.title ?? ""] + (i.brief ?? []).map(\.text) + (i.keyLines ?? []).map(\.text) + (i.decisions ?? [])
+        var out: [String] = []
+        var seen = Set<String>()
+        for s in sentences {
+            let words = s.split { !($0.isLetter || $0 == "'" || $0 == "-") }.map(String.init)
+            var k = 0
+            while k < words.count {
+                let w = words[k]
+                guard w.first?.isUppercase == true, w.count > 2, !stop.contains(w), !people.contains(w) else { k += 1; continue }
+                var phrase = w
+                var j = k + 1
+                while j < words.count, words[j].first?.isUppercase == true, !stop.contains(words[j]), !people.contains(words[j]) {
+                    phrase += " " + words[j]
+                    j += 1
+                }
+                if seen.insert(phrase).inserted { out.append(phrase) }
+                k = j
+            }
+        }
+        return out
+    }
+
+    /// The phrases, lowercased, each with the way it was first written.
+    static func terms(_ r: Recording, people: Set<String>) -> [String: String] {
+        var out: [String: String] = [:]
+        for p in phrases(r, people: people) where out[p.lowercased()] == nil { out[p.lowercased()] = p }
+        return out
+    }
+
     /// Capitalised terms, joined into phrases, that run through two or more moments.
     static func threads(_ moments: [Recording], people: Set<String>, limit: Int = 6) -> [Thread] {
         var byTerm: [String: [Recording]] = [:]
@@ -163,23 +195,7 @@ struct Digest {
         for r in moments {
             guard let i = r.meta.insight else { continue }
             let sentences = [i.title ?? ""] + (i.brief ?? []).map(\.text) + (i.keyLines ?? []).map(\.text) + (i.decisions ?? [])
-            var terms = Set<String>()
-            for s in sentences {
-                let words = s.split { !($0.isLetter || $0 == "'" || $0 == "-") }.map(String.init)
-                var k = 0
-                while k < words.count {
-                    let w = words[k]
-                    guard w.first?.isUppercase == true, w.count > 2, !stop.contains(w), !people.contains(w) else { k += 1; continue }
-                    var phrase = w
-                    var j = k + 1
-                    while j < words.count, words[j].first?.isUppercase == true, !stop.contains(words[j]), !people.contains(words[j]) {
-                        phrase += " " + words[j]
-                        j += 1
-                    }
-                    terms.insert(phrase)
-                    k = j
-                }
-            }
+            let terms = Set(phrases(r, people: people))
             for t in terms {
                 byTerm[t, default: []].append(r)
                 if let d = r.startedAt, (latest[t]?.0 ?? .distantPast) < d,
@@ -203,7 +219,7 @@ struct Digest {
                 map[name]?.youOwe += items.filter { $0.isAction && !$0.isDone && $0.text.localizedCaseInsensitiveContains(name) }.count
             }
             for item in items where item.isPromise {
-                if let who = item.who { map[who, default: Person(name: who)].waitingOn.append(item) }
+                if let raw = item.who, let who = PeopleNames.canonical(raw) { map[who, default: Person(name: who)].waitingOn.append(item) }
             }
         }
         return map.values.sorted { ($0.moments.count, $0.name) > ($1.moments.count, $1.name) }.prefix(limit).map { $0 }
@@ -211,7 +227,11 @@ struct Digest {
 
     /// What the model reads to write the briefing: one block per moment, from the readings.
     var text: String {
-        moments.reversed().map { r in
+        moments.reversed().map { Digest.reading($0) }.joined(separator: "\n\n")
+    }
+
+    /// One moment as a model reads it, in a digest or a thread: when, what, who, and what came of it.
+    static func reading(_ r: Recording) -> String {
             let i = r.meta.insight
             var lines = ["— \(r.startedAt?.formatted(date: .abbreviated, time: .shortened) ?? r.day) · \(r.kind.label) · \(r.displayTitle)"
                          + (r.people.isEmpty ? "" : " · with \(r.people.joined(separator: ", "))")]
@@ -227,7 +247,6 @@ struct Digest {
             if let q = i?.questions, !q.isEmpty { lines.append("Open questions: " + q.joined(separator: "; ")) }
             if let f = i?.figures, !f.isEmpty { lines.append("Figures: " + f.joined(separator: "; ")) }
             return lines.joined(separator: "\n")
-        }.joined(separator: "\n\n")
     }
 }
 
