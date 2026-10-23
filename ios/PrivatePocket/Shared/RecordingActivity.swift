@@ -26,6 +26,8 @@ struct RecordingAttributes: ActivityAttributes {
         var savedSeconds: Int?
         var battery: Int?
         var hoursFree: String?
+        /// Once the saved moment is read: its kind and first sentence.
+        var read: String?
 
         var isRecording: Bool { phase == .recording }
 
@@ -59,7 +61,7 @@ struct RecordingAttributes: ActivityAttributes {
                 if gap { return "Stream interrupted. The Pocket keeps recording." }
                 return line.isEmpty ? "Streaming to this iPhone" : line
             case .saved:
-                return savedSeconds.map { "Saved on this iPhone · \(PocketFacts.length($0))" } ?? "Saved on this iPhone"
+                return read ?? savedSeconds.map { "Saved on this iPhone · \(PocketFacts.length($0))" } ?? "Saved on this iPhone"
             case .stopped:
                 return "Stopped. It is fetched when the phone connects."
             }

@@ -313,6 +313,7 @@ final class AppModel: ObservableObject {
     private func endActivity(name: String) {
         activityTicker?.cancel()
         activityTicker = nil
+        activity.lastSavedName = name
         activity.showStopped(savedSeconds: library.recordings.first { $0.name == name }?.meta.seconds,
                              keepPresence: Prefs.islandPresence && connectedDevice != nil)
     }
@@ -522,6 +523,11 @@ final class AppModel: ObservableObject {
         working.insert(r.id)
         defer { working.remove(r.id) }
         var r = r
+        defer {   // the Lock Screen gets the first sentence, if this is the moment it just showed as Saved
+            if activity.lastSavedName == r.name, let first = r.meta.insight?.brief?.first?.text, r.meta.insight?.readByModel == true {
+                activity.showRead("\(r.kind.label) · \(first)")
+            }
+        }
         if LLM.availability == nil {
             do {
                 r.meta.insight = try await Analyst.analyse(r, config: LLM.config)

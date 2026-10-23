@@ -69,6 +69,7 @@ final class RecordingActivity {
         s.savedSeconds = savedSeconds
         s.startedAt = nil
         s.line = ""
+        s.read = nil
         update(s)
         revert?.cancel()
         revert = Task { [weak self] in
@@ -77,6 +78,29 @@ final class RecordingActivity {
             if keepPresence, var r = self.current, !r.isRecording {
                 r.phase = .ready
                 r.savedSeconds = nil
+                self.update(r)
+            } else {
+                self.end()
+            }
+        }
+    }
+
+    /// The recording the last Saved was about, so its reading can follow it there.
+    var lastSavedName: String?
+
+    /// Once the saved moment is read: its kind and first sentence, where the person is.
+    func showRead(_ text: String) {
+        guard var s = current, s.phase == .saved else { return }
+        s.read = text
+        update(s)
+        revert?.cancel()
+        revert = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard let self, !Task.isCancelled, var r = self.current, !r.isRecording else { return }
+            if Prefs.islandPresence {
+                r.phase = .ready
+                r.savedSeconds = nil
+                r.read = nil
                 self.update(r)
             } else {
                 self.end()
