@@ -155,20 +155,23 @@ struct NowView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("BRIEFS BEFORE MEETINGS").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
                 Text("Ten minutes before a meeting with someone you've recorded, see what's open between you.").font(.callout.weight(.semibold)).foregroundStyle(Brand.onPaper)
-                HStack(spacing: 10) {
-                    Button {
-                        Task {
-                            if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all) }
-                            Prefs.askedBriefs = true; briefsAsked = true
-                        }
-                    } label: { Text("Allow Calendar").font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8).background(Brand.onPaper, in: Capsule()).foregroundStyle(Brand.paper) }
-                    .buttonStyle(.plain)
-                    Button("Not now") { Prefs.askedBriefs = true; briefsAsked = true }.font(.subheadline.weight(.bold)).foregroundStyle(Brand.onPaper).buttonStyle(.plain)
-                }
+                Text("Tap to allow Calendar · swipe away for not now").font(.footnote.weight(.bold)).foregroundStyle(Brand.onPaper.opacity(0.7))
             }
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .cardGestures(primary: nil, act: nil, dismiss: { Prefs.askedBriefs = true; withAnimation { briefsAsked = true } })
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .onTapGesture {
+                Task {
+                    if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all) }
+                    Prefs.askedBriefs = true; briefsAsked = true
+                }
+            }
+            .cardGestures(primary: "Allow Calendar", act: {
+                Task {
+                    if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all) }
+                    Prefs.askedBriefs = true; briefsAsked = true
+                }
+            }, dismiss: { Prefs.askedBriefs = true; withAnimation { briefsAsked = true } })
         }
         if let r = justRead(all), !hidden.contains("read|" + r.id) {
             NowBlock(tint: r.kind.isLife ? Brand.life : Brand.work, ink: r.kind.isLife ? Brand.onLife : Brand.onWork,
@@ -182,28 +185,23 @@ struct NowView: View {
                 Text("YESTERDAY, SET · \(y.moments.count) CONVERSATION\(y.moments.count == 1 ? "" : "S")").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
                 Text(y.headline).font(.title3.weight(.bold)).foregroundStyle(Brand.onPaper).fixedSize(horizontal: false, vertical: true)
                 Text(y.line).font(.subheadline).foregroundStyle(Brand.onPaper.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 10) {
-                    if !lines.isEmpty {
-                        Button {
-                            if replay.playing { replay.stop() } else { replay.play(lines) }
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: replay.playing ? "stop.fill" : "play.fill").foregroundStyle(Brand.record)
-                                Text(replay.playing ? "Stop · \(replay.index + 1) of \(lines.count)" : "Listen back · \(lines.count) lines, \(max(1, lines.count * 8 / 60)) min")
-                            }
-                            .font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(Brand.onPaper, in: Capsule()).foregroundStyle(Brand.paper)
-                        }
-                        .buttonStyle(.plain)
+                if !lines.isEmpty {
+                    HStack(spacing: 8) {
+                        Image(systemName: replay.playing ? "stop.fill" : "play.fill").foregroundStyle(Brand.record)
+                        Text(replay.playing ? "Playing \(replay.index + 1) of \(lines.count) · tap to stop" : "Listen back · \(lines.count) lines, \(max(1, lines.count * 8 / 60)) min · tap to play")
+                            .font(.footnote.weight(.bold)).foregroundStyle(Brand.onPaper.opacity(0.8))
                     }
-                    Button("Yesterday's tape") { path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id))) }
-                        .font(.subheadline.weight(.bold)).foregroundStyle(Brand.onPaper).buttonStyle(.plain)
+                    .padding(.top, 2)
                 }
-                .padding(.top, 2)
                 if let c = replay.current { Text("“\(c.text)”").font(.footnote.weight(.medium)).foregroundStyle(Brand.onPaper.opacity(0.8)).lineLimit(2) }
             }
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .onTapGesture {
+                if lines.isEmpty { path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id))) }
+                else if replay.playing { replay.stop() } else { replay.play(lines) }
+            }
             .cardGestures(primary: lines.isEmpty ? "Yesterday's tape" : "Listen back",
                           act: { if lines.isEmpty { path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id))) } else if !replay.playing { replay.play(lines) } },
                           dismiss: { replay.stop(); hide("yesterday|" + today) })
@@ -270,25 +268,14 @@ struct NowView: View {
                 }
                 .padding(.top, 4)
             }
-            HStack(spacing: 10) {
-                if model.canCommand, recording {
-                    Button { Task { await model.toggleRecording() } } label: {
-                        Text("Stop").font(.subheadline.weight(.bold)).padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(Brand.onRecord, in: Capsule()).foregroundStyle(Brand.record)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Button { tableMode = true } label: {
-                    Text("Table mode").font(.subheadline.weight(.bold)).padding(.horizontal, 16).padding(.vertical, 8)
-                        .background(Brand.onRecord.opacity(0.15), in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
+            Text("Tap for the table · stop from the bar below").font(.footnote.weight(.bold)).opacity(0.7)
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Brand.record, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .foregroundStyle(Brand.onRecord)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onTapGesture { tableMode = true }
     }
 
     private func justRead(_ all: [Recording]) -> Recording? {
@@ -452,17 +439,13 @@ struct NowBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(tag.uppercased()).font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(ink.opacity(0.75))
+            HStack(alignment: .firstTextBaseline) {
+                Text(tag.uppercased()).font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(ink.opacity(0.75))
+                Spacer(minLength: 8)
+                if action != nil { Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(ink.opacity(0.6)) }
+            }
             Text(title).font(.title3.weight(.bold)).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
             Text(line).font(.subheadline).lineSpacing(2).foregroundStyle(ink.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
-            if let action {
-                Button(action: run) {
-                    Text(action).font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8)
-                        .background(ink, in: Capsule()).foregroundStyle(tint)
-                }
-                .buttonStyle(.plain)
-                .padding(.top, 2)
-            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -480,7 +463,11 @@ struct NeedsBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("NEEDS YOU · \(needs.count)").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.onAct.opacity(0.75))
+            HStack(alignment: .firstTextBaseline) {
+                Text("NEEDS YOU · \(needs.count)").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.onAct.opacity(0.75))
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(Brand.onAct.opacity(0.6))
+            }
             ForEach(needs.prefix(3)) { n in
                 Button { open(n.recording.id) } label: {
                     HStack(alignment: .top, spacing: 10) {
@@ -506,25 +493,22 @@ struct FindingBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("NOTICED · \(finding.tag.uppercased())").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.onNotice.opacity(0.75))
-            Text(finding.text).font(.title3.weight(.bold)).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                if let c = finding.choices.first {
-                    Button { perform(c.action) } label: {
-                        Text(c.label).font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8)
-                            .background(Brand.onNotice, in: Capsule()).foregroundStyle(Brand.notice)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer()
-                Button("Not right", action: notRight).font(.footnote.weight(.bold)).buttonStyle(.plain).opacity(0.75)
+            HStack(alignment: .firstTextBaseline) {
+                Text("NOTICED · \(finding.tag.uppercased())").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.onNotice.opacity(0.75))
+                Spacer(minLength: 8)
+                if finding.choices.first != nil { Image(systemName: "chevron.right").font(.caption.weight(.bold)).foregroundStyle(Brand.onNotice.opacity(0.6)) }
             }
-            .padding(.top, 2)
+            Text(finding.text).font(.title3.weight(.bold)).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
+            if let c = finding.choices.first {
+                Text(c.label).font(.footnote.weight(.bold)).foregroundStyle(Brand.onNotice.opacity(0.7))
+            }
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Brand.notice, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .foregroundStyle(Brand.onNotice)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onTapGesture { if let c = finding.choices.first { perform(c.action) } }
     }
 }
 
