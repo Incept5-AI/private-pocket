@@ -10,6 +10,7 @@ struct YouView: View {
     @State private var dismissed: Set<String> = Prefs.dismissedFindings
     @State private var path = NavigationPath()
     @State private var toast: String?
+    @State private var showSettings = false
 
     var body: some View {
         let all = library.recordings
@@ -26,10 +27,19 @@ struct YouView: View {
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text("You").font(.largeTitle.weight(.bold)).tracking(-0.5)
+                    HStack(alignment: .center) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("This month, from \(m.moments.count) conversation\(m.moments.count == 1 ? "" : "s")")
+                                .font(.footnote.weight(.semibold)).foregroundStyle(Brand.muted)
+                            Text("You").font(.largeTitle.weight(.bold)).tracking(-0.5)
+                        }
                         Spacer()
-                        Text("this month, from \(m.moments.count) conversation\(m.moments.count == 1 ? "" : "s")").font(.caption.weight(.semibold)).foregroundStyle(Brand.muted)
+                        Button { showSettings = true } label: {
+                            Image(systemName: "gearshape").font(.body.weight(.semibold)).foregroundStyle(Brand.textSecondary)
+                                .frame(width: 36, height: 36).background(Brand.surface, in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Settings")
                     }
                     .padding(.top, 8)
                     mirror(m, all: all)
@@ -54,6 +64,7 @@ struct YouView: View {
             .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
             .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
             .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
+            .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
         }
     }
 
