@@ -598,17 +598,25 @@ enum Planner {
 
     /// An older reminder or event made before links existed gets its link now.
     static func ensureLink(_ id: String, _ url: URL?) {
-        guard let url, let c = store.calendarItem(withIdentifier: id), c.url == nil else { return }
+        guard let url else { return }
+        guard let c = store.calendarItem(withIdentifier: id) else { DiskLog.append("link: item \(id.prefix(8)) not found"); return }
+        guard c.url == nil else { return }
         c.url = url
-        if let e = c as? EKEvent { try? store.save(e, span: .thisEvent, commit: true) }
-        else if let r = c as? EKReminder { try? store.save(r, commit: true) }
+        if let n = c.notes, !n.contains("privatepocket://") { c.notes = n + "\nOpen in Private Pocket: " + url.absoluteString }
+        do {
+            if let e = c as? EKEvent { try store.save(e, span: .thisEvent, commit: true) }
+            else if let r = c as? EKReminder { try store.save(r, commit: true) }
+            DiskLog.append("link: set on \(id.prefix(8)), read back \(store.calendarItem(withIdentifier: id)?.url?.absoluteString ?? "nil")")
+        } catch {
+            DiskLog.append("link: save failed for \(id.prefix(8)): \(error.localizedDescription)")
+        }
     }
 
     static func addReminder(_ title: String, due: Date?, note: String, link: URL? = nil) async throws -> String {
         guard try await store.requestFullAccessToReminders() else { throw PlannerError.denied("Reminders") }
         let item = EKReminder(eventStore: store)
         item.title = title
-        item.notes = note
+        item.notes = link.map { note + "\nOpen in Private Pocket: " + $0.absoluteString } ?? note
         item.url = link
         item.calendar = try pocketList()
         if let due {
@@ -616,6 +624,7 @@ enum Planner {
             item.addAlarm(EKAlarm(absoluteDate: due))
         }
         try store.save(item, commit: true)
+        DiskLog.append("reminder saved: url \(store.calendarItem(withIdentifier: item.calendarItemIdentifier)?.url?.absoluteString ?? "nil")")
         return item.calendarItemIdentifier
     }
 
@@ -669,7 +678,7 @@ enum Planner {
         event.startDate = date
         event.endDate = date.addingTimeInterval(duration ?? 3600)
         event.location = location
-        event.notes = note
+        event.notes = link.map { note + "\nOpen in Private Pocket: " + $0.absoluteString } ?? note
         event.url = link
         event.calendar = store.defaultCalendarForNewEvents
         try store.save(event, span: .thisEvent, commit: true)

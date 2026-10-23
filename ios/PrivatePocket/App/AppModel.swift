@@ -735,6 +735,10 @@ final class AppModel: ObservableObject {
         }
         // Moments read by an older reader are read again, so Insights has what the new one finds.
         await rereadOutdated(library.recordings)
+        // Reminders and events made before links existed get theirs; ticks made in Reminders are read back.
+        for r in library.recordings where r.meta.insight?.next?.contains(where: { $0.reminderID != nil || $0.eventID != nil }) == true {
+            refreshDone(r)
+        }
     }
 
     /// Everything under Recordings as one zip, for the share sheet: a copy to keep
