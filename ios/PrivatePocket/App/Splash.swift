@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// On start, a short scene: the house lights go down, the Pocket waits in the dark at the
-/// centre of the screen, and a low raking light crosses it slowly. The light lifts the
+/// On start, a short scene seen first through a keyhole cut in an amber plate: the keyhole
+/// opens, the dark scene shows through it, then it rushes outward past the edges of the
+/// screen. The Pocket waits in the dark at the centre, and a low raking light crosses it
+/// slowly. The light lifts the
 /// darkness only where it falls, catches the card's edge, throws a long soft shadow the
 /// other way, and the card's own light blooms on as the sweep passes it, with a slow push
 /// in on the card. Then the name, and the app. A tap skips it; with Reduce Motion it is
@@ -22,21 +24,23 @@ struct SplashView: View {
 
     private func play() async {
         if reduceMotion {
-            scene = .init(light: 0, dim: true, shown: true, push: true, lit: true, bloom: true, named: true)
+            scene = .init(light: 0, dim: true, shown: true, push: true, lit: true, bloom: true, named: true, keyhole: 2, plate: false)
             try? await Task.sleep(for: .seconds(1.0))
             finish()
             return
         }
-        withAnimation(.easeInOut(duration: 0.55)) { scene.dim = true }
-        withAnimation(.easeOut(duration: 0.8).delay(0.15)) { scene.shown = true }
-        withAnimation(.easeOut(duration: 2.6)) { scene.push = true }
-        withAnimation(.easeInOut(duration: 1.8).delay(0.3)) { scene.light = 1.6 }
-        try? await Task.sleep(for: .seconds(0.95))   // the sweep reaches the card's light, top left
+        withAnimation(.spring(duration: 0.5, bounce: 0.25).delay(0.05)) { scene.keyhole = 1 }   // the keyhole opens
+        withAnimation(.easeOut(duration: 2.8)) { scene.push = true }
+        withAnimation(.easeInOut(duration: 2.0).delay(0.3)) { scene.light = 1.6 }
+        try? await Task.sleep(for: .seconds(0.75))
+        withAnimation(.timingCurve(0.65, 0, 0.9, 0.35, duration: 1.05)) { scene.keyhole = 2 }   // and rushes past the edges
+        try? await Task.sleep(for: .seconds(0.4))   // the sweep reaches the card's light, top left
         scene.lit = true
         withAnimation(.easeOut(duration: 1.1)) { scene.bloom = true }
-        try? await Task.sleep(for: .seconds(0.4))
+        try? await Task.sleep(for: .seconds(0.7))
+        scene.plate = false
         withAnimation(.easeOut(duration: 0.8)) { scene.named = true }
-        try? await Task.sleep(for: .seconds(1.05))
+        try? await Task.sleep(for: .seconds(1.0))
         finish()
     }
 
@@ -51,13 +55,30 @@ struct SplashView: View {
 struct SplashScene: View {
     struct State {
         /// Where the light is across the card: −1 is its left edge, 1 its right.
-        var light: CGFloat = -1.6
-        var dim = false
-        var shown = false
-        var push = false
-        var lit = false
-        var bloom = false
-        var named = false
+        var light: CGFloat
+        var dim: Bool
+        var shown: Bool
+        var push: Bool
+        var lit: Bool
+        var bloom: Bool
+        var named: Bool
+        /// The keyhole in the amber plate: 0 shut, 1 a small window, 2 past the edges of the screen.
+        var keyhole: CGFloat
+        /// The plate is still there (dropped once the keyhole has passed the edges).
+        var plate: Bool
+
+        init(light: CGFloat = -1.6, dim: Bool = true, shown: Bool = true, push: Bool = false, lit: Bool = false,
+             bloom: Bool = false, named: Bool = false, keyhole: CGFloat = 0, plate: Bool = true) {
+            self.light = light
+            self.dim = dim
+            self.shown = shown
+            self.push = push
+            self.lit = lit
+            self.bloom = bloom
+            self.named = named
+            self.keyhole = keyhole
+            self.plate = plate
+        }
     }
 
     let state: State
@@ -100,6 +121,14 @@ struct SplashScene: View {
                 RadialGradient(colors: [.clear, .black.opacity(0.7)], center: .center,
                                startRadius: min(w, h) * 0.22, endRadius: max(w, h) * 0.72)
                     .allowsHitTesting(false)
+                // The amber plate with the keyhole cut in it, and the keyhole's edge.
+                if state.plate {
+                    let small = min(w, h) * 0.42, large = max(w, h) * 5.4
+                    KeyholePlate(progress: state.keyhole, small: small, large: large)
+                        .fill(Brand.record, style: FillStyle(eoFill: true))
+                    KeyholeEdge(progress: state.keyhole, small: small, large: large)
+                        .stroke(Color(hex: 0xB9821B), lineWidth: 2.5)
+                }
             }
             .frame(width: w, height: h)
         }
@@ -187,3 +216,67 @@ struct CinemaCard: View {
         .allowsHitTesting(false)
     }
 }
+
+/// A keyhole as one outline: a circle, and a slot below it widening to the foot.
+enum Keyhole {
+    static func path(center c: CGPoint, height: CGFloat) -> Path {
+        let r = height / 3.3
+        let cy = c.y - height / 2 + r
+        let a = r * 0.42, b = r * 0.7
+        let d = (r * r - a * a).squareRoot()
+        let start = atan2(d, -a)                  // the left join, below the circle's centre
+        let end = atan2(d, a) + 2 * .pi           // the right join, the long way round over the top
+        var p = Path()
+        let steps = 96
+        for i in 0...steps {
+            let t = start + (end - start) * CGFloat(i) / CGFloat(steps)
+            let pt = CGPoint(x: c.x + r * cos(t), y: cy + r * sin(t))
+            if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
+        }
+        let foot = c.y + height / 2
+        p.addLine(to: CGPoint(x: c.x + b, y: foot))
+        p.addLine(to: CGPoint(x: c.x - b, y: foot))
+        p.closeSubpath()
+        return p
+    }
+
+    /// 0 shut, 1 the small window, 2 the large one, past the screen's edges.
+    static func height(_ progress: CGFloat, small: CGFloat, large: CGFloat) -> CGFloat {
+        progress <= 1 ? max(0, progress) * small : small + (progress - 1) * (large - small)
+    }
+}
+
+/// The plate: the whole screen with the keyhole cut out, filled even-odd.
+struct KeyholePlate: Shape {
+    var progress: CGFloat
+    let small: CGFloat
+    let large: CGFloat
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        var p = Path(rect)
+        let h = Keyhole.height(progress, small: small, large: large)
+        if h > 0.5 { p.addPath(Keyhole.path(center: CGPoint(x: rect.midX, y: rect.midY), height: h)) }
+        return p
+    }
+}
+
+/// The keyhole's edge, a darker amber, as if cut through the plate.
+struct KeyholeEdge: Shape {
+    var progress: CGFloat
+    let small: CGFloat
+    let large: CGFloat
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let h = Keyhole.height(progress, small: small, large: large)
+        return h > 0.5 ? Keyhole.path(center: CGPoint(x: rect.midX, y: rect.midY), height: h) : Path()
+    }
+}
+
