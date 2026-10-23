@@ -4,6 +4,7 @@ struct RootView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var link: PocketLink
     @EnvironmentObject var live: LiveSession
+    @EnvironmentObject var library: Library
     @Environment(\.scenePhase) private var scenePhase
     @State private var walkthrough = !Prefs.walkthroughSeen
 
@@ -20,6 +21,7 @@ struct RootView: View {
         .tabViewBottomAccessory(isEnabled: recording || live.isActive) { NowRecordingBar() }
         .sensoryFeedback(trigger: recording) { _, now in now ? .start : .stop }
         .sensoryFeedback(.success, trigger: model.canCommand) { was, now in !was && now }
+        .sensoryFeedback(.impact(weight: .light), trigger: library.recordings.count) { was, now in now > was }   // a moment landed
         .overlay(alignment: .top) {
             NoticeBar(text: model.aiError) { model.aiError = nil }
                 .animation(.easeInOut(duration: 0.25), value: model.aiError)
