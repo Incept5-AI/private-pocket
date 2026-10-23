@@ -24,6 +24,8 @@ struct PocketIllustration: View {
     var buttonPressed = false
     /// The side switch: down is call, the contact mic.
     var switchDown = false
+    /// Its own drop shadow; off where the shadow is cast by a moving light instead (the splash).
+    var castsShadow = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = false
 
@@ -39,7 +41,7 @@ struct PocketIllustration: View {
                             .fill(LinearGradient(colors: [.white.opacity(0.22), .clear], startPoint: .topLeading, endPoint: UnitPoint(x: 0.5, y: 0.65)))
                     )
                     .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.white.opacity(0.28), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.6), radius: w * 0.16, y: w * 0.12)
+                    .shadow(color: .black.opacity(castsShadow ? 0.6 : 0), radius: w * 0.16, y: w * 0.12)
                 // The light.
                 Circle()
                     .fill(light ?? Color.white.opacity(0.12))

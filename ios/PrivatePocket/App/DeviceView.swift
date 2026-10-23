@@ -8,7 +8,9 @@ struct RootView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var devices: DeviceStore
     @Environment(\.scenePhase) private var scenePhase
-    @State private var walkthrough = !Prefs.walkthroughSeen
+    /// The walkthrough waits for the splash on first launch.
+    @State private var walkthrough = false
+    @State private var splash = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab = 0
 
@@ -50,6 +52,16 @@ struct RootView: View {
                 RecordingTakeover { withAnimation(.spring(duration: 0.5)) { model.takeover = false } }
                     .transition(reduceMotion ? .opacity : .islandReveal)
             }
+        }
+        // On start, the splash above everything; the walkthrough follows it the first time.
+        .overlay {
+            if splash {
+                SplashView { withAnimation(.easeOut(duration: 0.45)) { splash = false } }
+                    .transition(.opacity.combined(with: .scale(scale: 1.04)))
+            }
+        }
+        .onChange(of: splash) { _, showing in
+            if !showing, !Prefs.walkthroughSeen { walkthrough = true }
         }
         .onChange(of: recording, initial: true) { _, now in
             if now { withAnimation(.spring(duration: 0.7)) { model.takeover = true } }

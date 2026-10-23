@@ -44,7 +44,6 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: NO
         TARGETED_DEVICE_FAMILY: "1"
         INFOPLIST_KEY_CFBundleDisplayName: Private Pocket
-        INFOPLIST_KEY_UILaunchScreen_Generation: true
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Connects to your Pocket to record, and to fetch what it recorded while the phone was away."
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Tags each moment with where it was made. Stays on this phone."
@@ -55,6 +54,9 @@ targets:
       path: App/Info.plist
       properties:
         UIBackgroundModes: [bluetooth-central, audio]
+        # The launch screen is the ink ground, so the splash follows it without a flash.
+        UILaunchScreen:
+          UIColorName: LaunchBackground
         # The brand is dark: a graphite ground, cyan for anything you can tap, amber for recording.
         UIUserInterfaceStyle: Dark
         # Dynamic Island and Lock Screen while the Pocket records (PrivatePocketWidgets).
