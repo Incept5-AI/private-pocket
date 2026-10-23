@@ -467,6 +467,7 @@ struct NextRow: View {
     let recording: Recording
     let item: NextItem
     let open: () -> Void
+    @State private var clip: Clip.File?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -487,12 +488,33 @@ struct NextRow: View {
             trailing
         }
         .padding(.vertical, 11)
+        .contextMenu {
+            if let at = item.at {
+                Button { open() } label: { Label("Hear the words", systemImage: "play.fill") }
+                Button { shareClip(at) } label: { Label("Share the clip", systemImage: "square.and.arrow.up") }
+            }
+            if item.isAction {
+                Button { model.setDone(recording, item: item, done: !item.isDone) } label: { Label(item.isDone ? "Not done" : "Done", systemImage: "checkmark.circle") }
+            }
+            Button { open() } label: { Label("Edit", systemImage: "pencil") }
+            Button(role: .destructive) { model.dismiss(recording, item: item) } label: { Label("Not mine", systemImage: "xmark") }
+        }
+        .sheet(item: $clip) { ShareSheet(items: [$0.url]) }
         // Done is unmistakable: the filled check, the row tinted green, when it was done, and a Done pill.
         .padding(.horizontal, 10)
         .background(item.isDone ? Brand.good.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal, -10)
         .animation(.easeInOut(duration: 0.25), value: item.isDone)
         .sensoryFeedback(.success, trigger: item.isDone) { _, now in now }
+    }
+
+    private func shareClip(_ at: Double) {
+        let r = recording
+        let text = item.quote ?? item.text
+        Task {
+            if let f = try? await Clip.export(r, from: max(0, at - 1), to: at + 9, words: text) { clip = f }
+            else { model.aiError = "The clip couldn't be made from this recording." }
+        }
     }
 
     private var doneText: String {
@@ -665,12 +687,16 @@ enum Waveform {
 
 /// The transcript, inline: a few turns, or all of them; follows the audio while playing.
 struct TranscriptSection: View {
+    @EnvironmentObject var model: AppModel
     let recording: Recording
     let blocks: [TranscriptBlock]
     let current: Int?
     @ObservedObject var player: Player
     @Binding var showAll: Bool
     let renameSpeaker: (Int) -> Void
+
+    @State private var clip: Clip.File?
+    @State private var clipping = false
 
     var body: some View {
         let r = recording
@@ -688,13 +714,45 @@ struct TranscriptSection: View {
             ForEach(showAll ? blocks : Array(blocks.prefix(3))) { b in
                 TranscriptBlockRow(block: b, names: r.meta.speakerNames, position: b.id == current ? player.position : nil, onRename: renameSpeaker)
                     .id(b.id)
+                    .contextMenu { lineMenu(b, in: r) }
                     .padding(.horizontal, 8)
                     .background(b.id == current && player.playing ? Brand.record.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .onTapGesture { player.play(from: b.start) }
             }
-            Text(blocks.count > 3 && !showAll ? "Tap a line to play from there. Play, and the rest follows." : "Tap a line to play from there.")
+            Text(blocks.count > 3 && !showAll ? "Tap a line to play from there. Hold one for more." : "Tap a line to play from there. Hold one for more.")
                 .font(.caption).foregroundStyle(Brand.dim).padding(.top, 6)
+                .sheet(item: $clip) { ShareSheet(items: [$0.url]) }
         }
+    }
+
+    @ViewBuilder private func lineMenu(_ b: TranscriptBlock, in r: Recording) -> some View {
+        Button { player.play(from: b.start) } label: { Label("Hear it", systemImage: "play.fill") }
+        Button { shareClip(b) } label: { Label("Share the clip", systemImage: "square.and.arrow.up") }
+        Button { UIPasteboard.general.string = b.text } label: { Label("Copy the words", systemImage: "doc.on.doc") }
+        Button { model.addItem(r, text: Self.sentence(b.text), at: b.start, quote: String(b.text.prefix(80))) } label: { Label("Make it a to-do", systemImage: "checkmark.circle") }
+    }
+
+    /// The block's own span: to the next block, or a sentence's worth, capped by the audio.
+    private func shareClip(_ b: TranscriptBlock) {
+        guard !clipping else { return }
+        let next = blocks.first { $0.start > b.start }?.start
+        let end = min(next ?? (b.words.last?.end ?? b.start + 12), player.duration > 0 ? player.duration : .infinity)
+        clipping = true
+        let r = recording
+        Task {
+            defer { clipping = false }
+            if let f = try? await Clip.export(r, from: b.start, to: max(end, b.start + 2), words: Self.sentence(b.text)) { clip = f }
+            else { model.aiError = "The clip couldn't be made from this recording." }
+        }
+    }
+
+    /// The first sentence of a line, for a to-do or a clip's title.
+    static func sentence(_ text: String) -> String {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let r = t.range(of: #"[.!?]"#, options: .regularExpression), t.distance(from: t.startIndex, to: r.lowerBound) >= 12 {
+            return String(t[..<r.upperBound])
+        }
+        return String(t.prefix(90))
     }
 }
 
@@ -769,6 +827,7 @@ struct BehindSheet: View {
     @Environment(\.openURL) private var openURL
     @State private var editing = false
     @State private var newText = ""
+    @State private var clip: Clip.File?
     let id: String
     let behind: Behind
     @ObservedObject var player: Player
@@ -804,6 +863,20 @@ struct BehindSheet: View {
                     }
                 } else {
                     Text("The words behind this weren't found in the transcript.").font(.subheadline).foregroundStyle(Brand.muted)
+                }
+                if let r = recording, let at, let block {
+                    Button {
+                        let text = behind.item?.quote ?? behind.sentence?.text ?? block.text
+                        Task {
+                            if let f = try? await Clip.export(r, from: block.start, to: block.start + 10, words: String(text.prefix(90))) { clip = f }
+                            else { model.aiError = "The clip couldn't be made from this recording." }
+                        }
+                    } label: {
+                        Label("Share the clip", systemImage: "square.and.arrow.up").font(.subheadline.weight(.semibold))
+                    }
+                    .buttonStyle(.glass)
+                    .padding(.top, 2)
+                    let _ = at
                 }
                 if let item {
                     VStack(spacing: 10) {
@@ -846,6 +919,7 @@ struct BehindSheet: View {
             }
             .padding(.horizontal, 24).padding(.top, 10)
             .presentationBackground(Brand.surface)
+            .sheet(item: $clip) { ShareSheet(items: [$0.url]) }
             .alert("Change the wording", isPresented: $editing) {
                 TextField("To do", text: $newText)
                 Button("Save") { if let r = recording, let item { model.editItem(r, item: item, text: newText) } }

@@ -643,6 +643,18 @@ final class AppModel: ObservableObject {
         change(r, item) { $0.done = done; $0.doneAt = done ? Date() : nil }
     }
 
+    /// A line of the transcript made into a to-do by hand, anchored to where it was said.
+    func addItem(_ r: Recording, text: String, at: Double?, quote: String?) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, var r = library.recordings.first(where: { $0.id == r.id }) else { return }
+        var i = r.meta.insight ?? Analyst.heuristic(r)
+        var items = i.items
+        items.append(NextItem(kind: "action", text: t, at: at, quote: quote, sure: true))
+        i.next = items
+        r.meta.insight = i
+        library.update(r)
+    }
+
     /// A corrected wording, here and in Reminders if it is there already.
     func editItem(_ r: Recording, item: NextItem, text: String) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
