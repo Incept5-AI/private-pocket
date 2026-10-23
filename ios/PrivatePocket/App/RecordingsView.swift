@@ -12,6 +12,8 @@ struct RecordingsView: View {
     /// The list is moving, or stopped less than a moment ago: the handle shows.
     @State private var scrolling = false
     @State private var hideHandle: Task<Void, Never>?
+    /// A swiped moment, waiting for the word.
+    @State private var toDelete: Recording?
 
     /// Pockets that have recordings here, with their names.
     private var pockets: [(id: UUID, name: String)] {
@@ -85,7 +87,7 @@ struct RecordingsView: View {
                                 .listRowSeparator(.hidden)
                                 .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
                         }
-                        .onDelete { idx in idx.map { items[$0] }.forEach(library.delete) }
+                        .onDelete { idx in toDelete = idx.first.map { items[$0] } }
                     } header: {
                         Text(day).id(day)
                     }
@@ -109,6 +111,14 @@ struct RecordingsView: View {
                 }
             }
             .navigationTitle("Moments")
+            .confirmationDialog("Delete this moment?", isPresented: Binding(get: { toDelete != nil }, set: { if !$0 { toDelete = nil } }), titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    if let r = toDelete { library.delete(r) }
+                    toDelete = nil
+                }
+            } message: {
+                Text("The recording and everything read from it. Reminders and Calendar keep what was sent to them.")
+            }
             .searchable(text: $search, prompt: "Titles, places, transcripts, speakers, Pockets")
             .toolbar {
                 if pockets.count > 1 {
