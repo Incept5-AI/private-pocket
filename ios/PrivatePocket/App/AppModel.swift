@@ -716,6 +716,23 @@ final class AppModel: ObservableObject {
         await rereadOutdated(library.recordings)
     }
 
+    /// Everything under Recordings as one zip, for the share sheet: a copy to keep
+    /// somewhere else, or to move to another phone.
+    func exportAll() async throws -> URL {
+        let root = library.root
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("Private Pocket moments.zip")
+        try? FileManager.default.removeItem(at: out)
+        return try await Task.detached(priority: .userInitiated) {
+            var copyError: Error?
+            var coordError: NSError?
+            NSFileCoordinator().coordinate(readingItemAt: root, options: .forUploading, error: &coordError) { url in
+                do { try FileManager.default.copyItem(at: url, to: out) } catch { copyError = error }
+            }
+            if let e = coordError ?? copyError { throw e }
+            return out
+        }.value
+    }
+
     // MARK: - Starting over
 
     /// Every moment on this iPhone, with the reminders and calendar events made from

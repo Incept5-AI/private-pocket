@@ -3,6 +3,8 @@ import Speech
 import SwiftUI
 
 struct SettingsView: View {
+    @State private var exportURL: URL?
+    @State private var exporting = false
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var devices: DeviceStore
     /// Shown as a sheet from the Pocket tab: a Done button that closes it.
@@ -130,6 +132,26 @@ struct SettingsView: View {
                     Text("Eight short spoken conversations, one of each kind, that go through speech to text, reading, Moments and Insights exactly as a moment from the Pocket would.")
                 }
 
+
+                Section {
+                    if let url = exportURL {
+                        ShareLink(item: url) { Label("Share the export", systemImage: "square.and.arrow.up") }
+                    } else {
+                        Button {
+                            Task {
+                                exporting = true
+                                exportURL = try? await model.exportAll()
+                                exporting = false
+                                if exportURL == nil { model.aiError = "The export couldn't be made. Try again in a moment." }
+                            }
+                        } label: {
+                            HStack { Label("Export everything", systemImage: "archivebox"); if exporting { Spacer(); ProgressView() } }
+                        }
+                        .disabled(exporting)
+                    }
+                } header: { Text("Your moments") } footer: {
+                    Text("Every recording and what was read from it, as one zip, to keep somewhere else or move to another phone. Nothing is sent anywhere by itself.")
+                }
 
                 startOver
             }
