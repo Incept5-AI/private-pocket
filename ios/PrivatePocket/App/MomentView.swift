@@ -734,6 +734,8 @@ struct BehindSheet: View {
     @EnvironmentObject var library: Library
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
+    @State private var editing = false
+    @State private var newText = ""
     let id: String
     let behind: Behind
     @ObservedObject var player: Player
@@ -771,7 +773,7 @@ struct BehindSheet: View {
                     Text("The words behind this weren't found in the transcript.").font(.subheadline).foregroundStyle(Brand.muted)
                 }
                 if let item {
-                    HStack(spacing: 10) {
+                    ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 10) {
                         if item.isAction {
                             if let rid = item.reminderID, let u = Planner.reminderURL(rid) {
                                 pill("Open in Reminders", prominent: true) { openURL(u) }
@@ -779,6 +781,7 @@ struct BehindSheet: View {
                                 pill("Add to Reminders", prominent: true) { Task { await model.place(r, item) } }
                             }
                             pill(item.isDone ? "Not done" : "Done") { model.setDone(r, item: item, done: !item.isDone) }
+                            pill("Edit") { newText = item.text; editing = true }
                             pill("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
                         } else if item.isDate {
                             if let d = item.date, let u = Planner.calendarURL(at: d) {
@@ -789,14 +792,22 @@ struct BehindSheet: View {
                             pill("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
                         } else {
                             pill(item.reminderID == nil ? "Remind me to chase" : "Reminder set", prominent: true) { Task { await model.remindMe(r, item: item) } }
+                            pill("Edit") { newText = item.text; editing = true }
                             pill("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
                         }
-                    }
+                    } }
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 24).padding(.top, 10)
             .presentationBackground(Brand.surface)
+            .alert("Change the wording", isPresented: $editing) {
+                TextField("To do", text: $newText)
+                Button("Save") { if let r = recording, let item { model.editItem(r, item: item, text: newText) } }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Changed here, and in Reminders if it is there already.")
+            }
         }
     }
 

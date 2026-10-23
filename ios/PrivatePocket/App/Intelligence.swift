@@ -611,6 +611,12 @@ enum Planner {
         (store.calendarItem(withIdentifier: id) as? EKReminder)?.isCompleted
     }
 
+    static func renameReminder(_ id: String, to title: String) {
+        guard let r = store.calendarItem(withIdentifier: id) as? EKReminder else { return }
+        r.title = title
+        try? store.save(r, commit: true)
+    }
+
     static func removeReminder(_ id: String) {
         if let r = store.calendarItem(withIdentifier: id) as? EKReminder { try? store.remove(r, commit: true) }
     }

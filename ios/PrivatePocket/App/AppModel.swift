@@ -623,6 +623,14 @@ final class AppModel: ObservableObject {
         change(r, item) { $0.done = done; $0.doneAt = done ? Date() : nil }
     }
 
+    /// A corrected wording, here and in Reminders if it is there already.
+    func editItem(_ r: Recording, item: NextItem, text: String) {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t != item.text else { return }
+        if let id = item.reminderID { Planner.renameReminder(id, to: t) }
+        change(r, item) { $0.text = t }
+    }
+
     /// "Not mine": gone from the list, and from Reminders or Calendar.
     func dismiss(_ r: Recording, item: NextItem) {
         if let id = item.reminderID { Planner.removeReminder(id) }
