@@ -28,6 +28,17 @@ struct RecordingAttributes: ActivityAttributes {
         var hoursFree: String?
         /// Once the saved moment is read: its kind and first sentence.
         var read: String?
+        /// The last few seconds of loudness, oldest first, 0–15 a bar: the waveform.
+        var levels: [UInt8]?
+        /// What Record was pressed into: "Into Northlight", "With Maya".
+        var context: String?
+        /// What the reader has caught so far: "2 to-dos · 1 date caught".
+        var caught: String?
+        /// A quiet thread named in the room: "Northlight · last spoken 16 Apr".
+        var recall: String?
+
+        /// The waveform as the views draw it, 0…1.
+        var wave: [Float] { (levels ?? []).map { Float($0) / 15 } }
 
         var isRecording: Bool { phase == .recording }
 

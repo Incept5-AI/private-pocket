@@ -567,8 +567,21 @@ struct RecordAccessory: View {
             .buttonStyle(.plain)
             .disabled(!model.canCommand || (!connected && !recording))
             .accessibilityLabel(recording ? "Stop recording" : "Record")
-            if !inline {
-                Spacer(minLength: 6)
+            if recording {
+                if live.isActive {
+                    LiveWave(levels: live.levels, ink: Brand.onRecord)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: inline ? 14 : 22)
+                        .contentShape(Rectangle())
+                        .onTapGesture { showPocket = true }
+                        .accessibilityLabel("Streaming to this iPhone")
+                } else if !inline {
+                    Text("On the card").font(.footnote.weight(.semibold)).lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            if !inline, !recording || model.recordingContext != nil {
+                if !recording { Spacer(minLength: 6) }
                 Button { showPocket = true } label: {
                     HStack(spacing: 6) {
                         LightDot(state: recording ? .recording : model.canCommand && connected ? .on : .off).frame(width: 8, height: 8)
@@ -589,6 +602,17 @@ struct RecordAccessory: View {
         .onTapGesture { if inline { showPocket = true } }
         .animation(.easeInOut(duration: 0.25), value: recording)
         .sheet(isPresented: $showPocket) { PocketView() }
+    }
+}
+
+/// The record bar's waveform: the stream's loudness as it arrives, ten times a second,
+/// newest at the right; faint dots when nothing has reached this iPhone for a moment.
+struct LiveWave: View {
+    @ObservedObject var levels: LiveLevels
+    let ink: Color
+
+    var body: some View {
+        LevelBars(levels: levels.stalled ? [] : levels.values, ink: ink, bar: 2.5, gap: 2)
     }
 }
 

@@ -232,7 +232,7 @@ final class AppModel: ObservableObject {
             return
         }
         activity.showReady(device: d, battery: link.status.battery,
-                           hoursFree: link.status.freeMiB.map { PocketFacts.hours(mib: $0) })
+                           hoursFree: link.status.freeMiB.map { PocketFacts.hours(mib: $0) }, paired: canCommand)
     }
 
     private var wantsConnection: DeviceConfig? {
@@ -345,16 +345,32 @@ final class AppModel: ObservableObject {
 
     private func startActivity(name: String) {
         guard let d = connectedDevice else { return }
-        activity.showRecording(device: d, startedAt: PocketTime.parse(name) ?? Date(), paired: canCommand)
+        activity.showRecording(device: d, startedAt: PocketTime.parse(name) ?? Date(), paired: canCommand, context: recordingContext?.label)
         activityTicker?.cancel()
         activityTicker = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled else { return }
+                let streaming = self.live.isActive && !self.live.levels.stalled
                 self.activity.updateRecording(line: String(self.live.text.suffix(140)), streaming: self.live.isActive,
-                                              gap: self.live.gap, paired: self.canCommand)
+                                              gap: self.live.gap, paired: self.canCommand,
+                                              levels: streaming ? self.live.levels.bars(30, seconds: 7.5) : nil,
+                                              context: self.recordingContext?.label, caught: self.caughtLine,
+                                              recall: self.liveThread.map { h in h.name + (h.last.map { " · last spoken \(Findings.dayName($0))" } ?? "") })
             }
         }
+    }
+
+    /// What the reader has caught in the room so far, for the Dynamic Island.
+    private var caughtLine: String? {
+        let items = liveItems.filter { !liveDismissed.contains($0.id) }
+        guard !items.isEmpty else { return nil }
+        var parts: [String] = []
+        let todo = items.filter(\.isAction).count, dates = items.filter(\.isDate).count, promises = items.filter(\.isPromise).count
+        if todo > 0 { parts.append("\(todo) to-do\(todo == 1 ? "" : "s")") }
+        if dates > 0 { parts.append("\(dates) date\(dates == 1 ? "" : "s")") }
+        if promises > 0 { parts.append("\(promises) promise\(promises == 1 ? "" : "s")") }
+        return parts.joined(separator: " · ") + " caught"
     }
 
     /// Shows the saved length for a moment, then the Pocket's light and battery again.

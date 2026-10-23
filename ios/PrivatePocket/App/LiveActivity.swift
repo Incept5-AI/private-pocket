@@ -20,7 +20,7 @@ final class RecordingActivity {
     var isRecording: Bool { current?.isRecording == true }
 
     /// Connected and idle. Starts the activity if there is none (foreground only).
-    func showReady(device: DeviceConfig, battery: Int?, hoursFree: String?) {
+    func showReady(device: DeviceConfig, battery: Int?, hoursFree: String?, paired: Bool = true) {
         revert?.cancel()
         var s = current ?? .init(phase: .ready)
         guard !s.isRecording else { return }
@@ -29,6 +29,11 @@ final class RecordingActivity {
         s.savedSeconds = nil
         s.battery = battery
         s.hoursFree = hoursFree
+        s.paired = paired
+        s.levels = nil
+        s.context = nil
+        s.caught = nil
+        s.recall = nil
         push(s, device: device)
     }
 
@@ -39,7 +44,7 @@ final class RecordingActivity {
         update(s)
     }
 
-    func showRecording(device: DeviceConfig, startedAt: Date, paired: Bool) {
+    func showRecording(device: DeviceConfig, startedAt: Date, paired: Bool, context: String? = nil) {
         revert?.cancel()
         var s = current ?? .init(phase: .recording)
         s.phase = .recording
@@ -49,16 +54,29 @@ final class RecordingActivity {
         s.streaming = true
         s.gap = false
         s.savedSeconds = nil
+        s.read = nil
+        s.levels = []
+        s.context = context
+        s.caught = nil
+        s.recall = nil
         push(s, device: device)
     }
 
-    func updateRecording(line: String, streaming: Bool, gap: Bool, paired: Bool) {
+    /// Every two seconds while it records: the words, the waveform, and what the room has
+    /// turned up so far. Sent only when something changed.
+    func updateRecording(line: String, streaming: Bool, gap: Bool, paired: Bool,
+                         levels: [UInt8]? = nil, context: String? = nil, caught: String? = nil, recall: String? = nil) {
         guard var s = current, s.isRecording else { return }
-        guard s.line != line || s.streaming != streaming || s.gap != gap || s.paired != paired else { return }
+        guard s.line != line || s.streaming != streaming || s.gap != gap || s.paired != paired
+            || s.levels != levels || s.context != context || s.caught != caught || s.recall != recall else { return }
         s.line = line
         s.streaming = streaming
         s.gap = gap
         s.paired = paired
+        s.levels = levels
+        s.context = context
+        s.caught = caught
+        s.recall = recall
         update(s)
     }
 
@@ -70,6 +88,9 @@ final class RecordingActivity {
         s.startedAt = nil
         s.line = ""
         s.read = nil
+        s.levels = nil
+        s.caught = nil
+        s.recall = nil
         update(s)
         revert?.cancel()
         revert = Task { [weak self] in

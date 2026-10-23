@@ -28,6 +28,8 @@ final class LiveSession: ObservableObject {
     /// Speaker turns so far, refreshed every `diarizeEvery` seconds of audio.
     @Published private(set) var turns: [Turn] = []
     @Published private(set) var speakersNote: String?
+    /// How loud the stream is, for the waveforms; its own object so only they redraw.
+    let levels = LiveLevels()
 
     static let diarizeEvery: Double = 45
     private var diarizing = false
@@ -66,9 +68,22 @@ final class LiveSession: ObservableObject {
         url = u
         file = try? FileHandle(forWritingTo: u)
 
-        guard Prefs.liveTranscript else { engineNote = "Live transcript is off (Settings → Processing)."; return }
+        // The stream is split into MP3 frames and decoded once: the level meter hears every
+        // frame, the transcriber on the phone gets the same audio, and the server's slices
+        // are cut from the frames themselves.
         let p = MP3Packetizer()
         parser = p
+        let decoder = MP3Decoder()
+        levels.start()
+        p.onPackets = { [weak self] data, descs, fmt in
+            guard let self else { return }
+            if let pcm = decoder.decode(data, packets: descs, format: fmt) {
+                self.levels.add(pcm)
+                self.local?.add(pcm)
+            }
+            self.remote?.add(data, packets: descs, format: fmt)
+        }
+        guard Prefs.liveTranscript else { engineNote = "Live transcript is off (Settings → Processing)."; return }
         localeID = Self.liveLocale()
         if Prefs.sttRemoteNow {
             let r = RemoteLiveTranscriber(localeID: localeID ?? Languages.auto)
@@ -76,7 +91,6 @@ final class LiveSession: ObservableObject {
             r.onError = { [weak self] e in self?.engineNote = "Live transcript paused: \(e)" }
             remote = r
             engineNote = "Live transcript: \(Prefs.sttModel) on the server, every \(Int(RemoteLiveTranscriber.chunkSeconds)) s"
-            p.onPackets = { [weak r] data, descs, fmt in r?.add(data, packets: descs, format: fmt) }
         } else {
             let l = LocalLiveTranscriber()
             l.onText = { [weak self] f, v in self?.finalText = f; self?.volatileText = v }
@@ -86,7 +100,6 @@ final class LiveSession: ObservableObject {
             Task {
                 do { try await l.start(localeID: id) } catch { self.engineNote = "No live transcript: \(error.localizedDescription)" }
             }
-            p.onPackets = { [weak l] data, descs, fmt in l?.add(data, packets: descs, format: fmt) }
         }
     }
 
@@ -154,6 +167,7 @@ final class LiveSession: ObservableObject {
     }
 
     private func reset() {
+        levels.stop()
         name = nil
         file = nil
         url = nil
@@ -214,9 +228,7 @@ final class LocalLiveTranscriber {
     private var results: Task<Void, Never>?
     private var target: AVAudioFormat?
     private var pending: [AVAudioPCMBuffer] = []
-    private var decoder: AVAudioConverter?
     private var resampler: AVAudioConverter?
-    private var pcmFormat: AVAudioFormat?
     private var finalText = ""
     private(set) var words: [TimedWord] = []
 
@@ -250,8 +262,8 @@ final class LocalLiveTranscriber {
         pending = []
     }
 
-    func add(_ data: Data, packets: [AudioStreamPacketDescription], format: AudioStreamBasicDescription) {
-        guard let pcm = decode(data, packets: packets, format: format) else { return }
+    /// Decoded stream audio, at the stream's own rate.
+    func add(_ pcm: AVAudioPCMBuffer) {
         if input == nil { pending.append(pcm) } else { feed(pcm) }
     }
 
@@ -284,39 +296,6 @@ final class LocalLiveTranscriber {
             return pcm
         }
         if out.frameLength > 0 { input.yield(AnalyzerInput(buffer: out)) }
-    }
-
-    /// MP3 frames → float PCM at the stream's own rate.
-    private func decode(_ data: Data, packets: [AudioStreamPacketDescription],
-                        format: AudioStreamBasicDescription) -> AVAudioPCMBuffer? {
-        var asbd = format
-        guard let mp3 = AVAudioFormat(streamDescription: &asbd) else { return nil }
-        if decoder == nil {
-            pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: asbd.mSampleRate,
-                                      channels: asbd.mChannelsPerFrame, interleaved: false)
-            if let pcmFormat { decoder = AVAudioConverter(from: mp3, to: pcmFormat) }
-        }
-        guard let decoder, let pcmFormat else { return nil }
-        let maxPacket = packets.map { Int($0.mDataByteSize) }.max() ?? 0
-        let comp = AVAudioCompressedBuffer(format: mp3, packetCapacity: AVAudioPacketCount(packets.count),
-                                           maximumPacketSize: maxPacket)
-        data.withUnsafeBytes { comp.data.copyMemory(from: $0.baseAddress!, byteCount: data.count) }
-        for (i, d) in packets.enumerated() { comp.packetDescriptions?[i] = d }
-        comp.packetCount = AVAudioPacketCount(packets.count)
-        comp.byteLength = UInt32(data.count)
-
-        let framesPerPacket = max(Int(asbd.mFramesPerPacket), 1152)
-        guard let out = AVAudioPCMBuffer(pcmFormat: pcmFormat,
-                                         frameCapacity: AVAudioFrameCount(packets.count * framesPerPacket))
-        else { return nil }
-        var given = false
-        _ = decoder.convert(to: out, error: nil) { _, status in
-            if given { status.pointee = .noDataNow; return nil }
-            given = true
-            status.pointee = .haveData
-            return comp
-        }
-        return out.frameLength > 0 ? out : nil
     }
 }
 
@@ -393,3 +372,123 @@ final class RemoteLiveTranscriber {
         }
     }
 }
+
+/// MP3 frames to float PCM at the stream's own rate.
+final class MP3Decoder {
+    private var converter: AVAudioConverter?
+    private var pcmFormat: AVAudioFormat?
+
+    func decode(_ data: Data, packets: [AudioStreamPacketDescription],
+                        format: AudioStreamBasicDescription) -> AVAudioPCMBuffer? {
+        var asbd = format
+        guard let mp3 = AVAudioFormat(streamDescription: &asbd) else { return nil }
+        if converter == nil {
+            pcmFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: asbd.mSampleRate,
+                                      channels: asbd.mChannelsPerFrame, interleaved: false)
+            if let pcmFormat { converter = AVAudioConverter(from: mp3, to: pcmFormat) }
+        }
+        guard let converter, let pcmFormat else { return nil }
+        let maxPacket = packets.map { Int($0.mDataByteSize) }.max() ?? 0
+        let comp = AVAudioCompressedBuffer(format: mp3, packetCapacity: AVAudioPacketCount(packets.count),
+                                           maximumPacketSize: maxPacket)
+        data.withUnsafeBytes { comp.data.copyMemory(from: $0.baseAddress!, byteCount: data.count) }
+        for (i, d) in packets.enumerated() { comp.packetDescriptions?[i] = d }
+        comp.packetCount = AVAudioPacketCount(packets.count)
+        comp.byteLength = UInt32(data.count)
+
+        let framesPerPacket = max(Int(asbd.mFramesPerPacket), 1152)
+        guard let out = AVAudioPCMBuffer(pcmFormat: pcmFormat,
+                                         frameCapacity: AVAudioFrameCount(packets.count * framesPerPacket))
+        else { return nil }
+        var given = false
+        _ = converter.convert(to: out, error: nil) { _, status in
+            if given { status.pointee = .noDataNow; return nil }
+            given = true
+            status.pointee = .haveData
+            return comp
+        }
+        return out.frameLength > 0 ? out : nil
+    }
+}
+
+/// How loud the stream is, ten times a second: the root mean square of each tenth of a
+/// second of decoded audio, on a scale from silence (−50 dB) to full (−12 dB). Published
+/// on its own so that only the waveforms redraw at that rate. `stalled` is set when
+/// nothing has arrived for a second and a half, so a waveform can go flat rather than
+/// show a gap as silence.
+@MainActor
+final class LiveLevels: ObservableObject {
+    static let capacity = 200   // twenty seconds
+    @Published private(set) var values: [Float] = []
+    @Published private(set) var stalled = false
+    private var sum = 0.0
+    private var count = 0
+    private var lastAt = Date.distantPast
+    private var watch: Task<Void, Never>?
+
+    func start() {
+        stop()
+        values = []
+        stalled = false
+        lastAt = Date()
+        watch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(500))
+                guard let self, !Task.isCancelled else { return }
+                let quiet = Date().timeIntervalSince(self.lastAt) > 1.5
+                if quiet != self.stalled { self.stalled = quiet }
+            }
+        }
+    }
+
+    func stop() {
+        watch?.cancel()
+        watch = nil
+        sum = 0
+        count = 0
+    }
+
+    func add(_ pcm: AVAudioPCMBuffer) {
+        guard let samples = pcm.floatChannelData?[0] else { return }
+        let window = max(400, Int(pcm.format.sampleRate / 10))
+        var fresh: [Float] = []
+        for i in 0..<Int(pcm.frameLength) {
+            let x = Double(samples[i])
+            sum += x * x
+            count += 1
+            if count >= window {
+                fresh.append(Self.level(rms: (sum / Double(count)).squareRoot()))
+                sum = 0
+                count = 0
+            }
+        }
+        lastAt = Date()
+        if stalled { stalled = false }
+        guard !fresh.isEmpty else { return }
+        var v = values
+        v.append(contentsOf: fresh)
+        if v.count > Self.capacity { v.removeFirst(v.count - Self.capacity) }
+        values = v
+    }
+
+    static func level(rms: Double) -> Float {
+        let db = 20 * log10(max(rms, 1e-7))
+        return Float(min(1, max(0, (db + 50) / 38)))
+    }
+
+    /// The last `seconds` as `count` bars, the loudest level in each, 0–15: small enough to
+    /// send to the Dynamic Island every two seconds.
+    func bars(_ count: Int, seconds: Double) -> [UInt8] {
+        let per = max(1, Int((seconds * 10 / Double(count)).rounded()))
+        let tail = Array(values.suffix(per * count))
+        var out: [UInt8] = []
+        var i = 0
+        while i < tail.count {
+            let top = tail[i..<min(i + per, tail.count)].max() ?? 0
+            out.append(UInt8((max(0, top) * 15).rounded()))
+            i += per
+        }
+        return out
+    }
+}
+
