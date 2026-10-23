@@ -683,7 +683,7 @@ final class AppModel: ObservableObject {
         guard let items = r.meta.insight?.next else { return }
         await Planner.warm()
         let link = Planner.momentURL(r)
-        for item in items {   // made before links existed: given one now
+        for item in items where !item.isDismissed {   // made before links existed: given one now
             if let id = item.reminderID { await Planner.ensureLink(id, link) }
             if let id = item.eventID { await Planner.ensureLink(id, link) }
         }
