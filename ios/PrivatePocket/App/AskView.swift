@@ -82,7 +82,7 @@ struct AskView: View {
             }
             .background(Brand.ground)
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("Ask")
+            .navigationTitle("Ask the tape")
             .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
             .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
         }
@@ -246,9 +246,4 @@ struct AnswerCard: View {
         .background(Brand.raised.opacity(0.55), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
     }
-}
-
-/// The Ask tab.
-struct AskTab: View {
-    var body: some View { AskView() }
 }

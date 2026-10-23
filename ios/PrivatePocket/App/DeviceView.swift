@@ -438,38 +438,6 @@ enum Captions {
     }
 }
 
-/// The bar above the tab bar while the Pocket records, on every tab: light, timer, the
-/// latest words, and Stop when the phone can stop it.
-struct NowRecordingBar: View {
-    @EnvironmentObject var model: AppModel
-    @EnvironmentObject var link: PocketLink
-    @EnvironmentObject var live: LiveSession
-
-    var body: some View {
-        HStack(spacing: 10) {
-            LightDot(state: .recording).frame(width: 10, height: 10)
-            if let since = link.status.recordingSince {
-                Text(timerInterval: since...Date.distantFuture, countsDown: false)
-                    .font(.subheadline.monospacedDigit().weight(.semibold))
-            } else {
-                Text("Saving…").font(.subheadline)
-            }
-            Text(live.text.isEmpty ? (live.isActive ? "Streaming to this iPhone" : "Recording on the Pocket")
-                                   : String(live.text.suffix(80)))
-                .font(.footnote).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
-            Spacer(minLength: 0)
-            if model.canCommand, link.status.recordingSince != nil {
-                Button { Task { await model.toggleRecording() } } label: {
-                    Image(systemName: "stop.fill")
-                }
-                .tint(Brand.record)
-                .accessibilityLabel("Stop recording")
-            }
-        }
-        .padding(.horizontal, 14)
-    }
-}
-
 // MARK: - Details sheet
 
 struct PocketDetails: View {

@@ -40,7 +40,7 @@ struct SamplesView: View {
                 }
                 .disabled(running || added.count == samples.count)
             } footer: {
-                Text("They are dated over the last few hours, so they show on today, in Moments and in this week's Insights. Each is transcribed and read in turn; a tick means it was read as the kind it was meant to be.")
+                Text("They are dated over the last few hours, so they show on the tape and in You. Each is transcribed and read in turn; a tick means it was read as the kind it was meant to be.")
             }
             Section("Samples") {
                 ForEach(samples) { s in

@@ -129,7 +129,7 @@ struct SettingsView: View {
                 Section {
                     NavigationLink { SamplesView() } label: { Label("Sample moments", systemImage: "waveform.badge.plus") }
                 } header: { Text("Try it") } footer: {
-                    Text("Eight short spoken conversations, one of each kind, that go through speech to text, reading, Moments and Insights exactly as a moment from the Pocket would.")
+                    Text("Eight short spoken conversations, one of each kind, that go through speech to text, reading, the tape and You exactly as a moment from the Pocket would.")
                 }
 
 
@@ -455,7 +455,7 @@ struct DeviceEditor: View {
                         .buttonStyle(.borderless)
                 }
             } header: { Text("Advanced: session key") } footer: {
-                Text("Set when the app pairs, or paste the key another app uses. Sent first on every connection (APP&SK&…); without it the Pocket answers no commands but still streams recordings. Clear it to pair afresh from the Pocket tab. Stored in the Keychain on this phone only.")
+                Text("Set when the app pairs, or paste the key another app uses. Sent first on every connection (APP&SK&…); without it the Pocket answers no commands but still streams recordings. Clear it to pair afresh from the Pocket screen. Stored in the Keychain on this phone only.")
             }
             Section("Bluetooth") {
                 TextField("Advertised name", text: $device.advertisedName)
