@@ -19,6 +19,7 @@ struct NowView: View {
     @State private var scrolling = false
     @State private var hideHandle: Task<Void, Never>?
     @State private var dismissed: Set<String> = Prefs.dismissedFindings
+    @State private var hidden: Set<String> = Prefs.hiddenBlocks
     @State private var toast: String?
     @State private var brief: Brief?
     @State private var tableMode = false
@@ -117,24 +118,39 @@ struct NowView: View {
 
     // MARK: The blocks
 
+    private func hide(_ key: String) {
+        withAnimation(.easeInOut(duration: 0.25)) { hidden.insert(key) }
+        Prefs.hiddenBlocks = hidden
+    }
+
     @ViewBuilder private func blocks(_ all: [Recording]) -> some View {
         let hour = Calendar.current.component(.hour, from: Date())
         let cal = Calendar.current
+        let today = Date().formatted(.iso8601.year().month().day())
         if devices.devices.isEmpty {
             NowBlock(tint: Brand.paper, ink: Brand.onPaper, tag: "Your Pocket", title: "Press once. Hear everything.",
                      line: "Have your Pocket nearby and switched on. No account, no cloud.",
                      action: "Find my Pocket") { showPocket = true }
+                .cardGestures(primary: "Find my Pocket", act: { showPocket = true }, dismiss: nil)
         } else if !model.canCommand {
             NowBlock(tint: Brand.record, ink: Brand.onRecord, tag: "Needs pairing", title: "Hold the side button for five seconds, until the light blinks blue.",
                      line: "The app pairs by itself while it blinks. Recordings started with the button still stream here meanwhile.",
                      action: "Show me") { showPocket = true }
+                .cardGestures(primary: "Show me", act: { showPocket = true }, dismiss: nil)
         }
-        if recording || live.isActive { liveBlock }
-        if !recording, Briefs.calendarAllowed, let b = Briefs.upcoming(all).first {
+        if recording || live.isActive {
+            liveBlock.cardGestures(primary: "Table mode", act: { tableMode = true }, dismiss: nil)
+        }
+        if let a = model.cardAnswers.last, !hidden.contains("card|" + a.id.uuidString) {
+            NowBlock(tint: Brand.record, ink: Brand.onRecord, tag: "Said to the card", title: a.answer, line: "“Pocket, \(a.question)”")
+                .cardGestures(primary: nil, act: nil, dismiss: { hide("card|" + a.id.uuidString) })
+        }
+        if !recording, Briefs.calendarAllowed, let b = Briefs.upcoming(all).first, !hidden.contains("brief|" + b.id) {
             NowBlock(tint: Brand.act, ink: Brand.onAct,
                      tag: "At \(b.start.formatted(date: .omitted, time: .shortened)) · \(b.person.name)" + (b.minutesAway > 0 ? " · in \(b.minutesAway) min" : ""),
                      title: b.count == 0 ? "Nothing open with \(b.person.name)." : "\(b.count) thing\(b.count == 1 ? "" : "s") open with \(b.person.name).",
                      line: Briefs.line(b), action: "Read the brief") { brief = b }
+                .cardGestures(primary: "Read the brief", act: { brief = b }, dismiss: { hide("brief|" + b.id) })
         } else if !recording, !Briefs.calendarAllowed, !briefsAsked, !all.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("BRIEFS BEFORE MEETINGS").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
@@ -152,16 +168,15 @@ struct NowView: View {
             }
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .cardGestures(primary: nil, act: nil, dismiss: { Prefs.askedBriefs = true; withAnimation { briefsAsked = true } })
         }
-        if let a = model.cardAnswers.last {
-            NowBlock(tint: Brand.record, ink: Brand.onRecord, tag: "Said to the card", title: a.answer, line: "“Pocket, \(a.question)”")
-        }
-        if let r = justRead(all) {
+        if let r = justRead(all), !hidden.contains("read|" + r.id) {
             NowBlock(tint: r.kind.isLife ? Brand.life : Brand.work, ink: r.kind.isLife ? Brand.onLife : Brand.onWork,
                      tag: "Just read · \(r.kind.label)", title: r.quote,
                      line: readLine(r), action: "Open it") { path.append(r.id) }
+                .cardGestures(primary: "Open it", act: { path.append(r.id) }, dismiss: { hide("read|" + r.id) })
         }
-        if hour < 12, let y = yesterday(all, cal: cal) {
+        if hour < 12, let y = yesterday(all, cal: cal), !hidden.contains("yesterday|" + today) {
             let lines = Replay.lines(from: y.moments)
             VStack(alignment: .leading, spacing: 8) {
                 Text("YESTERDAY, SET · \(y.moments.count) CONVERSATION\(y.moments.count == 1 ? "" : "S")").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
@@ -189,21 +204,28 @@ struct NowView: View {
             }
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .cardGestures(primary: lines.isEmpty ? "Yesterday's tape" : "Listen back",
+                          act: { if lines.isEmpty { path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id))) } else if !replay.playing { replay.play(lines) } },
+                          dismiss: { replay.stop(); hide("yesterday|" + today) })
         }
-        if hour >= 17, let t = todayLine(all, cal: cal) {
+        if hour >= 17, let t = todayLine(all, cal: cal), !hidden.contains("evening|" + today) {
             NowBlock(tint: Brand.work, ink: Brand.onWork, tag: "Six o'clock", title: t.title, line: t.line, action: t.action) {
                 if let id = t.id { path.append(id) }
             }
+            .cardGestures(primary: t.id == nil ? nil : t.action, act: t.id.map { id in { path.append(id) } }, dismiss: { hide("evening|" + today) })
         }
         let needs = Digest.needs(all)
-        if !needs.isEmpty {
+        if !needs.isEmpty, !hidden.contains("needs|" + today) {
             NeedsBlock(needs: needs) { path.append($0) }
+                .cardGestures(primary: "Open the first", act: { if let n = needs.first { path.append(n.recording.id) } }, dismiss: { hide("needs|" + today) })
         }
         if let f = topFinding(all) {
-            FindingBlock(finding: f, perform: { perform($0) }, notRight: {
+            let notRight = {
                 withAnimation { dismissed.insert("week|" + f.id) }
                 Prefs.dismissedFindings = dismissed
-            })
+            }
+            FindingBlock(finding: f, perform: { perform($0) }, notRight: notRight)
+                .cardGestures(primary: f.choices.first?.label, act: f.choices.first.map { c in { perform(c.action) } }, dismiss: notRight)
         }
     }
 
@@ -649,5 +671,76 @@ struct LiveView: View {
         .background(Brand.record.ignoresSafeArea())
         .foregroundStyle(Brand.onRecord)
         .statusBarHidden()
+    }
+}
+
+/// A block on Now answers to the hand: tap for its one thing, swipe right to do it,
+/// swipe left to put it away for today, hold for the menu. A vertical drag is left
+/// to the scroll.
+struct CardGestures: ViewModifier {
+    let primary: String?
+    let act: (() -> Void)?
+    let dismiss: (() -> Void)?
+    @State private var offset: CGFloat = 0
+    @State private var gone = false
+    @State private var pulse = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .offset(x: offset)
+            .opacity(gone ? 0 : 1 - min(0.35, abs(offset) / 500))
+            .background(alignment: .leading) {
+                if offset > 24, let primary {
+                    Text(primary.uppercased()).font(.caption.weight(.bold)).tracking(0.8).foregroundStyle(Brand.act)
+                        .padding(.leading, 6).opacity(min(1, (offset - 24) / 60))
+                }
+            }
+            .background(alignment: .trailing) {
+                if offset < -24, dismiss != nil {
+                    Text("PUT AWAY").font(.caption.weight(.bold)).tracking(0.8).foregroundStyle(Brand.muted)
+                        .padding(.trailing, 6).opacity(min(1, (-offset - 24) / 60))
+                }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 24, coordinateSpace: .local)
+                    .onChanged { v in
+                        guard abs(v.translation.width) > abs(v.translation.height) * 1.5 else { return }
+                        let w = v.translation.width
+                        let allowed = (w > 0 && act != nil) || (w < 0 && dismiss != nil)
+                        offset = allowed ? w : w * 0.18
+                    }
+                    .onEnded { v in
+                        let w = v.translation.width
+                        if w > 96, let act {
+                            pulse += 1
+                            withAnimation(.spring(duration: 0.35)) { offset = 0 }
+                            act()
+                        } else if w < -96, let dismiss {
+                            pulse += 1
+                            if reduceMotion { gone = true; dismiss() }
+                            else {
+                                withAnimation(.easeOut(duration: 0.22)) { offset = -520; gone = true }
+                                Task { @MainActor in
+                                    try? await Task.sleep(for: .milliseconds(230))
+                                    dismiss()
+                                }
+                            }
+                        } else {
+                            withAnimation(.spring(duration: 0.35)) { offset = 0 }
+                        }
+                    }
+            )
+            .contextMenu {
+                if let primary, let act { Button { act() } label: { Label(primary, systemImage: "arrow.up.right") } }
+                if let dismiss { Button(role: .destructive) { dismiss() } label: { Label("Put away for today", systemImage: "eye.slash") } }
+            }
+            .sensoryFeedback(.impact(weight: .medium), trigger: pulse)
+    }
+}
+
+extension View {
+    func cardGestures(primary: String?, act: (() -> Void)?, dismiss: (() -> Void)?) -> some View {
+        modifier(CardGestures(primary: primary, act: act, dismiss: dismiss))
     }
 }
