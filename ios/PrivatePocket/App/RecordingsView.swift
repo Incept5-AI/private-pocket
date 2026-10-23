@@ -67,7 +67,7 @@ struct RecordingsView: View {
                     ContentUnavailableView {
                         Label("No moments yet", systemImage: "waveform")
                     } description: {
-                        Text("Press the side button on your Pocket. Recordings stream in as they are made, and ones made while the phone was away arrive when it reconnects.")
+                        Text("Press the side button on your Pocket. Moments stream in as they are made, and ones recorded while the phone was away arrive when it reconnects.")
                     } actions: {
                         Button("Add sample moments") { Task { await model.addSamples() } }
                     }

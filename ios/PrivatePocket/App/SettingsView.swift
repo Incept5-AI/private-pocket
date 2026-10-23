@@ -52,7 +52,7 @@ struct SettingsView: View {
                     }
                     Button { showWalkthrough = true } label: { Label("How the Pocket works", systemImage: "hand.tap") }
                 } header: { Text("Pockets") } footer: {
-                    Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected keeps the link up, also in the background, so every recording streams in as it is made. The Dynamic Island shows the Pocket's light and battery while connected and turns amber when it records; iOS only lets that start while the app is open, so without it a recording made with the phone locked shows up only once the app is opened. Deleting recordings from a Pocket needs the USB cable.")
+                    Text("Each Pocket gets its own key when paired, and its own folder of moments. Stay connected keeps the link up, also in the background, so every moment streams in as it is made. The Dynamic Island shows the Pocket's light and battery while connected and turns amber when it records; iOS only lets that start while the app is open, so without it a moment recorded with the phone locked shows up only once the app is opened. Deleting recordings from a Pocket needs the USB cable.")
                 }
 
                 Section {
@@ -89,7 +89,7 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Tag recordings with location", isOn: $tagLocation)
+                    Toggle("Tag moments with location", isOn: $tagLocation)
                         .onChange(of: tagLocation) {
                             Prefs.tagLocation = tagLocation
                             if tagLocation { locator.requestPermission() }
@@ -103,7 +103,7 @@ struct SettingsView: View {
                         }
                     }
                 } header: { Text("Location") } footer: {
-                    Text("The Pocket has no GPS, so the phone's location is used: where it was when a recording started (if connected), or when it was downloaded within 15 minutes of finishing. Place names come from Apple's geocoder, which receives the coordinates; turn that off to keep coordinates only.")
+                    Text("The Pocket has no GPS, so the phone's location is used: where it was when a moment started (if connected), or when it was downloaded within 15 minutes of finishing. Place names come from Apple's geocoder, which receives the coordinates; turn that off to keep coordinates only.")
                 }
 
                 Section {
@@ -120,14 +120,14 @@ struct SettingsView: View {
                         .onChange(of: autoReminders) { Prefs.autoReminders = autoReminders }
                     Toggle("Dates go to Calendar", isOn: $autoCalendar)
                         .onChange(of: autoCalendar) { Prefs.autoCalendar = autoCalendar }
-                } header: { Text("After each recording") } footer: {
+                } header: { Text("After each moment") } footer: {
                     Text("Each moment lists its to-dos and events with Add beside them. Turn these on and they go in by themselves as soon as a moment is read: to-dos into a Pocket list in Reminders with their due dates, events into Calendar. Tick one off in either place and the moment shows it done.")
                 }
 
                 Section {
                     NavigationLink { SamplesView() } label: { Label("Sample moments", systemImage: "waveform.badge.plus") }
                 } header: { Text("Try it") } footer: {
-                    Text("Eight short spoken conversations, one of each kind, that go through speech to text, reading, Moments and Insights exactly as a recording from the Pocket would.")
+                    Text("Eight short spoken conversations, one of each kind, that go through speech to text, reading, Moments and Insights exactly as a moment from the Pocket would.")
                 }
 
 
@@ -138,7 +138,7 @@ struct SettingsView: View {
                 .confirmationDialog("Clear all moments?", isPresented: $confirmClear, titleVisibility: .visible) {
                     Button("Clear all moments", role: .destructive) { model.clearMoments() }
                 } message: {
-                    Text("Every recording on this iPhone, what was read from it, and the reminders and events made from them. The Pocket keeps its own copies until you clear it over USB.")
+                    Text("Every moment on this iPhone, what was read from it, and the reminders and events made from them. The Pocket keeps its own copies until you clear it over USB.")
                 }
                 .confirmationDialog("Reset everything?", isPresented: $confirmReset, titleVisibility: .visible) {
                     Button("Reset everything", role: .destructive) {
@@ -163,7 +163,7 @@ extension SettingsView {
             Button("Clear all moments", role: .destructive) { confirmClear = true }
             Button("Reset everything", role: .destructive) { confirmReset = true }
         } header: { Text("Start over") } footer: {
-            Text("Clear all moments deletes every recording on this iPhone and what was read from it, and the reminders and calendar events made from them; your Pockets and settings stay. Reset everything also forgets your Pockets and their keys and puts every setting back to how it was when the app was installed.")
+            Text("Clear all moments deletes every moment on this iPhone and what was read from it, and the reminders and calendar events made from them; your Pockets and settings stay. Reset everything also forgets your Pockets and their keys and puts every setting back to how it was when the app was installed.")
         }
     }
 }
@@ -453,7 +453,7 @@ struct DeviceEditor: View {
             Section {
                 Button("Remove device", role: .destructive) { confirmRemove = true }
             } footer: {
-                Text("Removes the settings and key. Recordings already on the phone are kept.")
+                Text("Removes the settings and key. Moments already on the phone are kept.")
             }
         }
             .scrollContentBackground(.hidden)

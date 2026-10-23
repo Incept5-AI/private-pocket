@@ -21,7 +21,7 @@ struct SamplesView: View {
         List {
             Section {
                 if added.isEmpty {
-                    Text("Eight short conversations, one of each kind, spoken by synthetic voices and stored the way the Pocket stores them. Add them and they go through everything a real recording does.")
+                    Text("Eight short conversations, one of each kind, spoken by synthetic voices and stored the way the Pocket stores them. Add them and they go through everything a real moment does.")
                         .font(.subheadline).foregroundStyle(Brand.muted)
                 } else {
                     LabeledContent("Read as expected", value: read.isEmpty ? "–" : "\(right) of \(read.count)")

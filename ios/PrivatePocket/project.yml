@@ -46,9 +46,9 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: Private Pocket
         INFOPLIST_KEY_UILaunchScreen_Generation: true
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
-        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Connects to your Pocket recorder to list, record and download recordings. Nothing leaves this phone."
-        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Tags each recording with where it was made. Stays on this phone."
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Transcribes your recordings on this iPhone."
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Connects to your Pocket to record, and to fetch what it recorded while the phone was away."
+        INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Tags each moment with where it was made. Stays on this phone."
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Transcribes your moments on this iPhone."
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
     info:
@@ -61,10 +61,10 @@ targets:
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
         # Reminders and Calendar, only when the user taps Add on an action or a date.
-        NSRemindersFullAccessUsageDescription: "Adds actions found in your recordings to Reminders, only when you tap Add."
-        NSCalendarsFullAccessUsageDescription: "Adds events found in your recordings to Calendar, only when you tap Add."
-        NSRemindersUsageDescription: "Adds actions found in your recordings to Reminders, only when you tap Add."
-        NSCalendarsUsageDescription: "Adds events found in your recordings to Calendar, only when you tap Add."
+        NSRemindersFullAccessUsageDescription: "Adds to-dos found in your moments to Reminders, when you tap Add or choose to have them added always."
+        NSCalendarsFullAccessUsageDescription: "Adds dates found in your moments to Calendar, when you tap Add or choose to have them added always."
+        NSRemindersUsageDescription: "Adds to-dos found in your moments to Reminders, when you tap Add or choose to have them added always."
+        NSCalendarsUsageDescription: "Adds dates found in your moments to Calendar, when you tap Add or choose to have them added always."
         # Lets the language model setting point at a plain-http server on a private network.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
