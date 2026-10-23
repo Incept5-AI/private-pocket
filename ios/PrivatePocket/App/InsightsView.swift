@@ -388,8 +388,9 @@ struct InsightsView: View {
             .buttonStyle(.plain)
             NavigationLink(value: r.id) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.text).font(.subheadline).strikethrough(item.isDone).foregroundStyle(item.isDone ? Brand.dim : Brand.text)
-                    Text([item.who, item.when, r.displayTitle].compactMap { $0 }.joined(separator: " · ")).font(.caption).foregroundStyle(Brand.muted).lineLimit(1)
+                    Text(item.text).font(.subheadline).foregroundStyle(item.isDone ? Brand.muted : Brand.text)
+                    Text([item.isDone ? "Done" : nil, item.who, item.when, r.displayTitle].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(item.isDone ? Brand.good : Brand.muted).lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

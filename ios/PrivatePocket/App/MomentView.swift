@@ -372,14 +372,26 @@ struct TodoSection: View {
                         .font(.caption.weight(.semibold))
                 }
             }
-            ForEach(items) { item in
+            let pending = items.filter { !$0.isDone }, finished = items.filter(\.isDone)
+            ForEach(pending) { item in
                 NextRow(recording: r, item: item) { open(item) }
                 Divider().overlay(Brand.hairline)
+            }
+            if !finished.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.circle.fill")
+                    Text("Done, \(finished.count) of \(items.count)")
+                }
+                .font(.caption.weight(.bold)).foregroundStyle(Brand.good)
+                .padding(.top, 14).padding(.bottom, 2)
+                ForEach(finished) { item in
+                    NextRow(recording: r, item: item) { open(item) }
+                    Divider().overlay(Brand.hairline)
+                }
             }
         }
     }
 }
-
 /// Meetings, deadlines and dates, each addable to Calendar.
 struct EventSection: View {
     @EnvironmentObject var model: AppModel
@@ -461,8 +473,12 @@ struct NextRow: View {
             glyph
             Button(action: open) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.text).font(.body).strikethrough(item.isDone).foregroundStyle(item.isDone ? Brand.dim : Brand.text)
-                    if let w = whenText { Text(w).font(.footnote).foregroundStyle(Brand.muted) }
+                    Text(item.text).font(.body).foregroundStyle(item.isDone ? Brand.muted : Brand.text)
+                    if item.isDone {
+                        Text(doneText).font(.footnote.weight(.semibold)).foregroundStyle(Brand.good)
+                    } else if let w = whenText {
+                        Text(w).font(.footnote).foregroundStyle(Brand.muted)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
@@ -471,13 +487,30 @@ struct NextRow: View {
             trailing
         }
         .padding(.vertical, 11)
+        // Done is unmistakable: the filled check, the row tinted green, when it was done, and a Done pill.
+        .padding(.horizontal, 10)
+        .background(item.isDone ? Brand.good.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, -10)
+        .animation(.easeInOut(duration: 0.25), value: item.isDone)
+        .sensoryFeedback(.success, trigger: item.isDone) { _, now in now }
+    }
+
+    private var doneText: String {
+        guard let at = item.doneAt else { return "Done" }
+        let cal = Calendar.current
+        let day = cal.isDateInToday(at) ? "today" : cal.isDateInYesterday(at) ? "yesterday" : at.formatted(.dateTime.weekday(.wide))
+        return "Done \(day), \(at.formatted(date: .omitted, time: .shortened))"
     }
 
     @ViewBuilder private var trailing: some View {
         if item.isAction {
-            if item.reminderID != nil {
+            if item.isDone {
+                Text("Done").font(.footnote.weight(.bold)).foregroundStyle(Brand.onAct)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Brand.good, in: Capsule())
+            } else if item.reminderID != nil {
                 Text("Added").font(.footnote.weight(.semibold)).foregroundStyle(Brand.good)
-            } else if !item.isDone {
+            } else {
                 Button("Add") { Task { await model.place(recording, item) } }.font(.footnote.weight(.semibold))
             }
         } else if item.isDate {
