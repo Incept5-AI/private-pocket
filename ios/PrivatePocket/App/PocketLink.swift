@@ -509,7 +509,9 @@ final class PocketLink: NSObject, ObservableObject {
     /// `quiet` keeps background reconnects out of alerts (the log still has them).
     func run(_ label: String, quiet: Bool = false, _ body: () async throws -> Void) async {
         if isReady { phase = .busy(label) }
-        do { try await body() } catch {
+        do { try await body() } catch is CancellationError {
+            note("cancelled: \(label)")   // superseded or left the foreground: not a failure, never shown
+        } catch {
             if !quiet { lastError = error.localizedDescription }
             note("error: \(error.localizedDescription)")
         }
