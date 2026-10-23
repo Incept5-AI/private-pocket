@@ -48,7 +48,7 @@ enum Briefs {
     static func make(_ p: Digest.Person, event: EKEvent) -> Brief {
         let theirs = p.waitingOn.filter { !$0.isDone && !$0.isDismissed }
         let yours: [(Recording, NextItem)] = p.moments.flatMap { r in
-            (r.meta.insight?.items ?? []).filter { $0.isAction && !$0.isDone && !$0.isDismissed && $0.text.localizedCaseInsensitiveContains(p.name) }.map { (r, $0) }
+            (r.meta.insight?.items ?? []).filter { $0.isAction && !$0.isDone && !$0.isDismissed && $0.text.mentions(p.name) }.map { (r, $0) }
         }
         let last = p.moments.max { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }
         return Brief(event: event, person: p, theirs: theirs, yours: yours, last: last, figure: last?.meta.insight?.figures?.first)
@@ -61,10 +61,14 @@ enum Briefs {
         centre.getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
             centre.getPendingNotificationRequests { pending in
-                let have = Set(pending.map(\.identifier))
+                // Notices for meetings no longer coming (moved, cancelled, someone else) go; the rest
+                // are written again, which replaces a pending one with the same id.
+                let keep = Set(briefs.map { "brief-" + $0.id })
+                let stale = pending.map(\.identifier).filter { $0.hasPrefix("brief-") && !keep.contains($0) }
+                if !stale.isEmpty { centre.removePendingNotificationRequests(withIdentifiers: stale) }
                 for b in briefs {
                     let fire = b.start.addingTimeInterval(-10 * 60)
-                    guard fire > Date(), !have.contains("brief-" + b.id) else { continue }
+                    guard fire > Date() else { continue }
                     let content = UNMutableNotificationContent()
                     content.title = "\(b.person.name), at \(b.start.formatted(date: .omitted, time: .shortened))"
                     content.body = line(b)

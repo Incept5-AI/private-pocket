@@ -272,6 +272,61 @@ private struct Draft: Decodable {
     var questions: [String]?
     var figures: [String]?
 
+    /// A server's reply, read leniently: a value of the wrong type loses that value, never the
+    /// whole reading. Strings or numbers where text is wanted, "true" for true, bare strings
+    /// for sentences, objects in lists, and speakers as a list or a dictionary all read.
+    init(json o: [String: Any]) {
+        func text(_ v: Any?) -> String? {
+            switch v {
+            case let s as String: return s
+            case let n as NSNumber: return n.stringValue
+            default: return nil
+            }
+        }
+        func flag(_ v: Any?) -> Bool? {
+            switch v {
+            case let b as Bool: return b
+            case let n as NSNumber: return n.boolValue
+            case let s as String: return ["true", "yes", "1"].contains(s.lowercased().trimmingCharacters(in: .whitespaces))
+            default: return nil
+            }
+        }
+        func list(_ v: Any?) -> [String]? {
+            guard let a = v as? [Any] else { return text(v).map { [$0] } }
+            return a.compactMap { e in
+                if let s = text(e) { return s }
+                if let d = e as? [String: Any] { return text(d["text"]) ?? text(d["name"]) ?? text(d["value"]) ?? d.values.compactMap { text($0) }.first }
+                return nil
+            }
+        }
+        kind = text(o["kind"])
+        title = text(o["title"])
+        if let a = o["brief"] as? [Any] {
+            brief = a.compactMap { e in
+                if let s = text(e) { return Sentence(text: s, quote: nil) }
+                if let d = e as? [String: Any] { return Sentence(text: text(d["text"]), quote: text(d["quote"])) }
+                return nil
+            }
+        } else if let s = text(o["brief"]) {
+            brief = [Sentence(text: s, quote: nil)]
+        }
+        next = (o["next"] as? [Any])?.compactMap { e in
+            guard let d = e as? [String: Any] else { return nil }
+            return Item(kind: text(d["kind"]), text: text(d["text"]), who: text(d["who"]), place: text(d["place"]),
+                        when: text(d["when"]), quote: text(d["quote"]), sure: flag(d["sure"]))
+        }
+        keyLines = list(o["keyLines"])
+        people = list(o["people"])
+        if let a = o["speakers"] as? [Any] {
+            speakers = a.compactMap { e in (e as? [String: Any]).map { Speaker(label: text($0["label"]), name: text($0["name"])) } }
+        } else if let d = o["speakers"] as? [String: Any] {
+            speakers = d.map { Speaker(label: $0.key, name: text($0.value)) }
+        }
+        decisions = list(o["decisions"])
+        questions = list(o["questions"])
+        figures = list(o["figures"])
+    }
+
     init(_ d: InsightDraft) {
         kind = d.kind
         title = d.title
@@ -350,8 +405,9 @@ enum Analyst {
             "\"figures\" (an array of strings: amounts that matter, money, quantities or counts, each as the amount and what it is for, " +
             "like '£3,000 for the offsite' or '30 people at the workshop', never a date, a day of the month or a clock time)."
         let reply = try await LLM.complete(c, instructions: json, prompt: prompt, temperature: 0)   // the same transcript reads the same way twice
-        guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close else { throw LLMError.empty }
-        return try JSONDecoder().decode(Draft.self, from: Data(reply[open...close].utf8))
+        guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close,
+              let object = try JSONSerialization.jsonObject(with: Data(reply[open...close].utf8)) as? [String: Any] else { throw LLMError.empty }
+        return Draft(json: object)
     }
 
     /// The kind by majority, the first title, the brief from the first part (and the
@@ -634,11 +690,25 @@ enum Planner {
         var duration: Double?
     }
 
-    enum Lookup { case missing, found(Placed) }
+    enum Lookup { case missing, found(Placed), unknown }
 
-    /// The item as Reminders or Calendar has it now; missing when the user removed it there.
+    /// Reminders, or Calendar, can be read in full: without it every lookup comes back empty,
+    /// which is not the user removing anything.
+    static func canRead(_ type: EKEntityType) -> Bool { EKEventStore.authorizationStatus(for: type) == .fullAccess }
+
+    /// A reminder or an event by the id the app kept: its own id, the event's id (what older
+    /// placings stored), or the external id iCloud can move it to after its first sync.
+    static func item(_ id: String) -> EKCalendarItem? {
+        if let c = store.calendarItem(withIdentifier: id) { return c }
+        if canRead(.event), let e = store.event(withIdentifier: id) { return e }
+        return store.calendarItems(withExternalIdentifier: id).first
+    }
+
+    /// The item as Reminders or Calendar has it now; missing only when it is truly gone,
+    /// unknown when it cannot be read at all (access off, or only Add).
     static func lookup(_ id: String) -> Lookup {
-        guard let c = store.calendarItem(withIdentifier: id) else { return .missing }
+        guard canRead(.reminder) || canRead(.event) else { return .unknown }
+        guard let c = item(id) else { return .missing }
         if let r = c as? EKReminder {
             let due = r.dueDateComponents.flatMap { Calendar.current.date(from: $0) }
             return .found(Placed(title: r.title ?? "", date: due, completed: r.isCompleted, location: nil, duration: nil))
@@ -751,7 +821,7 @@ enum Planner {
     }
 
     static func renameEvent(_ id: String, to title: String) {
-        guard let e = store.calendarItem(withIdentifier: id) as? EKEvent else { return }
+        guard let e = item(id) as? EKEvent else { return }
         e.title = title
         try? store.save(e, span: .thisEvent, commit: true)
     }
@@ -792,7 +862,7 @@ enum Planner {
     }
 
     static func removeEvent(_ id: String) {
-        if let e = store.event(withIdentifier: id) { try? store.remove(e, span: .thisEvent, commit: true) }
+        if let e = item(id) as? EKEvent { try? store.remove(e, span: .thisEvent, commit: true) }
     }
 
     static func calendarURL(at date: Date) -> URL? { URL(string: "calshow:\(Int(date.timeIntervalSinceReferenceDate))") }

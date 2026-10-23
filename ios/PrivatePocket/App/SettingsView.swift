@@ -175,7 +175,7 @@ struct SettingsView: View {
                 .confirmationDialog("Clear all moments?", isPresented: $confirmClear, titleVisibility: .visible) {
                     Button("Clear all moments", role: .destructive) { model.clearMoments() }
                 } message: {
-                    Text("Every moment on this iPhone, what was read from it, and the reminders and events made from them. The Pocket keeps its own copies until you clear it over USB.")
+                    Text("Every moment on this iPhone, what was read from it, and the reminders and events made from them. The Pocket keeps its own copies until you clear it over USB, but they won't be fetched again.")
                 }
                 .confirmationDialog("Reset everything?", isPresented: $confirmReset, titleVisibility: .visible) {
                     Button("Reset everything", role: .destructive) {

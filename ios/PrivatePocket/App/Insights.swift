@@ -275,10 +275,14 @@ struct Digest {
             let items = (r.meta.insight?.items ?? []).filter { !$0.isDismissed }
             for name in r.people {
                 map[name, default: Person(name: name)].moments.append(r)
-                map[name]?.youOwe += items.filter { $0.isAction && !$0.isDone && $0.text.localizedCaseInsensitiveContains(name) }.count
+                map[name]?.youOwe += items.filter { $0.isAction && !$0.isDone && $0.text.mentions(name) }.count
             }
             for item in items where item.isPromise {
-                if let raw = item.who, let who = PeopleNames.canonical(raw) { map[who, default: Person(name: who)].waitingOn.append(item) }
+                // "Maya and Ravi" is a promise from each of them, not from a third person.
+                for raw in (item.who ?? "").components(separatedBy: " and ") {
+                    guard let who = PeopleNames.canonical(raw.trimmingCharacters(in: .whitespaces)) else { continue }
+                    map[who, default: Person(name: who)].waitingOn.append(item)
+                }
             }
         }
         return map.values.sorted { ($0.moments.count, $0.name) > ($1.moments.count, $1.name) }.prefix(limit).map { $0 }
@@ -436,7 +440,7 @@ enum Findings {
         for r in recent {
             guard let said = r.startedAt else { continue }
             for item in r.meta.insight?.items ?? [] where item.isAction && !item.isDone && !item.isDismissed {
-                let named = item.who ?? names.first { item.text.range(of: $0, options: .caseInsensitive) != nil }
+                let named = item.who ?? names.first { item.text.mentions($0) }
                 guard let who = named, !who.isEmpty else { continue }
                 let days = Int(now.timeIntervalSince(said) / 86_400)
                 guard days >= 2 else { continue }
@@ -703,4 +707,12 @@ enum Findings {
 
 extension String {
     var capitalizedFirst: String { prefix(1).uppercased() + dropFirst() }
+
+    /// The name as a word in this text: "Tom" in "call Tom back", not in "tomorrow".
+    func mentions(_ name: String) -> Bool {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return false }
+        let pattern = "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: n) + "(?![\\p{L}\\p{N}])"
+        return range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
 }

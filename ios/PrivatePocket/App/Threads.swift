@@ -346,6 +346,11 @@ final class ThreadStore: ObservableObject {
             records = f.threads
             book = f.people ?? PeopleBook()
         } else {
+            // A file that no longer decodes is kept aside before the next save writes over it.
+            if let d = try? Data(contentsOf: url) {
+                let bad = url.appendingPathExtension("bad")
+                if !FileManager.default.fileExists(atPath: bad.path) { try? d.write(to: bad) }
+            }
             records = []
             book = PeopleBook()
         }
@@ -635,6 +640,8 @@ final class ThreadStore: ObservableObject {
             var result: ThreadReader.Result?
             if useModel {
                 result = try? await ThreadReader.read(name: t.name, state: s, open: t.open, moments: batch, config: LLM.config)
+                // The model failed (the server away, say): these stay unread, to be read properly next time.
+                if result == nil { break }
             }
             let r = result ?? ThreadReader.plain(t, state: s, moments: batch)
             if let story = r.story { s.story = story }
@@ -644,10 +651,18 @@ final class ThreadStore: ObservableObject {
             for id in r.notAbout where (t.record.pinned ?? []).contains(id) { doubt(id, in: t.id) }
         }
         s.updated = Date()
-        if let i = index(t.id) {
-            records[i].state = s
-            save()
-        }
+        guard let i = index(t.id) else { return }
+        // Merged into the state as it is now: a moment taken out while this read stays out.
+        let out = Set(records[i].excluded ?? [])
+        var now = records[i].state ?? ThreadState()
+        let known = Set(now.changes.map(\.id))
+        now.story = s.story ?? now.story
+        now.changes += s.changes.filter { !known.contains($0.id) && !out.contains($0.recordingID ?? "") }
+        now.read = Self.unique(now.read + s.read).filter { !out.contains($0) }
+        now.byModel = s.byModel
+        now.updated = s.updated
+        records[i].state = now
+        save()
     }
 
     private static func unique(_ xs: [String]) -> [String] {

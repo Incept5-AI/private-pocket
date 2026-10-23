@@ -440,13 +440,15 @@ final class AppModel: ObservableObject {
     /// lands on Now and the Lock Screen, phone still in the bag.
     private func watchForCard() {
         cardWatch?.cancel()
+        cardSeen = []   // a phrase said in an earlier recording is heard again in this one
         cardWatch = live.$finalText
             .debounce(for: .seconds(1.5), scheduler: DispatchQueue.main)
             .sink { [weak self] text in self?.scanForCard(text); self?.scanForThreads(text) }
     }
 
     private func scanForCard(_ text: String) {
-        guard let re = try? NSRegularExpression(pattern: #"\bpocket[,:]?\s+([^.?!]{4,140})[.?!]"#, options: .caseInsensitive) else { return }
+        // "Pocket," at the start of a sentence, addressed: not "it's in my pocket and left."
+        guard let re = try? NSRegularExpression(pattern: #"(?:^|[.?!]\s+)pocket[,:]\s+([^.?!]{4,140})[.?!]"#, options: .caseInsensitive) else { return }
         let ns = text as NSString
         for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
             let phrase = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
@@ -480,7 +482,8 @@ final class AppModel: ObservableObject {
         let sources = library.recordings.filter { $0.meta.transcript != nil }
         guard !sources.isEmpty, LLM.availability == nil else { finish("Nothing to answer from yet."); return }
         await ask(phrase, scope: "card", recordings: sources)
-        finish(conversations["card"]?.last?.answer ?? conversations["card"]?.last?.error ?? "I couldn't find that.")
+        let qa = conversations["card"]?.last { $0.question == phrase }   // its own answer, if two overlap
+        finish(qa?.answer ?? qa?.error ?? "I couldn't find that.")
     }
 
     /// A thread named in the room that has been quiet a while, or the one Record was
@@ -1001,22 +1004,27 @@ final class AppModel: ObservableObject {
         await Planner.warm()
         let link = Planner.momentURL(r)
         for item in items where !item.isDismissed {
-            if let id = item.reminderID {
+            // Only what can be read is synced: with access off, nothing looks removed.
+            if let id = item.reminderID, Planner.canRead(.reminder) {
                 switch Planner.lookup(id) {
                 case .missing:
                     change(r, item) { $0.reminderID = nil; $0.unplaced = true }
                 case .found(let p):
                     await Planner.ensureLink(id, link)
                     change(r, item) { Self.take(p, into: &$0) }
+                case .unknown:
+                    break
                 }
             }
-            if let id = item.eventID {
+            if let id = item.eventID, Planner.canRead(.event) {
                 switch Planner.lookup(id) {
                 case .missing:
                     change(r, item) { $0.eventID = nil; $0.unplaced = true }
                 case .found(let p):
                     await Planner.ensureLink(id, link)
                     change(r, item) { Self.take(p, into: &$0) }
+                case .unknown:
+                    break
                 }
             }
         }
@@ -1089,6 +1097,7 @@ final class AppModel: ObservableObject {
     /// Every recording on this phone that was never transcribed, one at a time, quietly:
     /// nothing should need a tap to become a moment. Each is tried once per session.
     func transcribeWhatLanded() async {
+        MomentShare.sweep()
         threads.discover(library.recordings)
         await ServerStatus.shared.check()
         await respreadSamples()

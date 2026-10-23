@@ -232,7 +232,7 @@ struct PersonView: View {
         var s: [String] = []
         let theirs = p.waitingOn.filter { !$0.isDone }
         if let t = theirs.first { s.append("\(p.name) owes you \(t.text.lowercased())" + (theirs.count > 1 ? ", and \(theirs.count - 1) more." : ".")) }
-        let yours = p.moments.flatMap { ($0.meta.insight?.items ?? []).filter { $0.isAction && !$0.isDone && !$0.isDismissed && $0.text.localizedCaseInsensitiveContains(p.name) } }
+        let yours = p.moments.flatMap { ($0.meta.insight?.items ?? []).filter { $0.isAction && !$0.isDone && !$0.isDismissed && $0.text.mentions(p.name) } }
         if let y = yours.first { s.append("You owe \(y.text.lowercased())" + (yours.count > 1 ? ", and \(yours.count - 1) more." : ".")) }
         if s.isEmpty {
             if let l = p.lastSeen { s.append("Nothing open between you. Last spoke \(Findings.dayName(l)).") } else { s.append("Nothing open between you.") }
@@ -246,7 +246,7 @@ struct PersonView: View {
         let tint = p.isWork ? Brand.work : Brand.life, ink = p.isWork ? Brand.onWork : Brand.onLife
         let theirs = p.waitingOn.filter { !$0.isDone }
         let yours: [(Recording, NextItem)] = p.moments.flatMap { r in
-            (r.meta.insight?.items ?? []).filter { $0.isAction && !$0.isDone && !$0.isDismissed && $0.text.localizedCaseInsensitiveContains(p.name) }.map { (r, $0) }
+            (r.meta.insight?.items ?? []).filter { $0.isAction && !$0.isDone && !$0.isDismissed && $0.text.mentions(p.name) }.map { (r, $0) }
         }
         let mine = Set(p.moments.map(\.id))
         let between = threads.live(all).filter { t in t.moments.contains { mine.contains($0.id) } }.sorted { $0.weight > $1.weight }.prefix(6)

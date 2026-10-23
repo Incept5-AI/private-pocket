@@ -6,6 +6,20 @@ import SwiftUI
 enum MomentShare {
     enum Kind { case audio, transcript, both }
 
+    /// Shared files, the export zip and clips, an hour after they were made: the share sheet
+    /// has long finished with them, and the app can stay running for days.
+    static func sweep() {
+        let fm = FileManager.default
+        let tmp = fm.temporaryDirectory
+        let cutoff = Date().addingTimeInterval(-3600)
+        for u in (try? fm.contentsOfDirectory(at: tmp, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] {
+            let name = u.lastPathComponent
+            guard name.hasPrefix("Share-") || name == "Private Pocket moments.zip" || (name.hasPrefix("Clip ") && name.hasSuffix(".m4a")) else { continue }
+            let made = (try? u.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if made < cutoff { try? fm.removeItem(at: u) }
+        }
+    }
+
     /// "Workshop with Maya 2026-10-23 13.02": the moment's title and when, safe as a file name.
     static func baseName(_ r: Recording) -> String {
         let bad = CharacterSet(charactersIn: "/\\:?%*|\"<>“”").union(.newlines)
