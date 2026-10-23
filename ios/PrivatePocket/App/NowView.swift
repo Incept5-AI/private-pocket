@@ -1,0 +1,477 @@
+import SwiftUI
+
+/// Now: the right thing for the hour, then the tape. Setting up or pairing when that is
+/// what matters; what was just read; what needs you; what the app noticed; the day at
+/// six; yesterday, set, in the morning. Under it, the tape of everything said.
+struct NowView: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var library: Library
+    @EnvironmentObject var devices: DeviceStore
+    @EnvironmentObject var link: PocketLink
+    @EnvironmentObject var live: LiveSession
+    @State private var path = NavigationPath()
+    @State private var showPocket = false
+    @State private var showSettings = false
+    @State private var scale: TapeScale = .day
+    @State private var focus = Date()
+    @State private var cache = DigestCache()
+    @State private var visible: Set<String> = []
+    @State private var scrolling = false
+    @State private var hideHandle: Task<Void, Never>?
+    @State private var dismissed: Set<String> = Prefs.dismissedFindings
+    @State private var toast: String?
+
+    private var recording: Bool { link.status.recordingSince != nil }
+
+    var body: some View {
+        let all = library.recordings
+        let days = TapeDays.grouped(all)
+        NavigationStack(path: $path) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 14, pinnedViews: []) {
+                        header
+                        blocks(all)
+                        tapeHeader
+                        switch scale {
+                        case .day:
+                            ForEach(days, id: \.day) { group in
+                                Text(TapeDays.label(group.day))
+                                    .font(.title3.weight(.bold)).padding(.top, 10)
+                                    .id(TapeDays.id(group.day))
+                                ForEach(group.moments) { r in
+                                    NavigationLink(value: r.id) { TapeBand(recording: r) }
+                                        .buttonStyle(.plain)
+                                        .id(r.id)
+                                        .onAppear { visible.insert(r.id); noteScrolling() }
+                                        .onDisappear { visible.remove(r.id); noteScrolling() }
+                                        .contextMenu { momentMenu(r) }
+                                }
+                            }
+                            if days.isEmpty { emptyTape }
+                        case .week: TapeWeek(all: all, focus: focus) { land($0, proxy) }
+                        case .month: TapeMonth(all: all, focus: focus) { land($0, proxy) }
+                        case .year: TapeYear(all: all, focus: focus) { land($0, proxy) }
+                        }
+                    }
+                    .padding(.horizontal, 20).padding(.top, 6).padding(.bottom, 28)
+                }
+                .background(Brand.ground)
+                .scrollIndicators(.hidden)
+                .overlay(alignment: .trailing) {
+                    if scale == .day, all.count >= 2 {
+                        DateFinder(moments: all.compactMap { r in r.startedAt.map { (id: r.id, at: $0) } }.sorted { $0.at > $1.at },
+                                   topDate: all.filter { visible.contains($0.id) }.compactMap(\.startedAt).max(),
+                                   active: scrolling) { id in
+                            withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .top) }
+                        }
+                        .padding(.vertical, 6).padding(.trailing, 2)
+                        .accessibilityHidden(true)
+                    }
+                }
+                .overlay(alignment: .bottom) { toastView }
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
+                .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
+                .sheet(isPresented: $showPocket) { PocketView() }
+                .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
+                .onChange(of: model.openMomentID, initial: true) {
+                    guard let id = model.openMomentID else { return }
+                    model.openMomentID = nil
+                    path.append(id)
+                }
+            }
+        }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Date().formatted(.dateTime.weekday(.wide).day().month(.wide))).font(.footnote.weight(.semibold)).foregroundStyle(Brand.muted)
+                Text(greeting).font(.largeTitle.weight(.bold)).tracking(-0.5)
+            }
+            Spacer()
+            Button { showSettings = true } label: {
+                Image(systemName: "gearshape").font(.body.weight(.semibold)).foregroundStyle(Brand.textSecondary)
+                    .frame(width: 36, height: 36).background(Brand.surface, in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Settings")
+        }
+        .padding(.top, 8)
+    }
+
+    private var greeting: String {
+        let h = Calendar.current.component(.hour, from: Date())
+        if recording { return "Recording." }
+        return h < 12 ? "Good morning." : h < 18 ? "Good afternoon." : "Good evening."
+    }
+
+    // MARK: The blocks
+
+    @ViewBuilder private func blocks(_ all: [Recording]) -> some View {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let cal = Calendar.current
+        if devices.devices.isEmpty {
+            NowBlock(tint: Brand.paper, ink: Brand.onPaper, tag: "Your Pocket", title: "Press once. Hear everything.",
+                     line: "Have your Pocket nearby and switched on. No account, no cloud.",
+                     action: "Find my Pocket") { showPocket = true }
+        } else if !model.canCommand {
+            NowBlock(tint: Brand.record, ink: Brand.onRecord, tag: "Needs pairing", title: "Hold the side button for five seconds, until the light blinks blue.",
+                     line: "The app pairs by itself while it blinks. Recordings started with the button still stream here meanwhile.",
+                     action: "Show me") { showPocket = true }
+        }
+        if recording || live.isActive { liveBlock }
+        if let r = justRead(all) {
+            NowBlock(tint: r.kind.isLife ? Brand.life : Brand.work, ink: r.kind.isLife ? Brand.onLife : Brand.onWork,
+                     tag: "Just read · \(r.kind.label)", title: r.quote,
+                     line: readLine(r), action: "Open it") { path.append(r.id) }
+        }
+        if hour < 12, let y = yesterday(all, cal: cal) {
+            NowBlock(tint: Brand.paper, ink: Brand.onPaper, tag: "Yesterday, set · \(y.moments.count) conversation\(y.moments.count == 1 ? "" : "s")",
+                     title: y.headline, line: y.line, action: "Yesterday's tape") {
+                path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id)))
+            }
+        }
+        if hour >= 17, let t = todayLine(all, cal: cal) {
+            NowBlock(tint: Brand.work, ink: Brand.onWork, tag: "Six o'clock", title: t.title, line: t.line, action: t.action) {
+                if let id = t.id { path.append(id) }
+            }
+        }
+        let needs = Digest.needs(all)
+        if !needs.isEmpty {
+            NeedsBlock(needs: needs) { path.append($0) }
+        }
+        if let f = topFinding(all) {
+            FindingBlock(finding: f, perform: { perform($0) }, notRight: {
+                withAnimation { dismissed.insert("week|" + f.id) }
+                Prefs.dismissedFindings = dismissed
+            })
+        }
+    }
+
+    private var liveBlock: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                if let since = link.status.recordingSince {
+                    Text(timerInterval: since...Date.distantFuture, countsDown: false)
+                        .font(.system(.largeTitle, design: .rounded, weight: .bold)).monospacedDigit()
+                } else {
+                    Text("Saving…").font(.title2.weight(.bold))
+                }
+                Spacer()
+                Text("LIVE").font(.caption.weight(.bold)).tracking(1)
+            }
+            if !live.text.isEmpty {
+                Text(String(live.text.suffix(160))).font(.callout.weight(.medium)).lineLimit(3)
+            } else {
+                Text(live.isActive ? "Listening…" : "Started before the phone connected; it's fetched when it stops.").font(.callout.weight(.medium))
+            }
+            if model.canCommand, recording {
+                Button { Task { await model.toggleRecording() } } label: {
+                    Text("Stop").font(.subheadline.weight(.bold)).padding(.horizontal, 16).padding(.vertical, 8)
+                        .background(Brand.onRecord, in: Capsule()).foregroundStyle(Brand.record)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.record, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .foregroundStyle(Brand.onRecord)
+    }
+
+    private func justRead(_ all: [Recording]) -> Recording? {
+        let cutoff = Date().addingTimeInterval(-3 * 3600)
+        return all.filter { ($0.meta.analysedAt ?? .distantPast) > cutoff && $0.meta.insight?.readByModel == true }
+            .max { ($0.meta.analysedAt ?? .distantPast) < ($1.meta.analysedAt ?? .distantPast) }
+    }
+
+    private func readLine(_ r: Recording) -> String {
+        let items = (r.meta.insight?.items ?? []).filter { !$0.isDismissed }
+        var parts: [String] = []
+        let todo = items.filter(\.isAction).count
+        if todo > 0 { parts.append("\(todo) to do") }
+        let dates = items.filter(\.isDate).count
+        if dates > 0 { parts.append("\(dates) date\(dates == 1 ? "" : "s")") }
+        if let d = r.meta.insight?.decisions?.count, d > 0 { parts.append("\(d) decided") }
+        if !r.people.isEmpty { parts.append("with " + r.people.prefix(3).joined(separator: ", ")) }
+        return parts.isEmpty ? "Read a moment ago." : parts.joined(separator: " · ") + "."
+    }
+
+    private func yesterday(_ all: [Recording], cal: Calendar) -> (moments: [Recording], headline: String, line: String)? {
+        let moments = all.filter { $0.startedAt.map { cal.isDateInYesterday($0) } == true }
+        guard !moments.isEmpty else { return nil }
+        let decisions = moments.flatMap { $0.meta.insight?.decisions ?? [] }
+        let longest = moments.max { ($0.meta.seconds ?? 0) < ($1.meta.seconds ?? 0) }
+        let headline = decisions.first ?? longest?.quote ?? "A quiet day."
+        let items = moments.flatMap { ($0.meta.insight?.items ?? []).filter { !$0.isDismissed } }
+        let todo = items.filter { $0.isAction && !$0.isDone }.count
+        let promised = items.filter { $0.isPromise && !$0.isDone }
+        var line = "\(Digest.hours(moments.map { $0.meta.seconds ?? 0 }.reduce(0, +))) of talk"
+        if !decisions.isEmpty { line += ", \(decisions.count) decided" }
+        if todo > 0 { line += ", \(todo) to do" }
+        if let p = promised.first, let who = p.who { line += ". \(who) owes you: \(p.text.lowercased())" }
+        return (moments, headline, line + ".")
+    }
+
+    private func todayLine(_ all: [Recording], cal: Calendar) -> (title: String, line: String, action: String, id: String?)? {
+        let moments = all.filter { $0.startedAt.map { cal.isDateInToday($0) } == true }
+        guard !moments.isEmpty else { return nil }
+        let decided = moments.flatMap { $0.meta.insight?.decisions ?? [] }.count
+        let items: [(Recording, NextItem)] = moments.flatMap { r in
+            (r.meta.insight?.items ?? []).filter { !$0.isDismissed && $0.isAction && !$0.isDone }.map { (r, $0) }
+        }
+        let opened = items.count
+        let title = "Today decided \(decided == 0 ? "nothing yet" : "\(decided) thing\(decided == 1 ? "" : "s")") and opened \(opened)."
+        if let pair = items.first(where: { $0.1.isSolid }) ?? items.first {
+            return (title, "Before you stop: \(pair.1.text). It's open in \(pair.0.displayTitle).", "Open it", pair.0.id)
+        }
+        return (title, "Nothing waiting on you tonight.", "Today's tape", nil)
+    }
+
+    private func topFinding(_ all: [Recording]) -> Finding? {
+        let window = Calendar.current.dateInterval(of: .weekOfYear, for: Date()) ?? DateInterval(start: .distantPast, end: .distantFuture)
+        let d = cache.digest(all, window: window)
+        let history = (1...3).map { k -> Digest in
+            let cal = Calendar.current
+            let start = cal.date(byAdding: .weekOfYear, value: -k, to: window.start) ?? window.start
+            return cache.digest(all, window: cal.dateInterval(of: .weekOfYear, for: start) ?? window)
+        }
+        return Findings.make(d, previous: history.first, history: history, all: all, spanName: "week")
+            .first { !dismissed.contains("week|" + $0.id) && $0.id != "early" }
+    }
+
+    private func perform(_ a: Finding.Action) {
+        switch a {
+        case .open(let ids, let title):
+            if ids.count == 1, let id = ids.first { path.append(id) } else { path.append(MomentsFilter(title: title, ids: ids)) }
+        case .remind(let title, let due, let note):
+            Task { if await model.quickReminder(title, due: due, note: note) { show("Added to Reminders") } }
+        case .chase(let r, let item):
+            Task { await model.remindMe(r, item: item); show("Reminder set") }
+        case .place(let r, let item):
+            Task { await model.place(r, item); show("Added to Reminders") }
+        case .placeAll(let pairs):
+            Task { for (r, i) in pairs { await model.place(r, i) }; show("\(pairs.count) added to Reminders") }
+        case .record:
+            break
+        }
+    }
+
+    private func show(_ text: String) {
+        withAnimation { toast = text }
+        Task {
+            try? await Task.sleep(for: .seconds(2.2))
+            withAnimation { if toast == text { toast = nil } }
+        }
+    }
+
+    @ViewBuilder private var toastView: some View {
+        if let toast {
+            Text(toast).font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 16).padding(.vertical, 10)
+                .glassEffect(.regular, in: Capsule())
+                .padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
+    // MARK: The tape
+
+    private var tapeHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("The tape").font(.title2.weight(.bold))
+                Spacer()
+                Text(scale == .day ? "newest first" : scale == .year ? "every day" : "tap a day").font(.caption).foregroundStyle(Brand.dim)
+            }
+            TapeScaleControl(scale: $scale)
+        }
+        .padding(.top, 14)
+    }
+
+    private var emptyTape: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Nothing on the tape yet.").font(.headline)
+            Text("Press the side button on your Pocket. Moments stream in as they are made, and ones recorded while the phone was away arrive when it reconnects.")
+                .font(.subheadline).foregroundStyle(Brand.muted)
+            Button("Add sample moments") { Task { await model.addSamples() } }.font(.subheadline.weight(.semibold))
+        }
+        .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func land(_ day: Date, _ proxy: ScrollViewProxy) {
+        focus = day
+        withAnimation(.easeInOut(duration: 0.2)) { scale = .day }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            withAnimation { proxy.scrollTo(TapeDays.id(Calendar.current.startOfDay(for: day)), anchor: .top) }
+        }
+    }
+
+    private func noteScrolling() {
+        hideHandle?.cancel()
+        if !scrolling { withAnimation(.spring(duration: 0.35)) { scrolling = true } }
+        hideHandle = Task {
+            try? await Task.sleep(for: .seconds(1.4))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeOut(duration: 0.35)) { scrolling = false }
+        }
+    }
+
+    @ViewBuilder private func momentMenu(_ r: Recording) -> some View {
+        Button { path.append(r.id) } label: { Label("Open", systemImage: "arrow.up.right") }
+        ShareLink(item: model.notes(for: r)) { Label("Share as notes", systemImage: "square.and.arrow.up") }
+        if !r.people.isEmpty, let p = r.people.first {
+            Button { path.append(MomentsFilter(title: p, ids: library.recordings.filter { $0.people.contains(p) }.map(\.id))) } label: { Label("Everything with \(p)", systemImage: "person") }
+        }
+    }
+}
+
+/// A block on Now: a colour field, a tag, a line that matters, and the one thing to do.
+struct NowBlock: View {
+    let tint: Color
+    let ink: Color
+    let tag: String
+    let title: String
+    let line: String
+    var action: String? = nil
+    var run: () -> Void = {}
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(tag.uppercased()).font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(ink.opacity(0.75))
+            Text(title).font(.title3.weight(.bold)).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
+            Text(line).font(.subheadline).lineSpacing(2).foregroundStyle(ink.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
+            if let action {
+                Button(action: run) {
+                    Text(action).font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(ink, in: Capsule()).foregroundStyle(tint)
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .foregroundStyle(ink)
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .onTapGesture { if action != nil { run() } }
+    }
+}
+
+/// What needs you now, as a teal block: the first three, each opening its moment.
+struct NeedsBlock: View {
+    let needs: [Digest.Need]
+    let open: (String) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("NEEDS YOU · \(needs.count)").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.onAct.opacity(0.75))
+            ForEach(needs.prefix(3)) { n in
+                Button { open(n.recording.id) } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(n.why.uppercased()).font(.caption2.weight(.bold)).frame(width: 60, alignment: .leading).padding(.top, 3).opacity(0.75)
+                        Text(n.item.text).font(.callout.weight(.semibold)).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.act, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .foregroundStyle(Brand.onAct)
+    }
+}
+
+/// What the app noticed, as a lilac block with its own button and Not right.
+struct FindingBlock: View {
+    let finding: Finding
+    let perform: (Finding.Action) -> Void
+    let notRight: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("NOTICED · \(finding.tag.uppercased())").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.onNotice.opacity(0.75))
+            Text(finding.text).font(.title3.weight(.bold)).lineSpacing(1).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                if let c = finding.choices.first {
+                    Button { perform(c.action) } label: {
+                        Text(c.label).font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(Brand.onNotice, in: Capsule()).foregroundStyle(Brand.notice)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer()
+                Button("Not right", action: notRight).font(.footnote.weight(.bold)).buttonStyle(.plain).opacity(0.75)
+            }
+            .padding(.top, 2)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.notice, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .foregroundStyle(Brand.onNotice)
+    }
+}
+
+/// The record control, in the bottom accessory above the tabs: Record or Stop, the time
+/// while it records, and the Pocket's state, which opens the Pocket's own screen.
+struct RecordAccessory: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var link: PocketLink
+    @EnvironmentObject var live: LiveSession
+    @EnvironmentObject var devices: DeviceStore
+    @State private var showPocket = false
+
+    private var recording: Bool { link.status.recordingSince != nil }
+    private var connected: Bool { link.connectedDeviceID != nil && link.connectedDeviceID == devices.selectedID }
+
+    private var state: String {
+        if recording { return live.isActive ? "Streaming" : "On the card" }
+        if !model.canCommand { return "Needs pairing" }
+        if !connected { return "Away" }
+        if let b = link.status.battery { return "Ready · \(b)%" }
+        return "Ready"
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { Task { await model.toggleRecording() } } label: {
+                HStack(spacing: 8) {
+                    ZStack {
+                        Circle().fill(Brand.onRecord).frame(width: 30, height: 30)
+                        RoundedRectangle(cornerRadius: recording ? 3 : 7, style: .continuous).fill(Brand.record).frame(width: 14, height: 14)
+                    }
+                    if let since = link.status.recordingSince, recording {
+                        Text(timerInterval: since...Date.distantFuture, countsDown: false).font(.subheadline.weight(.bold)).monospacedDigit()
+                    } else {
+                        Text("Record").font(.subheadline.weight(.bold))
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .disabled(!model.canCommand || (!connected && !recording))
+            .accessibilityLabel(recording ? "Stop recording" : "Record")
+            Spacer(minLength: 6)
+            Button { showPocket = true } label: {
+                HStack(spacing: 6) {
+                    LightDot(state: recording ? .recording : model.canCommand && connected ? .on : .off).frame(width: 8, height: 8)
+                    Text(state).font(.footnote.weight(.semibold)).lineLimit(1)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Your Pocket")
+        }
+        .padding(.horizontal, 12)
+        .foregroundStyle(Brand.onRecord)
+        .background(Brand.record)
+        .animation(.easeInOut(duration: 0.25), value: recording)
+        .sheet(isPresented: $showPocket) { PocketView() }
+    }
+}

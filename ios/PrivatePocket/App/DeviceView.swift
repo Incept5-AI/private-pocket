@@ -6,6 +6,7 @@ struct RootView: View {
     @EnvironmentObject var link: PocketLink
     @EnvironmentObject var live: LiveSession
     @EnvironmentObject var library: Library
+    @EnvironmentObject var devices: DeviceStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var walkthrough = !Prefs.walkthroughSeen
     @State private var tab = 0
@@ -14,20 +15,21 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            Tab("Pocket", systemImage: "creditcard", value: 0) { PocketView() }
-            Tab("Moments", systemImage: "quote.bubble", value: 1) { RecordingsView() }
-            Tab("Insights", systemImage: "chart.bar.xaxis", value: 2) { InsightsView() }
-            Tab("Ask", systemImage: "magnifyingglass", value: 3) { AskTab() }
+            Tab("Now", systemImage: "clock", value: 0) { NowView() }
+            Tab("Threads", systemImage: "line.3.horizontal", value: 1) { ThreadsView() }
+            Tab("People", systemImage: "person.2", value: 2) { PeopleView() }
+            Tab("You", systemImage: "person.crop.circle", value: 3) { YouView() }
+            Tab("Ask", systemImage: "magnifyingglass", value: 4, role: .search) { AskView() }
         }
         // privatepocket://moment?id=…, from a reminder or an event: the moment it came from.
         .onOpenURL { url in
             guard url.scheme == "privatepocket", url.host == "moment",
                   let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value else { return }
-            tab = 1
+            tab = 0
             model.openMomentID = id
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory(isEnabled: recording || live.isActive) { NowRecordingBar() }
+        .tabViewBottomAccessory(isEnabled: !devices.devices.isEmpty) { RecordAccessory() }
         .sensoryFeedback(trigger: recording) { _, now in now ? .start : .stop }
         .sensoryFeedback(.success, trigger: model.canCommand) { was, now in !was && now }
         .sensoryFeedback(.impact(weight: .light), trigger: library.recordings.count) { was, now in now > was }   // a moment landed

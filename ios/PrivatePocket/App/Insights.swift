@@ -157,7 +157,7 @@ struct Digest {
     ]
 
     /// Capitalised terms, joined into phrases, that run through two or more moments.
-    static func threads(_ moments: [Recording], people: Set<String>) -> [Thread] {
+    static func threads(_ moments: [Recording], people: Set<String>, limit: Int = 6) -> [Thread] {
         var byTerm: [String: [Recording]] = [:]
         var latest: [String: (Date, String)] = [:]
         for r in moments {
@@ -191,10 +191,10 @@ struct Digest {
         return byTerm.filter { $0.value.count >= 2 }
             .map { Thread(term: $0.key, moments: $0.value, latest: latest[$0.key]?.1) }
             .sorted { ($0.moments.count, $0.term) > ($1.moments.count, $1.term) }
-            .prefix(6).map { $0 }
+            .prefix(limit).map { $0 }
     }
 
-    static func people(_ moments: [Recording]) -> [Person] {
+    static func people(_ moments: [Recording], limit: Int = 10) -> [Person] {
         var map: [String: Person] = [:]
         for r in moments {
             let items = (r.meta.insight?.items ?? []).filter { !$0.isDismissed }
@@ -206,7 +206,7 @@ struct Digest {
                 if let who = item.who { map[who, default: Person(name: who)].waitingOn.append(item) }
             }
         }
-        return map.values.sorted { ($0.moments.count, $0.name) > ($1.moments.count, $1.name) }.prefix(10).map { $0 }
+        return map.values.sorted { ($0.moments.count, $0.name) > ($1.moments.count, $1.name) }.prefix(limit).map { $0 }
     }
 
     /// What the model reads to write the briefing: one block per moment, from the readings.
