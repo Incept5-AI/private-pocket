@@ -1,13 +1,14 @@
 import SwiftUI
 
-/// First use: eight screens, swipe only. The card does the talking, four words a
+/// First use: seven screens, swipe only. The card does the talking, four words a
 /// screen: wake it, pair (the page finds and adds the Pocket itself), record, the
-/// switch, what the light means, reset, and the way back. Shown once on first launch,
-/// and again from Settings or the Pocket menu.
+/// switch, what the light means, and the way back when it won't pair, with the reset
+/// acted out on the card. Shown once on first launch, and again from Settings or the
+/// Pocket menu.
 struct WalkthroughView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var page = 0
-    private let last = 7
+    private let last = 6
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -19,8 +20,7 @@ struct WalkthroughView: View {
                 RecordPage().tag(3)
                 SwitchPage().tag(4)
                 LightPage().tag(5)
-                ResetPage().tag(6)
-                RepairPage(start: finish).tag(7)
+                RepairPage(start: finish).tag(6)
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .indexViewStyle(.page(backgroundDisplayMode: .never))
@@ -412,43 +412,6 @@ private func playReset(phase: Binding<ResetPhase>, presses: Binding<Int>, presse
     return true
 }
 
-/// Reset, as one sequence: named first, with when to use it and what it does, then the four
-/// steps lighting up in turn as the card goes through them.
-struct ResetPage: View {
-    @State private var phase: ResetPhase = .tapping
-    @State private var presses = 0
-    @State private var pressed = false
-
-    private var glow: Color? {
-        switch phase {
-        case .tapping, .holding: nil
-        case .erasing: Lamp.resetting
-        case .ready: Lamp.ready
-        }
-    }
-
-    var body: some View {
-        WalkPage(glow: glow, headline: "Reset the Pocket.",
-                 line: "Only if it won't pair, or keeps dropping out. A reset erases the card.") {
-            ResetCard(phase: phase, presses: presses, pressed: pressed)
-                .scaleEffect(0.84)
-        } footer: {
-            VStack(alignment: .leading, spacing: 9) {
-                RepairStep(n: 1, text: "Press the side button three times, quickly.", on: phase == .tapping, tint: Lamp.resetting)
-                RepairStep(n: 2, text: "On the third press, keep holding.", on: phase == .holding, tint: Lamp.resetting)
-                RepairStep(n: 3, text: "Let go when the light blinks red. It's erasing.", on: phase == .erasing, tint: Lamp.resetting)
-                RepairStep(n: 4, text: "Blinking blue: ready to pair, like new.", on: phase == .ready, tint: Lamp.resetting)
-            }
-            .padding(.horizontal, 32)
-        }
-        .task {
-            while !Task.isCancelled {
-                guard await playReset(phase: $phase, presses: $presses, pressed: $pressed, thenReady: true) else { return }
-            }
-        }
-    }
-}
-
 /// The way back when it won't pair or keeps dropping out: Bluetooth off on the phone,
 /// the card reset, Bluetooth on, pair again. Spelled out, because it is the one thing
 /// the card cannot show you with its light.
@@ -477,7 +440,7 @@ struct RepairPage: View {
                 .scaleEffect(0.78).offset(y: -22)
                 VStack(alignment: .leading, spacing: 9) {
                     RepairStep(n: 1, text: "Turn Bluetooth off on your iPhone, in Settings.", on: step == 0)
-                    RepairStep(n: 2, text: "Reset the Pocket: press three times, keeping the third held until it blinks red.", on: step == 1, tint: Lamp.resetting)
+                    RepairStep(n: 2, text: "Reset the Pocket: three quick presses, the third held until the light blinks red. It erases the card.", on: step == 1, tint: Lamp.resetting)
                     RepairStep(n: 3, text: "Turn Bluetooth back on.", on: step == 2)
                     RepairStep(n: 4, text: "Hold the side button five seconds until it blinks blue, then tap Pair.", on: step == 3)
                 }
