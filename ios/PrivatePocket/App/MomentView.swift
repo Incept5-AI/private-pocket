@@ -101,7 +101,7 @@ struct MomentView: View {
             }
             .sensoryFeedback(.impact(weight: .light), trigger: showDetails) { _, open in open }
             .sheet(item: $behind) { b in BehindSheet(id: r.id, behind: b, player: player).presentationDetents([.medium]) }
-            .sheet(isPresented: $showDetails) { MomentDetailsSheet(id: r.id) }
+            .navigationDestination(isPresented: $showDetails) { MomentDetailsPage(id: r.id) }
             .alert("Name this moment", isPresented: $renaming) {
                 TextField(r.displayTitle, text: $newTitle)
                 Button("Save") { model.rename(r, to: newTitle) }
@@ -983,8 +983,9 @@ struct BehindSheet: View {
     }
 }
 
-/// The plumbing: recorded when, how long, which Pocket, where, the file.
-struct MomentDetailsSheet: View {
+/// The plumbing: recorded when, how long, which Pocket, where, the file. A page pushed
+/// beside the moment, reached by swiping left on it or its info button; swipe right to go back.
+struct MomentDetailsPage: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var library: Library
     @EnvironmentObject var devices: DeviceStore
@@ -992,7 +993,7 @@ struct MomentDetailsSheet: View {
     let id: String
 
     var body: some View {
-        NavigationStack {
+        Group {
             if let r = library.recordings.first(where: { $0.id == id }) {
                 List {
                     Section("Moment") {
@@ -1046,9 +1047,9 @@ struct MomentDetailsSheet: View {
                 .background(Brand.ground)
                 .navigationTitle("Details")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            } else {
+                ContentUnavailableView("Moment deleted", systemImage: "trash")
             }
         }
-        .preferredColorScheme(.dark)
     }
 }
