@@ -679,12 +679,13 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshDone(_ r: Recording) {
+    func refreshDone(_ r: Recording) async {
         guard let items = r.meta.insight?.next else { return }
+        await Planner.warm()
         let link = Planner.momentURL(r)
         for item in items {   // made before links existed: given one now
-            if let id = item.reminderID { Planner.ensureLink(id, link) }
-            if let id = item.eventID { Planner.ensureLink(id, link) }
+            if let id = item.reminderID { await Planner.ensureLink(id, link) }
+            if let id = item.eventID { await Planner.ensureLink(id, link) }
         }
         for item in items where item.isAction {
             if let id = item.reminderID, let c = Planner.reminderCompleted(id), c != item.isDone {
@@ -737,7 +738,7 @@ final class AppModel: ObservableObject {
         await rereadOutdated(library.recordings)
         // Reminders and events made before links existed get theirs; ticks made in Reminders are read back.
         for r in library.recordings where r.meta.insight?.next?.contains(where: { $0.reminderID != nil || $0.eventID != nil }) == true {
-            refreshDone(r)
+            await refreshDone(r)
         }
     }
 

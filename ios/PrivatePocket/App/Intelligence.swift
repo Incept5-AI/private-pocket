@@ -596,10 +596,35 @@ enum Planner {
         return c.url
     }
 
+    /// A fresh store answers nothing until it has connected to the daemon, which the
+    /// access request does; with access already given, these never show a prompt.
+    static func warm() async {
+        if EKEventStore.authorizationStatus(for: .reminder) == .fullAccess { _ = try? await store.requestFullAccessToReminders() }
+        if EKEventStore.authorizationStatus(for: .event) == .fullAccess { _ = try? await store.requestFullAccessToEvents() }
+    }
+
+    /// Every reminder in the Pocket list, for a lookup by any identifier.
+    static func pocketReminders() async -> [EKReminder] {
+        guard let list = try? pocketList() else { return [] }
+        return await withCheckedContinuation { cont in
+            store.fetchReminders(matching: store.predicateForReminders(in: [list])) { cont.resume(returning: $0 ?? []) }
+        }
+    }
+
     /// An older reminder or event made before links existed gets its link now.
-    static func ensureLink(_ id: String, _ url: URL?) {
+    static func ensureLink(_ id: String, _ url: URL?) async {
         guard let url else { return }
-        guard let c = store.calendarItem(withIdentifier: id) else { DiskLog.append("link: item \(id.prefix(8)) not found"); return }
+        var found = store.calendarItem(withIdentifier: id)
+        if found == nil {
+            // iCloud can hand a reminder a new identifier after its first sync: match the external one too.
+            found = await pocketReminders().first { $0.calendarItemIdentifier == id || $0.calendarItemExternalIdentifier == id }
+        }
+        guard let c = found else {
+            let status = EKEventStore.authorizationStatus(for: .reminder).rawValue
+            let listed = await pocketReminders().map { "\($0.calendarItemIdentifier.prefix(8))/\($0.calendarItemExternalIdentifier.prefix(8))" }
+            DiskLog.append("link: item \(id.prefix(8)) not found (reminders access \(status); in the Pocket list: \(listed.joined(separator: " ")))")
+            return
+        }
         guard c.url == nil else { return }
         c.url = url
         if let n = c.notes, !n.contains("privatepocket://") { c.notes = n + "\nOpen in Private Pocket: " + url.absoluteString }
