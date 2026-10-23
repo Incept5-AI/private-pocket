@@ -54,6 +54,8 @@ final class AppModel: ObservableObject {
     private var active = false
 
     @Published var working: Set<String> = []   // recording ids being transcribed/summarised
+    /// A moment to open, from a link in Reminders or Calendar; Moments picks it up.
+    @Published var openMomentID: String?
     @Published var aiError: String?
     /// The notice offers Open Settings: a permission iOS will not ask for again.
     @Published var aiErrorOpensSettings = false
@@ -572,11 +574,11 @@ final class AppModel: ObservableObject {
         for (idx, item) in items.enumerated() where !item.isDismissed {
             do {
                 if item.isAction, item.reminderID == nil, Prefs.autoReminders, item.isSolid {
-                    items[idx].reminderID = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.")
+                    items[idx].reminderID = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
                     changed = true
                 }
                 if item.isDate, item.eventID == nil, Prefs.autoCalendar, item.isSolid, let d = item.date {
-                    items[idx].eventID = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item))
+                    items[idx].eventID = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item), link: Planner.momentURL(r))
                     changed = true
                 }
             } catch {
@@ -595,10 +597,10 @@ final class AppModel: ObservableObject {
     func place(_ r: Recording, _ item: NextItem) async {
         do {
             if item.isAction {
-                let id = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.")
+                let id = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
                 change(r, item) { $0.reminderID = id }
             } else if item.isDate, let d = item.date {
-                let id = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item))
+                let id = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item), link: Planner.momentURL(r))
                 change(r, item) { $0.eventID = id }
             }
         } catch {
@@ -658,7 +660,7 @@ final class AppModel: ObservableObject {
         let due = item.date ?? Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date().addingTimeInterval(86_400)) ?? Date()
         let who = item.who ?? "them"
         do {
-            let id = try await Planner.addReminder("Chase \(who): \(item.text)", due: due, note: "From \(r.sourceLabel), in Private Pocket.")
+            let id = try await Planner.addReminder("Chase \(who): \(item.text)", due: due, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
             change(r, item) { $0.reminderID = id }
         } catch {
             report(error)
@@ -679,6 +681,11 @@ final class AppModel: ObservableObject {
 
     func refreshDone(_ r: Recording) {
         guard let items = r.meta.insight?.next else { return }
+        let link = Planner.momentURL(r)
+        for item in items {   // made before links existed: given one now
+            if let id = item.reminderID { Planner.ensureLink(id, link) }
+            if let id = item.eventID { Planner.ensureLink(id, link) }
+        }
         for item in items where item.isAction {
             if let id = item.reminderID, let c = Planner.reminderCompleted(id), c != item.isDone {
                 change(r, item) { $0.done = c; $0.doneAt = c ? Date() : nil }

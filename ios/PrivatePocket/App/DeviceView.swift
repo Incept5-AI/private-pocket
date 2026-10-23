@@ -8,15 +8,23 @@ struct RootView: View {
     @EnvironmentObject var library: Library
     @Environment(\.scenePhase) private var scenePhase
     @State private var walkthrough = !Prefs.walkthroughSeen
+    @State private var tab = 0
 
     private var recording: Bool { link.status.recordingSince != nil }
 
     var body: some View {
-        TabView {
-            Tab("Pocket", systemImage: "creditcard") { PocketView() }
-            Tab("Moments", systemImage: "quote.bubble") { RecordingsView() }
-            Tab("Insights", systemImage: "chart.bar.xaxis") { InsightsView() }
-            Tab("Ask", systemImage: "magnifyingglass") { AskTab() }
+        TabView(selection: $tab) {
+            Tab("Pocket", systemImage: "creditcard", value: 0) { PocketView() }
+            Tab("Moments", systemImage: "quote.bubble", value: 1) { RecordingsView() }
+            Tab("Insights", systemImage: "chart.bar.xaxis", value: 2) { InsightsView() }
+            Tab("Ask", systemImage: "magnifyingglass", value: 3) { AskTab() }
+        }
+        // privatepocket://moment?id=…, from a reminder or an event: the moment it came from.
+        .onOpenURL { url in
+            guard url.scheme == "privatepocket", url.host == "moment",
+                  let id = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "id" })?.value else { return }
+            tab = 1
+            model.openMomentID = id
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory(isEnabled: recording || live.isActive) { NowRecordingBar() }

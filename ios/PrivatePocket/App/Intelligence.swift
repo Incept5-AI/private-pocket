@@ -587,11 +587,29 @@ enum Planner {
 
     // Reminders
 
-    static func addReminder(_ title: String, due: Date?, note: String) async throws -> String {
+    /// Where a reminder or event points back to: the moment it came from.
+    static func momentURL(_ r: Recording) -> URL? {
+        var c = URLComponents()
+        c.scheme = "privatepocket"
+        c.host = "moment"
+        c.queryItems = [URLQueryItem(name: "id", value: r.id)]
+        return c.url
+    }
+
+    /// An older reminder or event made before links existed gets its link now.
+    static func ensureLink(_ id: String, _ url: URL?) {
+        guard let url, let c = store.calendarItem(withIdentifier: id), c.url == nil else { return }
+        c.url = url
+        if let e = c as? EKEvent { try? store.save(e, span: .thisEvent, commit: true) }
+        else if let r = c as? EKReminder { try? store.save(r, commit: true) }
+    }
+
+    static func addReminder(_ title: String, due: Date?, note: String, link: URL? = nil) async throws -> String {
         guard try await store.requestFullAccessToReminders() else { throw PlannerError.denied("Reminders") }
         let item = EKReminder(eventStore: store)
         item.title = title
         item.notes = note
+        item.url = link
         item.calendar = try pocketList()
         if let due {
             item.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: due)
@@ -644,7 +662,7 @@ enum Planner {
 
     // Calendar
 
-    static func addEvent(_ title: String, at date: Date, duration: Double? = nil, location: String? = nil, note: String) async throws -> String {
+    static func addEvent(_ title: String, at date: Date, duration: Double? = nil, location: String? = nil, note: String, link: URL? = nil) async throws -> String {
         guard try await store.requestFullAccessToEvents() else { throw PlannerError.denied("Calendar") }
         let event = EKEvent(eventStore: store)
         event.title = title
@@ -652,6 +670,7 @@ enum Planner {
         event.endDate = date.addingTimeInterval(duration ?? 3600)
         event.location = location
         event.notes = note
+        event.url = link
         event.calendar = store.defaultCalendarForNewEvents
         try store.save(event, span: .thisEvent, commit: true)
         return event.eventIdentifier

@@ -14,6 +14,7 @@ struct RecordingsView: View {
     @State private var hideHandle: Task<Void, Never>?
     /// A swiped moment, waiting for the word.
     @State private var toDelete: Recording?
+    @State private var path = NavigationPath()
 
     /// Pockets that have recordings here, with their names.
     private var pockets: [(id: UUID, name: String)] {
@@ -62,7 +63,7 @@ struct RecordingsView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollViewReader { proxy in
             List {
                 if library.recordings.isEmpty {
@@ -111,6 +112,11 @@ struct RecordingsView: View {
                 }
             }
             .navigationTitle("Moments")
+            .onChange(of: model.openMomentID, initial: true) {
+                guard let id = model.openMomentID else { return }
+                model.openMomentID = nil
+                path.append(id)
+            }
             .confirmationDialog("Delete this moment?", isPresented: Binding(get: { toDelete != nil }, set: { if !$0 { toDelete = nil } }), titleVisibility: .visible) {
                 Button("Delete", role: .destructive) {
                     if let r = toDelete { library.delete(r) }

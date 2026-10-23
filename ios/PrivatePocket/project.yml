@@ -60,6 +60,11 @@ targets:
         # Dynamic Island and Lock Screen while the Pocket records (PrivatePocketWidgets).
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
+        # privatepocket://moment?id=… on every reminder and event the app makes, so Reminders
+        # and Calendar can open the moment it came from.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.incept5.private-pocket
+            CFBundleURLSchemes: [privatepocket]
         # Reminders and Calendar, only when the user taps Add on an action or a date.
         NSRemindersFullAccessUsageDescription: "Adds to-dos found in your moments to Reminders, when you tap Add or choose to have them added always."
         NSCalendarsFullAccessUsageDescription: "Adds dates found in your moments to Calendar, when you tap Add or choose to have them added always."
