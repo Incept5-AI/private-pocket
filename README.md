@@ -1,22 +1,163 @@
-<p align="center"><img src="assets/logo.png" width="160" alt="Private Pocket logo"></p>
+<p align="center"><img src="assets/logo.png" width="140" alt="Private Pocket logo"></p>
 
 <h1 align="center">Private Pocket</h1>
 
-A local-first, open-source companion app for the [Pocket](https://heypocket.com) voice
-recorder. It's for people who love the hardware but need their recordings to stay on
-their own devices.
+<p align="center"><b>Press once. Hear everything.</b><br>
+Your conversations, written down and read for you, on your iPhone and nowhere else.</p>
 
-Pocket is a genuinely nice recorder. It's a thin card with a 62 GB drive (thousands of
-hours of speech) and a light that tells everyone in the room when it is recording. One button press and you're recording. The official app and cloud add excellent
-transcription, summaries and search, and for most people they are the right choice.
-
-Some people can't send audio to any cloud: lawyers, clinicians, journalists, anyone
-bound by client confidentiality or EU/UK data-residency rules, or anyone who'd simply rather
-not. Private Pocket talks to the recorder directly over Bluetooth and keeps everything on
-the iPhone. Optionally, it uses a server **you** choose.
+Private Pocket is a free, open-source companion app for the [Pocket](https://heypocket.com)
+voice recorder, made for people who love the hardware and need their conversations to stay
+their own. Press the button on the card and the conversation streams to your iPhone, is
+written down as it is spoken, and is read for what matters: what was decided, what you
+promised, what you are owed, and when it comes up again. No account. No cloud. Nothing
+leaves your phone unless you point it at a server of your own.
 
 > Not affiliated with, endorsed by or supported by Open Vision Engineering, Inc. (Pocket).
 > "Pocket" is their trademark, used here only to say which device this works with.
+
+## Build 1: from a recorder to a memory
+
+This is the first build of a new Private Pocket, and it is experimental. The first version
+was a good recorder with a list of files. This one is built around what conversations leave
+behind: the promises and the decisions, the people, and the subjects you keep coming back
+to. It all runs on the iPhone, with Apple's on-device speech recognition and Apple
+Intelligence, or on a model server you run yourself.
+
+<table>
+  <tr>
+    <td align="center" valign="top"><img src="assets/screens/now.png" width="180" alt="Now: the right thing for the hour, then the tape"><br><b>Now</b><br><sub>The right thing for the hour</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/recording.png" width="180" alt="Recording: the whole screen becomes the room"><br><b>Recording</b><br><sub>The room, read as it happens</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/moment.png" width="180" alt="A moment, read for you"><br><b>A moment</b><br><sub>What was decided, what's yours</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/ask.png" width="180" alt="Ask the tape"><br><b>Ask</b><br><sub>Answers from everything you said</sub></td>
+  </tr>
+  <tr>
+    <td align="center" valign="top"><img src="assets/screens/threads.png" width="180" alt="Threads: what you keep talking about"><br><b>Threads</b><br><sub>What you keep coming back to</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/thread.png" width="180" alt="A thread: the story so far"><br><b>A thread</b><br><sub>The story so far</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/people.png" width="180" alt="People: who you talk to"><br><b>People</b><br><sub>Who, and what stands between you</sub></td>
+    <td align="center" valign="top"><img src="assets/screens/you.png" width="180" alt="You: the mirror"><br><b>You</b><br><sub>Your word, kept</sub></td>
+  </tr>
+</table>
+
+<sub>The screens show the app's built-in sample moments: eight short, made-up conversations,
+transcribed by Whisper and read by an open model on a Mac standing in for your own server,
+with a few days' to-dos ticked off.</sub>
+
+### Press once. The phone does the rest.
+
+The Pocket is a card with one button and a light. Press it and the conversation streams to
+your iPhone as it happens, even locked, even in a bag. It is written down as it is spoken
+and saved the moment you stop, with nothing to download. If the phone was out of reach, the
+recording arrives by itself the next time the two are together. Pairing is holding the
+button for five seconds. There is nothing to sign up for and nothing to type.
+
+### The room, read as it happens
+
+While it records, the whole screen becomes the recording: the timer, a waveform that
+breathes with the room, and the words as they arrive, large enough to read across a table.
+To-dos, dates and promises appear as they are said; tick what is right and cross what is
+not. Say "Pocket, remind me to…" and it is done. Say "Pocket, what did Ravi say the date
+was?" and it is answered from your own recordings, phone still in the bag.
+
+### Now, and the tape
+
+The app opens on the right thing for the hour. Before a meeting, a brief, with a nudge ten
+minutes ahead: what is open with the people you are about to see, what you owe them, the
+last figure that was mentioned. After a conversation, what was just read. In the morning, yesterday set, with
+its key lines to listen back to. At six, what the day decided and what it left open. Under
+it all is the tape: every conversation as a band in the colour of its kind, by day, week,
+month and year.
+
+### Every conversation, read for you
+
+Each moment opens with a few sentences written to you: what happened, and what it means for
+you. Then the to-dos and the dates, each with the words they came from. Send them to
+Reminders and Calendar, and when you tick one off there, it is ticked here too. The
+decisions, the questions left hanging, the figures as they were said. Who spoke, named from
+the calendar invite once the conversation shows who is who. The transcript follows the
+audio: hold any line to hear it, share it as a clip, or make it a to-do.
+
+### Threads that remember
+
+The subjects you keep coming back to become threads, found in your conversations by
+themselves. Each new conversation is read against the story so far, so a thread shows what
+changed and when, what is still open and for how long, and what quietly lapsed. When a
+subject returns after weeks of quiet, Now tells you what was said last time, and so does the
+recording screen the moment it is named in the room. Press Record on a thread to record
+straight into it.
+
+### People, and what stands between you
+
+A map of who you talk to: bigger the more you talk, closer the more recently, with an amber
+ring where something is owed. Open anyone to see the promises both ways, the threads you
+share and everything you have said together.
+
+### You, in the mirror
+
+What only weeks of conversations can show. How often you keep your word, and the weekday you
+keep it least. How often others keep theirs. Who you are drifting from. What keeps being
+raised and never decided. Your heaviest day.
+
+### Ask the tape
+
+Ask anything about today, the last week or month, or everything: who agreed to what, which
+restaurant it was, what is still open with Maya. The answer comes with the moments it was
+drawn from.
+
+### Everywhere you are
+
+The Pocket lives in the Dynamic Island and on the Lock Screen: its light and battery while it
+waits, then amber with the timer, the waveform and the words while it records, with a Stop
+button. A Control Center toggle, Siri, Shortcuts and the Action button start and stop it
+without unlocking the phone.
+
+### Yours, and only yours
+
+Out of the box, everything happens on the iPhone: Apple's on-device speech recognition
+writes it down and Apple Intelligence reads it. For bigger models, more languages or
+speaker labels, point it at a server you run yourself, at home or in the office. It is used
+while it answers, and everything falls back to the phone when it does not. Your moments are
+kept out of iCloud backups, and Export everything hands you a copy whenever you want one.
+
+### Built to be relied on
+
+This build was reviewed end to end for the ways a recording can go missing, and fixed. A
+stream with a gap is replaced by the Pocket's own file, and if that can't be fetched yet,
+the stream is kept until a later sync can. Your edits survive every re-read, deleted moments
+stay deleted, and the phone reconnects to the Pocket in the background by itself.
+
+## Also in this build
+
+- **Pairs like the official app.** Hold the Pocket's side button for five seconds until it
+  blinks blue, and the app pairs by itself. Even before pairing, every recording started
+  with the button streams to the phone.
+- **A walkthrough on first use.** Seven swipe screens, made the way the manufacturer would:
+  wake it, pair (the page finds and adds your Pocket itself), record, the switch, what the
+  light means, and the way back if it won't pair, with the reset acted out on the card.
+  Again from Settings any time.
+- **Fetches by itself.** Anything recorded while the phone was away comes over Bluetooth as
+  soon as the Pocket reconnects, at about 40–60 KB/s (an hour of audio in about five
+  minutes). No tap, cable, Wi-Fi or account needed.
+- **Transcribe your way.** Apple's on-device `SpeechAnalyzer` in the language you pick, or
+  any OpenAI-compatible Whisper server, which can detect the language itself.
+- **Speakers.** Optionally, a diarisation server labels who spoke when. Name a speaker in a
+  tap, or let the calendar invite suggest the names.
+- **Share.** The recording, the transcript, or both as a zip, each named for the moment.
+- **Organised.** Moments are named by where and when they happened (from the phone's
+  location; the Pocket has no GPS) and remember which Pocket made them. Several Pockets are
+  supported.
+- **Free up space.** Bluetooth has no delete command, so the app guides the USB-C route: it
+  shows which files on the Pocket's drive are safely backed up, then deletes those.
+
+## What leaves the phone
+
+| Setting | Audio | Transcripts | Anything to Pocket's cloud |
+|---|---|---|---|
+| Everything "On this iPhone" (default with no server configured) | stays on the phone | stays on the phone | no |
+| Speech to text on a server | to **your** server | — | no |
+| Language model on a server | — | to **your** server | no |
+| Speakers on | to **your** diarisation server | — | no |
+
+Place names use Apple's geocoder (coordinates only), and can be turned off.
 
 ## Why this exists
 
@@ -64,56 +205,6 @@ These findings are about how the device and its documentation work today, and th
 fixable. Possible fixes: Bluetooth LE Secure Connections pairing, a per-device key that can
 be rotated, real encryption at rest, an EU processing region, and a GDPR-complete privacy
 notice. Until then, Private Pocket keeps your recordings on your own phone.
-
-## What it does
-
-- **Pairs like the official app.** Hold the Pocket's side button for 5 seconds until it
-  blinks blue; the app pairs by itself and the light goes solid a little later. No
-  account, nothing to type, nothing to tap. Even before pairing, every recording started
-  with the button streams to the phone.
-- **Record and stream.** Start and stop the Pocket from the phone, or use its button.
-  The phone stays connected, also with the app in the background, so every recording
-  streams in live and is saved and transcribed as you speak, with no download afterwards.
-- **Lives in the Dynamic Island.** While the Pocket is connected, the Dynamic Island and
-  the Lock Screen show its light and battery. When it records, even with the phone locked,
-  that turns amber with the timer and the words as they arrive, with a Stop button, and
-  shows the saved length for a moment after. Inside the app a bar above the tabs shows the
-  recording on every screen.
-- **A walkthrough on first use.** Eight swipe screens, made the way the manufacturer would: wake it, pair (the page finds and adds your Pocket itself), record, the switch, what the light means, reset, and the way back if it will not pair. Again from Settings any time.
-- **Now, then the tape.** The app opens on the right thing for the hour: the brief before a meeting, Live while it records, the moment just read, yesterday set in the morning with three minutes to listen back, the day at six, what needs you, what it noticed. Under it the tape: every moment as a band in the colour of its kind, by day, zooming to a week, a month, a year.
-- **Threads, People, You.** What you keep talking about, kept as threads: each new conversation is read against the story so far, so a thread's page shows what changed and when, what is open and how long, and what lapsed. When a quiet subject comes back, Now says what was said last time, and so does the live screen the moment it is named in the room. Rename, merge or split a thread, and press Record on one to record into it. Who you talk to, as a map, with what stands between you. A mirror: your word kept, theirs kept, who you are drifting from, what is raised and never decided.
-- **Names from your calendar.** A recording made during a calendar event is read knowing who was invited, so speakers get their names when the conversation shows who is who.
-- **In the room, and said to the card.** While it records, to-dos, dates and promises appear as they are said, with a tick and a cross, on a screen that takes over the phone while it records, in type large enough for the room. Say "Pocket, remind me to…" or "Pocket, what did Ravi say the date was?" and it is done, or answered from the recordings, phone still in the bag.
-- **Your own server, when reachable.** A DGX Spark or any OpenAI-compatible server over Tailscale: bigger models, speakers, any language. Used while it answers, and everything falls back to the phone when it does not.
-- **Control Center, Siri, Shortcuts and the Action button.** A Pocket toggle in Control
-  Center and on the Lock Screen starts and stops the card without unlocking, and shows
-  whether it is recording; "Start recording on Private Pocket" works wherever Shortcuts do.
-- **Fetches by itself.** Anything recorded while the phone was away comes over
-  Bluetooth as soon as the Pocket reconnects, at about 40–60 KB/s (an hour of audio in
-  about five minutes). No tap, cable, Wi-Fi or account needed.
-- **Transcribe.** Choose Apple's on-device speech recognition (`SpeechAnalyzer`) in the
-  language you pick, or any OpenAI-compatible Whisper server, which can detect the language itself.
-- **Speakers.** Optionally sends audio to a diarisation server to label who spoke when.
-  You can name the speakers ("Speaker 2" → "Daniel").
-- **Summarise and ask.** Summaries and questions across one recording or a date range
-  ("who was mentioned?", "which restaurant was it?"). These use Apple Intelligence
-  (`FoundationModels`) on the phone, or any OpenAI-compatible model server.
-- **Organised.** Recordings are named by where and when they were made (from the phone's
-  location; the Pocket has no GPS), are searchable, and record which Pocket made them.
-  Several Pockets are supported.
-- **Free up space.** Bluetooth has no delete command, so the app guides the USB-C route:
-  it shows which files on the Pocket's drive are safely backed up, then deletes those.
-
-## What leaves the phone
-
-| Setting | Audio | Transcripts | Anything to Pocket's cloud |
-|---|---|---|---|
-| Everything "On this iPhone" (default with no server configured) | stays on the phone | stays on the phone | no |
-| Speech to text on a server | to **your** server | — | no |
-| Language model on a server | — | to **your** server | no |
-| Speakers on | to **your** diarisation server | — | no |
-
-Place names use Apple's geocoder (coordinates only), and can be turned off.
 
 ## Requirements
 
