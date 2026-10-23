@@ -15,7 +15,7 @@ struct RootView: View {
             Tab("Pocket", systemImage: "creditcard") { PocketView() }
             Tab("Moments", systemImage: "quote.bubble") { RecordingsView() }
             Tab("Insights", systemImage: "chart.bar.xaxis") { InsightsView() }
-            Tab("Ask", systemImage: "questionmark.bubble") { AskTab() }
+            Tab("Ask", systemImage: "magnifyingglass") { AskTab() }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
         .tabViewBottomAccessory(isEnabled: recording || live.isActive) { NowRecordingBar() }
