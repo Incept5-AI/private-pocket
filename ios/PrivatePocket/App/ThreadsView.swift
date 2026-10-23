@@ -532,12 +532,16 @@ struct ThreadView: View {
 
     static func nextTimeParts(_ t: LiveThread) -> [String] {
         var parts: [String] = []
+        func small(_ s: String) -> String { s.prefix(1).lowercased() + s.dropFirst() }
         for p in t.alive.filter({ $0.item.isPromise }).prefix(2) {
-            if let who = p.item.who { parts.append("ask \(who) about \(p.item.text.lowercased())") }
+            if let who = p.item.who { parts.append("ask \(who) about the promise to \(p.item.promisedAct)") }
         }
-        for q in t.moments.suffix(3).flatMap({ $0.meta.insight?.questions ?? [] }).prefix(1) { parts.append("settle \(q.lowercased())") }
-        for y in t.alive.filter({ $0.item.isAction }).prefix(1) { parts.append("bring \(y.item.text.lowercased())") }
-        if parts.count < 3, let l = t.lapsed.first { parts.append("renew or drop \(l.label.lowercased())") }
+        for q in t.moments.suffix(3).flatMap({ $0.meta.insight?.questions ?? [] }).prefix(1) { parts.append("settle \(small(q))") }
+        for y in t.alive.filter({ $0.item.isAction }).prefix(1) { parts.append("bring \(small(y.item.text))") }
+        if parts.count < 3, let l = t.lapsed.first {
+            if l.item.isPromise, let who = l.item.who { parts.append("ask \(who) whether the promise to \(l.item.promisedAct) still stands") }
+            else { parts.append("decide whether to \(small(l.item.text)) or let it go") }
+        }
         return parts
     }
 

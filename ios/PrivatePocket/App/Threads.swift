@@ -147,12 +147,27 @@ enum Ageing {
         return "\(days) day\(days == 1 ? "" : "s")"
     }
 
-    /// The same thing said again: most of the shorter one's words are in the longer.
+    private static let common: Set<String> = ["the", "and", "for", "with", "will", "you", "your", "our", "this", "that", "from", "about",
+                                              "next", "into", "onto", "over", "them", "they", "him", "her", "his", "its", "all", "can", "has", "have"]
+
+    /// The same thing said again: most of the shorter one's own words are in the longer.
     static func similar(_ a: String, _ b: String) -> Bool {
-        func words(_ s: String) -> Set<String> { Set(s.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 }) }
+        func words(_ s: String) -> Set<String> {
+            Set(s.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 && !common.contains($0) })
+        }
         let wa = words(a), wb = words(b)
         guard !wa.isEmpty, !wb.isEmpty else { return false }
         return Double(wa.intersection(wb).count) / Double(min(wa.count, wb.count)) >= 0.6
+    }
+}
+
+extension NextItem {
+    /// What was promised, without the name: "Maya will send the quote" → "send the quote".
+    var promisedAct: String {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        if let who, t.lowercased().hasPrefix(who.lowercased() + " will ") { return String(t.dropFirst(who.count + 6)) }
+        if let r = t.range(of: #"^[A-Z][\w'’-]*( [A-Z][\w'’-]*)? will "#, options: .regularExpression) { return String(t[r.upperBound...]) }
+        return t.prefix(1).lowercased() + t.dropFirst()
     }
 }
 
@@ -171,7 +186,7 @@ struct OpenItem: Identifiable {
     var id: String { recording.id + "/" + item.id }
 
     var label: String {
-        item.isPromise ? (item.who.map { "\($0): " } ?? "") + item.text : item.text
+        item.isPromise ? (item.who.map { "\($0): " } ?? "") + item.promisedAct : item.text
     }
 }
 
@@ -230,7 +245,7 @@ struct LiveThread: Identifiable {
             for item in r.meta.insight?.items ?? [] where !item.isDismissed && (item.isAction || item.isPromise) {
                 if item.isDone { settled += 1; continue }
                 // Said again by the same person: the earlier one is carried into this one.
-                if let k = open.lastIndex(where: { $0.item.kind == item.kind && ($0.item.who ?? "") == (item.who ?? "") && Ageing.similar($0.item.text, item.text) }) {
+                if let k = open.lastIndex(where: { $0.item.kind == item.kind && ($0.item.who ?? "") == (item.who ?? "") && Ageing.similar($0.item.promisedAct, item.promisedAct) }) {
                     let earlier = open.remove(at: k)
                     open.append(OpenItem(recording: r, item: item, since: earlier.since, lapsedAt: Ageing.lapse(item, said: said, now: now), renewed: true))
                 } else {
@@ -247,27 +262,33 @@ struct LiveThread: Identifiable {
         var out = record.state?.changes ?? []
         for o in open {
             guard let l = o.lapsedAt else { continue }
-            let days = Int(l.timeIntervalSince(o.since) / 86_400)
-            out.append(ThreadChange(id: "lapse-" + o.id, kind: "lapsed", text: o.label + ", open \(Ageing.span(days))", recordingID: o.recording.id, at: l))
+            let why = o.item.date != nil ? "a month past its date" : "three months with no word"
+            out.append(ThreadChange(id: "lapse-" + o.id, kind: "lapsed", text: o.label + ", " + why, recordingID: o.recording.id, at: l))
         }
         for r in moments {
             for item in r.meta.insight?.items ?? [] where item.isDone && !item.isDismissed && (item.isAction || item.isPromise) {
                 guard let d = item.doneAt else { continue }
-                out.append(ThreadChange(id: "done-" + item.id, kind: "done", text: item.isPromise ? (item.who.map { "\($0): " } ?? "") + item.text : item.text, recordingID: r.id, at: d))
+                out.append(ThreadChange(id: "done-" + item.id, kind: "done", text: item.isPromise ? (item.who.map { "\($0): " } ?? "") + item.promisedAct : item.text, recordingID: r.id, at: d))
             }
         }
         return out.sorted { $0.at > $1.at }
     }
 
-    /// Last time, before a moment: when, and what it came to, with anything still owed.
+    /// Last time, before a moment: when, and what it came to, with what was still owed
+    /// as it stood then.
     func recall(before cutoff: Date) -> (date: Date, line: String)? {
-        guard let prev = moments.last(where: { ($0.startedAt ?? .distantFuture) < cutoff }), let at = prev.startedAt else { return nil }
+        let earlier = moments.filter { ($0.startedAt ?? .distantFuture) < cutoff }
+        guard let prev = earlier.last, let at = prev.startedAt else { return nil }
         var line = prev.meta.insight?.brief?.first?.text ?? prev.quote
         if !line.hasSuffix(".") && !line.hasSuffix("”") { line += "." }
-        if let o = open.first(where: { $0.item.isPromise && $0.since < cutoff }), let who = o.item.who {
-            line += " \(who) owed you \(o.item.text.lowercased())" + (o.lapsedAt != nil ? ", and it never came." : ".")
-        } else if let o = open.first(where: { $0.item.isAction && $0.since < cutoff }) {
-            line += " You still owe: \(o.item.text.lowercased())."
+        let owed: [(Recording, NextItem)] = earlier.reversed().flatMap { r in
+            (r.meta.insight?.items ?? []).filter { !$0.isDone && !$0.isDismissed && ($0.isPromise || $0.isAction) }.map { (r, $0) }
+        }
+        if let pair = owed.first(where: { $0.1.isPromise && $0.1.who != nil }), let who = pair.1.who {
+            let lapsed = Ageing.lapse(pair.1, said: pair.0.startedAt, now: cutoff) != nil
+            line += " \(who) was to \(pair.1.promisedAct)" + (lapsed ? ", and it never came." : ".")
+        } else if let pair = owed.first(where: { $0.1.isAction }) {
+            line += " Still yours: \(pair.1.text.prefix(1).lowercased() + pair.1.text.dropFirst())."
         }
         return (at, line)
     }
@@ -279,7 +300,7 @@ struct LiveThread: Identifiable {
         if let l = moments.last, let at = l.startedAt, let b = l.meta.insight?.brief?.first?.text {
             s.append("Latest, \(Findings.dayName(at)): \(b)")
         }
-        if let o = lapsed.first { s.append("\(o.label.capitalizedFirst) has lapsed.") }
+        if let o = lapsed.first { s.append("Lapsed: \(o.label).") }
         return s.joined(separator: " ")
     }
 }
@@ -306,7 +327,8 @@ final class ThreadStore: ObservableObject {
     /// Threads being read against their state now.
     @Published private(set) var reading: Set<String> = []
     private let url: URL
-    private var termCache: [String: (stamp: Double, terms: [String: String])] = [:]
+    private var termCache: [String: (stamp: Double, names: Int, terms: [String: String])] = [:]
+    private var namesCache: (stamp: Int, names: Set<String>)?
     private var queue: Task<Void, Never>?
 
     private struct File: Codable {
@@ -360,42 +382,66 @@ final class ThreadStore: ObservableObject {
 
     // MARK: Finding threads
 
-    private func terms(_ r: Recording, people: Set<String>) -> [String: String] {
+    /// Words the library writes with a capital mid-sentence, worked out again only when a reading changes.
+    private func names(_ all: [Recording]) -> (names: Set<String>, stamp: Int) {
+        let stamp = all.reduce(all.count) { $0 &+ Int($1.meta.analysedAt?.timeIntervalSince1970 ?? 0) }
+        if let c = namesCache, c.stamp == stamp { return (c.names, stamp) }
+        var out = Set<String>()
+        for r in all { out.formUnion(Digest.midNames(r)) }
+        namesCache = (stamp, out)
+        return (out, stamp)
+    }
+
+    private func terms(_ r: Recording, people: Set<String>, names: (names: Set<String>, stamp: Int)) -> [String: String] {
         let stamp = r.meta.analysedAt?.timeIntervalSince1970 ?? 0
-        if let c = termCache[r.id], c.stamp == stamp { return c.terms }
-        let t = Digest.terms(r, people: people)
-        termCache[r.id] = (stamp, t)
+        if let c = termCache[r.id], c.stamp == stamp, c.names == names.stamp { return c.terms }
+        let t = Digest.terms(r, people: people, names: names.names)
+        termCache[r.id] = (stamp, names.stamp, t)
         return t
     }
 
     /// A new thread for each phrase that now runs through two or more moments.
     func discover(_ all: [Recording]) {
         let people = Set(all.flatMap(\.people))
+        let evidence = names(all)
         var ids: [String: Int] = [:]
         var display: [String: String] = [:]
         for r in all {
-            for (key, shown) in terms(r, people: people) {
+            for (key, shown) in terms(r, people: people, names: evidence) {
                 ids[key, default: 0] += 1
                 if display[key] == nil { display[key] = shown }
             }
         }
+        var changed = false
+        // A thread found by a phrase no reading uses any more, that the user never touched, goes;
+        // it comes back if the phrase does.
+        if !all.isEmpty {
+            let targets = Set(records.compactMap(\.mergedInto))
+            let before = records.count
+            records.removeAll { rec in
+                rec.named != true && rec.mergedInto == nil && rec.hidden != true
+                    && (rec.pinned ?? []).isEmpty && (rec.excluded ?? []).isEmpty && (rec.apart ?? []).isEmpty
+                    && !targets.contains(rec.id) && !rec.aliases.contains { (ids[$0] ?? 0) > 0 }
+            }
+            changed = records.count != before
+        }
         let known = Set(records.flatMap(\.aliases))
-        var added = false
         for (key, n) in ids where n >= 2 && !known.contains(key) {
             records.append(ThreadRecord(name: display[key] ?? key, aliases: [key]))
-            added = true
+            changed = true
         }
-        if added { save() }
+        if changed { save() }
     }
 
     /// Every thread with its moments, as things stand: phrases matched, plus pinned, minus excluded.
     func live(_ all: [Recording], now: Date = Date()) -> [LiveThread] {
         let people = Set(all.flatMap(\.people))
+        let evidence = names(all)
         var byID: [String: Recording] = [:]
         var byTerm: [String: [Recording]] = [:]
         for r in all {
             byID[r.id] = r
-            for key in terms(r, people: people).keys { byTerm[key, default: []].append(r) }
+            for key in terms(r, people: people, names: evidence).keys { byTerm[key, default: []].append(r) }
         }
         var out: [LiveThread] = []
         for rec in records where rec.isActive {
@@ -735,6 +781,7 @@ enum ThreadReader {
             for f in r.meta.insight?.figures ?? [] { if let p = figure(f) { figures[p.what] = p.amount } }
         }
         var changes: [ThreadChange] = []
+        var promised: [NextItem] = t.moments.filter { state.read.contains($0.id) }.flatMap { ($0.meta.insight?.items ?? []).filter(\.isPromise) }
         for r in moments {
             let at = r.startedAt ?? Date()
             for d in r.meta.insight?.decisions ?? [] { changes.append(ThreadChange(kind: "new", text: d, recordingID: r.id, at: at)) }
@@ -748,7 +795,9 @@ enum ThreadReader {
                 figures[p.what] = p.amount
             }
             for item in r.meta.insight?.items ?? [] where item.isPromise && !item.isDismissed {
-                changes.append(ThreadChange(kind: "new", text: (item.who.map { "\($0): " } ?? "") + item.text, recordingID: r.id, at: at))
+                let again = promised.contains { ($0.who ?? "") == (item.who ?? "") && Ageing.similar($0.promisedAct, item.promisedAct) }
+                changes.append(ThreadChange(kind: again ? "renewed" : "new", text: (item.who.map { "\($0): " } ?? "") + item.promisedAct, recordingID: r.id, at: at))
+                promised.append(item)
             }
         }
         return Result(story: t.plainStory, changes: changes, notAbout: [])

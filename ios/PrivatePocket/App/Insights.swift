@@ -1,3 +1,4 @@
+import NaturalLanguage
 import SwiftUI
 
 /// What a span of moments adds up to, worked out from their readings: the days, the
@@ -154,37 +155,95 @@ struct Digest {
         "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December",
         "Speaker", "Call", "Meeting", "Note", "Business", "Personal", "Conversation", "After", "Before", "Once", "While", "Because",
         "Venue", "Date", "Dates", "Time", "Location", "Agenda",
+        "We've", "They're", "They've", "There's", "That's", "Let's", "Don't", "Can't", "Won't", "Didn't", "Isn't", "Wasn't", "What's",
+        "Okay", "Hello", "Thanks", "Thank", "Please", "Sure", "Yeah", "Well", "Just", "Maybe", "Still", "Now", "Every", "Each",
     ]
 
-    /// Capitalised words joined into phrases, from a moment's title, brief, key lines and decisions.
-    static func phrases(_ r: Recording, people: Set<String>) -> [String] {
+    /// Words split the way phrases are read, with a trailing possessive dropped.
+    static func tokens(_ s: String) -> [String] {
+        s.split { !($0.isLetter || $0 == "'" || $0 == "-") }.map { w in
+            let t = String(w)
+            return t.hasSuffix("'s") ? String(t.dropLast(2)) : t
+        }
+    }
+
+    /// Words a reading writes with a capital in the middle of a sentence: names, by the
+    /// evidence of the moment itself.
+    static func midNames(_ r: Recording) -> Set<String> {
         guard let i = r.meta.insight else { return [] }
-        let sentences = [i.title ?? ""] + (i.brief ?? []).map(\.text) + (i.keyLines ?? []).map(\.text) + (i.decisions ?? [])
+        var out = Set<String>()
+        for text in (i.brief ?? []).map(\.text) + (i.keyLines ?? []).map(\.text) + (i.decisions ?? []) {
+            for sentence in text.components(separatedBy: CharacterSet(charactersIn: ".!?…;:")) {
+                for (k, w) in tokens(sentence).enumerated() where k > 0 && w.first?.isUppercase == true { out.insert(w) }
+            }
+        }
+        return out
+    }
+
+    /// Names in a moment's reading, joined into phrases: from its title, brief, key lines and
+    /// decisions. A capital in the middle of a sentence of the reading marks a name. At the
+    /// start of a sentence, or in the title, a capital proves nothing ("Book the room",
+    /// "Meet at the cafe"), so there a word counts only when the moment never writes it in
+    /// lower case and either some reading writes it with a capital mid-sentence (`names`,
+    /// gathered across the library) or the language tagger knows it for a person, a place or
+    /// an organisation. People are left out.
+    static func phrases(_ r: Recording, people: Set<String>, names: Set<String> = []) -> [String] {
+        guard let i = r.meta.insight else { return [] }
+        let title = i.title ?? ""
+        let body = (i.brief ?? []).map(\.text) + (i.keyLines ?? []).map(\.text) + (i.decisions ?? [])
+        var lower = Set<String>()
+        for text in [r.meta.transcript ?? "", title] + body {
+            for w in tokens(text) where w.first?.isLowercase == true { lower.insert(w) }
+        }
+        let nameWords = Set(people.flatMap { $0.split(separator: " ").map(String.init) })
+        func usable(_ w: String) -> Bool {
+            w.first?.isUppercase == true && w.count > 2 && !stop.contains(w) && !nameWords.contains(w) && !people.contains(w)
+        }
+        let tagger = NLTagger(tagSchemes: [.nameType])
+        func taggedName(_ word: String, in sentence: String) -> Bool {
+            tagger.string = sentence
+            var found = false
+            tagger.enumerateTags(in: sentence.startIndex..<sentence.endIndex, unit: .word, scheme: .nameType,
+                                 options: [.omitWhitespace, .omitPunctuation, .joinNames]) { tag, range in
+                if let tag, tag == .organizationName || tag == .placeName || tag == .personalName, sentence[range].contains(word) {
+                    found = true
+                    return false
+                }
+                return true
+            }
+            return found
+        }
         var out: [String] = []
         var seen = Set<String>()
-        for s in sentences {
-            let words = s.split { !($0.isLetter || $0 == "'" || $0 == "-") }.map(String.init)
-            var k = 0
-            while k < words.count {
-                let w = words[k]
-                guard w.first?.isUppercase == true, w.count > 2, !stop.contains(w), !people.contains(w) else { k += 1; continue }
-                var phrase = w
-                var j = k + 1
-                while j < words.count, words[j].first?.isUppercase == true, !stop.contains(words[j]), !people.contains(words[j]) {
-                    phrase += " " + words[j]
-                    j += 1
+        for (n, text) in ([title] + body).enumerated() {
+            for sentence in text.components(separatedBy: CharacterSet(charactersIn: ".!?…;:")) {
+                let words = tokens(sentence)
+                var k = 0
+                while k < words.count {
+                    let w = words[k]
+                    let midSentence = n > 0 && k > 0
+                    guard usable(w), midSentence || (!lower.contains(w.lowercased()) && (names.contains(w) || taggedName(w, in: sentence))) else {
+                        k += 1
+                        continue
+                    }
+                    var phrase = w
+                    var j = k + 1
+                    while j < words.count, usable(words[j]) {
+                        phrase += " " + words[j]
+                        j += 1
+                    }
+                    if seen.insert(phrase).inserted { out.append(phrase) }
+                    k = j
                 }
-                if seen.insert(phrase).inserted { out.append(phrase) }
-                k = j
             }
         }
         return out
     }
 
     /// The phrases, lowercased, each with the way it was first written.
-    static func terms(_ r: Recording, people: Set<String>) -> [String: String] {
+    static func terms(_ r: Recording, people: Set<String>, names: Set<String> = []) -> [String: String] {
         var out: [String: String] = [:]
-        for p in phrases(r, people: people) where out[p.lowercased()] == nil { out[p.lowercased()] = p }
+        for p in phrases(r, people: people, names: names) where out[p.lowercased()] == nil { out[p.lowercased()] = p }
         return out
     }
 
