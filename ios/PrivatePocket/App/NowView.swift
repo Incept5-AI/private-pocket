@@ -156,7 +156,7 @@ struct NowView: View {
         } else if !recording, !Briefs.calendarAllowed, !briefsAsked, !all.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 Text("BRIEFS BEFORE MEETINGS").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
-                Text("Ten minutes before a meeting with someone you've recorded, see what's open between you.").font(.callout.weight(.semibold)).foregroundStyle(Brand.onPaper)
+                Text("Ten minutes before a meeting with someone you've recorded, see what's open between you. And name who spoke from who was invited.").font(.callout.weight(.semibold)).foregroundStyle(Brand.onPaper)
                 Text("Tap to allow Calendar · swipe away for not now").font(.footnote.weight(.bold)).foregroundStyle(Brand.onPaper.opacity(0.7))
             }
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)

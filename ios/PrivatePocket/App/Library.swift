@@ -94,6 +94,9 @@ struct RecordingMeta: Codable, Hashable {
     var expectedKind: String?
     /// What Record was pressed into: a thread, a person, or a moment it follows on from.
     var context: RecordContext?
+    /// The calendar event it happened in, and when the calendar was last looked at for it.
+    var event: CalendarEventRef?
+    var calendarChecked: Date?
 }
 
 enum PocketTime {

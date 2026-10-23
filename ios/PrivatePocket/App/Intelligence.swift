@@ -306,7 +306,7 @@ enum Analyst {
         guard let text = r.transcriptForModel?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             throw AIError.emptyTranscript
         }
-        let context = (r.meta.context?.hint).map { $0.isEmpty ? "" : $0 + " " } ?? ""
+        let context = ((r.meta.context?.hint).map { $0.isEmpty ? "" : $0 + " " } ?? "") + (r.meta.event.map { $0.hint + " " } ?? "")
         let hint = (r.isCall ? "The recorder's switch was on call, so this is a phone call. " : "") + context
         var drafts: [Draft] = []
         for chunk in Summariser.split(text, max: c.chunkChars).prefix(6) {

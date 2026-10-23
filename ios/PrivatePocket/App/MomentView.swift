@@ -24,6 +24,12 @@ struct MomentView: View {
 
     private var recording: Recording? { library.recordings.first { $0.id == id } }
 
+    /// The people invited to the moment's calendar event who are not yet a speaker's name.
+    private func invitees(_ r: Recording) -> [String] {
+        let used = Set((r.meta.speakerNames ?? [:]).values.map { $0.lowercased() })
+        return Array((r.meta.event?.attendees ?? []).filter { !used.contains($0.lowercased()) }.prefix(4))
+    }
+
     var body: some View {
         if let r = recording {
             let blocks = TranscriptBlock.make(r)
@@ -44,6 +50,7 @@ struct MomentView: View {
                                 renamingSpeaker = i
                             })
                             MomentThreads(recording: r)
+                            if let e = r.meta.event { MomentEventLine(event: e) }
                             stage(r)
                             if let brief = r.meta.insight?.brief, !brief.isEmpty {
                                 SectionTitle("Summary")
@@ -91,9 +98,16 @@ struct MomentView: View {
             .alert("Name this speaker", isPresented: Binding(get: { renamingSpeaker != nil }, set: { if !$0 { renamingSpeaker = nil } })) {
                 TextField(renamingSpeaker.map { "Speaker \($0 + 1)" } ?? "", text: $newName)
                 Button("Save") { if let i = renamingSpeaker { model.renameSpeaker(r, speaker: i, to: newName) } }
+                ForEach(invitees(r), id: \.self) { name in
+                    Button(name) { if let i = renamingSpeaker { model.renameSpeaker(r, speaker: i, to: name) } }
+                }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Used wherever this moment names them.")
+                if let e = r.meta.event, !e.attendees.isEmpty {
+                    Text("Invited to \(e.title.isEmpty ? "the event" : e.title): pick a name, or type one.")
+                } else {
+                    Text("Used wherever this moment names them.")
+                }
             }
             .confirmationDialog("Delete this moment?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete", role: .destructive) {

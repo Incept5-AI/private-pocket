@@ -93,6 +93,90 @@ enum Briefs {
     }
 }
 
+/// The calendar event a recording happened in: its title, when, and who was invited
+/// (you, rooms, resources and anyone who declined left out). Kept with the moment.
+struct CalendarEventRef: Codable, Hashable {
+    var id: String?
+    var title: String
+    var start: Date
+    var end: Date
+    var attendees: [String]
+    var location: String?
+
+    /// What the reader is told: the event, who was invited, and to name a speaker only on the conversation's evidence.
+    var hint: String {
+        var s = "This was recorded during the calendar event \"\(title)\""
+        s += attendees.isEmpty ? "." : ", to which \(attendees.joined(separator: ", ")) \(attendees.count == 1 ? "was" : "were") invited."
+        if !attendees.isEmpty {
+            s += " They are the likely speakers besides the user. When the conversation itself shows which Speaker label is which of them"
+            s += " (they are addressed by name, introduce themselves, or it is otherwise plain), give that name under speakers, spelled as in the invitation;"
+            s += " never name a speaker from the invitation alone."
+        }
+        s += " Use the event only where the conversation matches it."
+        return s
+    }
+}
+
+extension Briefs {
+    /// The event a recording happened in: of the events it overlaps, from a quarter of an
+    /// hour before it starts, the one it overlaps most.
+    static func event(during start: Date, seconds: Int) -> CalendarEventRef? {
+        guard calendarAllowed else { return nil }
+        let end = start.addingTimeInterval(Double(max(seconds, 60)))
+        let candidates = Planner.events(from: start.addingTimeInterval(-12 * 3600), to: end.addingTimeInterval(3600)).filter {
+            !$0.isAllDay && $0.startDate <= start.addingTimeInterval(15 * 60) && $0.endDate >= start.addingTimeInterval(-5 * 60)
+        }
+        func overlap(_ e: EKEvent) -> Double { max(0, min(e.endDate, end).timeIntervalSince(max(e.startDate, start))) }
+        guard let e = candidates.max(by: { overlap($0) < overlap($1) }) else { return nil }
+        var names: [String] = []
+        for p in (e.attendees ?? []) + [e.organizer].compactMap({ $0 })
+        where !p.isCurrentUser && p.participantStatus != .declined && ![.room, .resource, .group].contains(p.participantType) {
+            if let n = displayName(p), !names.contains(where: { $0.caseInsensitiveCompare(n) == .orderedSame }) { names.append(n) }
+        }
+        return CalendarEventRef(id: e.calendarItemExternalIdentifier ?? e.eventIdentifier, title: e.title ?? "", start: e.startDate, end: e.endDate,
+                                attendees: Array(names.prefix(12)), location: e.location)
+    }
+
+    /// A participant's name, or one made from their address: maya.chen@… → Maya Chen.
+    private static func displayName(_ p: EKParticipant) -> String? {
+        if let n = p.name?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty, !n.contains("@") { return n }
+        let address = p.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
+        guard let local = address.split(separator: "@").first, !local.isEmpty else { return nil }
+        let parts = local.split { $0 == "." || $0 == "_" || $0 == "-" }.filter { $0.allSatisfy(\.isLetter) }
+        guard !parts.isEmpty else { return nil }
+        return parts.map { $0.prefix(1).uppercased() + $0.dropFirst().lowercased() }.joined(separator: " ")
+    }
+}
+
+/// A moment's calendar event, under its header; opens Calendar there.
+struct MomentEventLine: View {
+    let event: CalendarEventRef
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button {
+            if let u = URL(string: "calshow:\(event.start.timeIntervalSinceReferenceDate)") { openURL(u) }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "calendar").font(.caption.weight(.bold)).foregroundStyle(Brand.act)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(event.title.isEmpty ? "A calendar event" : event.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(line).font(.caption).foregroundStyle(Brand.muted).lineLimit(2)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.top, 10)
+        .accessibilityHint("Opens Calendar at this event")
+    }
+
+    private var line: String {
+        let time = event.start.formatted(date: .omitted, time: .shortened) + "–" + event.end.formatted(date: .omitted, time: .shortened)
+        return "In your calendar · \(time)" + (event.attendees.isEmpty ? "" : " · invited: " + event.attendees.prefix(4).joined(separator: ", "))
+    }
+}
+
 /// A notification now: an answer the card gave, for a phone that is in a bag.
 enum Notify {
     static func now(title: String, body: String) {

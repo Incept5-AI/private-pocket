@@ -693,6 +693,11 @@ final class AppModel: ObservableObject {
         working.insert(r.id)
         defer { working.remove(r.id) }
         var r = r
+        // The calendar event it happened in, if Calendar is allowed: the reader is told who was invited.
+        if r.meta.calendarChecked == nil, r.meta.sampleID == nil, Briefs.calendarAllowed, let start = r.startedAt {
+            r.meta.event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
+            r.meta.calendarChecked = Date()
+        }
         defer {   // the Lock Screen gets the first sentence, if this is the moment it just showed as Saved
             if activity.lastSavedName == r.name, let first = r.meta.insight?.brief?.first?.text, r.meta.insight?.readByModel == true {
                 activity.showRead("\(r.kind.label) · \(first)")
@@ -970,6 +975,21 @@ final class AppModel: ObservableObject {
         await rereadOutdated(library.recordings)
         syncAllPlaced()
         Briefs.schedule(library.recordings)
+        // Moments from before Calendar was allowed: the event each happened in, read again where there was one.
+        if Briefs.calendarAllowed {
+            var again = 0
+            for r in library.recordings where r.meta.calendarChecked == nil && r.meta.sampleID == nil && r.meta.transcript != nil && !working.contains(r.id) {
+                guard let start = r.startedAt else { continue }
+                var r = r
+                r.meta.event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
+                r.meta.calendarChecked = Date()
+                library.update(r)
+                if r.meta.event != nil, again < 10, LLM.availability == nil {
+                    again += 1
+                    await analyse(r, quiet: true)
+                }
+            }
+        }
         // Threads: new ones found, and the live ones with moments not yet read into them, read on.
         threads.discover(library.recordings)
         for t in threads.live(library.recordings).filter({ $0.isLive && !$0.unread.isEmpty }).sorted(by: { $0.weight > $1.weight }).prefix(6) {
