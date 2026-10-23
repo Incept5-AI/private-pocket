@@ -108,7 +108,7 @@ struct WelcomePage: View {
     @State private var nudge = false
 
     var body: some View {
-        WalkPage(glow: Lamp.ready, headline: "Press once.\nHear everything.", line: "On your iPhone only. No account, no cloud.") {
+        WalkPage(glow: Lamp.ready, headline: "Press once.\nHear everything.", line: "On your iPhone, or your own server. No account, no cloud.") {
             PocketIllustration(light: Lamp.ready)
         } footer: {
             HStack(spacing: 6) {

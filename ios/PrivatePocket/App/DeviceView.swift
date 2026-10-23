@@ -201,7 +201,7 @@ struct PocketView: View {
             PocketIllustration().frame(height: 236).padding(.top, 6)
             VStack(spacing: 5) {
                 Text("Your Pocket").font(.title2.weight(.bold))
-                Text("Have it nearby and switched on. Nothing leaves this iPhone.")
+                Text("Have it nearby and switched on. No account, no cloud.")
                     .font(.subheadline).foregroundStyle(Brand.muted).multilineTextAlignment(.center)
             }
             Button { adding = true } label: {

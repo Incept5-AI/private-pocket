@@ -30,6 +30,10 @@ struct SettingsView: View {
         NavigationStack {
             Form {
                 Section {
+                    Text(privacyText).font(.footnote).foregroundStyle(Brand.textSecondary)
+                } header: { Text("Where things run") }
+
+                Section {
                     ForEach(devices.devices) { d in
                         NavigationLink { DeviceEditor(device: d) } label: {
                             VStack(alignment: .leading) {
@@ -126,13 +130,6 @@ struct SettingsView: View {
                     Text("Eight short spoken conversations, one of each kind, that go through speech to text, reading, Moments and Insights exactly as a recording from the Pocket would.")
                 }
 
-                Section("Privacy") {
-                    Text("Recordings are kept on this iPhone (Files → On My iPhone → Private Pocket) and reach it over Bluetooth, never Pocket's cloud. " +
-                         (sttRemote ? "Audio is uploaded to the speech-to-text server for transcription. " : "Transcription runs on this iPhone. ") +
-                         (llmRemote ? "Transcripts are sent to the language-model server for summaries and questions. " : "Summaries and questions run on this iPhone. ") +
-                         "Other network requests: Apple's one-off speech model downloads and, if on, place-name lookups.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
 
                 startOver
             }
@@ -555,4 +552,15 @@ struct AddDeviceSheet: View {
 
     /// "PKT01_GREY_2617abcd" → "Pocket-abcd".
     private func defaultName(_ advertised: String) -> String { DeviceStore.defaultName(advertised) }
+}
+
+extension SettingsView {
+    /// The privacy claim, kept true: where each step runs right now, in one paragraph.
+    var privacyText: String {
+        var parts = ["Your moments stay on this iPhone, in Files under On My iPhone, and reach it from the Pocket over Bluetooth. No account, no cloud."]
+        parts.append(Prefs.sttRemoteNow ? "Speech to text runs on your own server, which receives the audio." : "Speech to text runs on this iPhone.")
+        parts.append(Prefs.llmRemoteNow ? "Reading, summaries and questions run on your own server, which receives the transcripts." : "Reading, summaries and questions run on this iPhone.")
+        parts.append("Apple's speech models download once. Place names are looked up only when that is switched on.")
+        return parts.joined(separator: " ")
+    }
 }
