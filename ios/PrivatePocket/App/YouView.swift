@@ -47,7 +47,7 @@ struct YouView: View {
                         SectionTitle("This week")
                         ForEach(findings) { f in
                             FindingCard(finding: f, perform: { perform($0) }, notRight: {
-                                withAnimation { dismissed.insert("week|" + f.id) }
+                                withAnimation { _ = dismissed.insert("week|" + f.id) }
                                 Prefs.dismissedFindings = dismissed
                             })
                         }

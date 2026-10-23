@@ -140,7 +140,7 @@ struct NowView: View {
     // MARK: The blocks
 
     private func hide(_ key: String) {
-        withAnimation(.easeInOut(duration: 0.25)) { hidden.insert(key) }
+        withAnimation(.easeInOut(duration: 0.25)) { _ = hidden.insert(key) }
         Prefs.hiddenBlocks = hidden
     }
 
@@ -245,7 +245,7 @@ struct NowView: View {
         }
         if let f = topFinding(all) {
             let notRight = {
-                withAnimation { dismissed.insert("week|" + f.id) }
+                withAnimation { _ = dismissed.insert("week|" + f.id) }
                 Prefs.dismissedFindings = dismissed
             }
             FindingBlock(finding: f, perform: { perform($0) }, notRight: notRight)
