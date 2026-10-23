@@ -526,37 +526,50 @@ struct RecordAccessory: View {
         return "Ready"
     }
 
+    /// Inline, beside a collapsed tab bar, there is room for the dot and a word; expanded,
+    /// for the state as well.
+    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
+
     var body: some View {
+        let inline = placement == .inline
         HStack(spacing: 10) {
             Button { Task { await model.toggleRecording() } } label: {
                 HStack(spacing: 8) {
                     ZStack {
-                        Circle().fill(Brand.onRecord).frame(width: 30, height: 30)
-                        RoundedRectangle(cornerRadius: recording ? 3 : 7, style: .continuous).fill(Brand.record).frame(width: 14, height: 14)
+                        Circle().fill(Brand.onRecord).frame(width: 28, height: 28)
+                        RoundedRectangle(cornerRadius: recording ? 3 : 6, style: .continuous).fill(Brand.record).frame(width: 12, height: 12)
                     }
                     if let since = link.status.recordingSince, recording {
-                        Text(timerInterval: since...Date.distantFuture, countsDown: false).font(.subheadline.weight(.bold)).monospacedDigit()
+                        Text(timerInterval: since...Date.distantFuture, countsDown: false)
+                            .font(.subheadline.weight(.bold)).monospacedDigit().lineLimit(1).fixedSize()
                     } else {
-                        Text("Record").font(.subheadline.weight(.bold))
+                        Text(inline && !model.canCommand ? "Pair" : "Record").font(.subheadline.weight(.bold)).lineLimit(1).fixedSize()
                     }
                 }
             }
             .buttonStyle(.plain)
             .disabled(!model.canCommand || (!connected && !recording))
             .accessibilityLabel(recording ? "Stop recording" : "Record")
-            Spacer(minLength: 6)
-            Button { showPocket = true } label: {
-                HStack(spacing: 6) {
-                    LightDot(state: recording ? .recording : model.canCommand && connected ? .on : .off).frame(width: 8, height: 8)
-                    Text(state).font(.footnote.weight(.semibold)).lineLimit(1)
+            if !inline {
+                Spacer(minLength: 6)
+                Button { showPocket = true } label: {
+                    HStack(spacing: 6) {
+                        LightDot(state: recording ? .recording : model.canCommand && connected ? .on : .off).frame(width: 8, height: 8)
+                        Text(state).font(.footnote.weight(.semibold)).lineLimit(1).truncationMode(.tail)
+                    }
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Your Pocket")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Your Pocket")
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, inline ? 10 : 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(Brand.onRecord)
-        .background(Brand.record)
+        .background(Brand.record, in: Capsule())
+        .clipShape(Capsule())
+        .padding(3)
+        .contentShape(Capsule())
+        .onTapGesture { if inline { showPocket = true } }
         .animation(.easeInOut(duration: 0.25), value: recording)
         .sheet(isPresented: $showPocket) { PocketView() }
     }
