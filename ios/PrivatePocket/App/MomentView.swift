@@ -88,7 +88,7 @@ struct MomentView: View {
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom) { PlayerBar(player: player, envelope: envelope) }
+            .safeAreaInset(edge: .bottom) { PlayerBar(player: player, envelope: envelope, recording: r) }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -97,6 +97,7 @@ struct MomentView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: model.notes(for: r)) { Image(systemName: "square.and.arrow.up") }
+                        .accessibilityLabel("Share the notes")
                 }
             }
             .sensoryFeedback(.impact(weight: .light), trigger: showDetails) { _, open in open }
@@ -630,6 +631,8 @@ struct NextRow: View {
 struct PlayerBar: View {
     @ObservedObject var player: Player
     let envelope: [Float]
+    /// The moment it plays, for the share button: the recording, the transcript, or both.
+    var recording: Recording? = nil
 
     var body: some View {
         let total = max(player.duration, 0.1)
@@ -652,6 +655,14 @@ struct PlayerBar: View {
                     Text(Speakers.stamp(total))
                 }
                 .font(.caption2.monospacedDigit()).foregroundStyle(Brand.muted)
+            }
+            if let r = recording {
+                MomentShareMenu(recording: r) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.body.weight(.semibold)).foregroundStyle(Brand.text)
+                        .frame(width: 40, height: 40).background(Brand.raised, in: Circle())
+                }
+                .accessibilityLabel("Share the recording")
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
@@ -983,8 +994,10 @@ struct BehindSheet: View {
     }
 }
 
-/// The plumbing: recorded when, how long, which Pocket, where, the file. A page pushed
-/// beside the moment, reached by swiping left on it or its info button; swipe right to go back.
+/// A moment's details, in keeping with the moment: a header in its kind's colour, the facts
+/// as tiles, where it was, the Pocket that made it, the file with sharing, and Read again.
+/// A page pushed beside the moment, reached by swiping left on it or its info button;
+/// swipe right to go back.
 struct MomentDetailsPage: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var library: Library
@@ -995,61 +1008,175 @@ struct MomentDetailsPage: View {
     var body: some View {
         Group {
             if let r = library.recordings.first(where: { $0.id == id }) {
-                List {
-                    Section("Moment") {
-                        if let t = r.startedAt { LabeledContent("Recorded", value: t.formatted(date: .abbreviated, time: .shortened)) }
-                        if let s = r.meta.seconds { LabeledContent("Length", value: Duration.seconds(s).formatted(.time(pattern: .hourMinuteSecond))) }
-                        LabeledContent("Kind", value: r.kind.label + (r.meta.labelKind != nil ? ", your correction" : r.meta.insight?.readByModel == true ? ", as read" : ""))
-                        if let l = r.meta.locale { LabeledContent("Language", value: Languages.name(l)) }
-                        if r.meta.transcript != nil {
-                            LabeledContent("Transcript", value: r.meta.liveTranscript == true ? "Made live while recording" : "Full")
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        header(r)
+                        VStack(alignment: .leading, spacing: 0) {
+                            facts(r)
+                            whereItWas(r)
+                            pocket(r)
+                            file(r)
+                            readAgain(r)
                         }
-                        LabeledContent("Pocket", value: "\(r.pocketName(devices.devices)) · \(r.isCall ? "call" : "audio")")
-                    }
-                    Section {
-                        Button("Read again") {
-                            Task { await model.transcribe(r) }
-                            dismiss()
-                        }
-                        .disabled(model.working.contains(r.id))
-                    } footer: {
-                        Text("Transcribes and reads it again, as things are set now. Your correction to the kind stays.")
-                    }
-                    Section("Location") {
-                        if let place = r.meta.place {
-                            Link(destination: place.mapsURL) {
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Label(place.label, systemImage: "mappin.and.ellipse")
-                                    Text(place.approximate ? "Approximate: where the phone was when it downloaded" : place.coordinateText)
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            Button("Remove location", role: .destructive) { model.clearPlace(r) }
-                        }
-                        Button {
-                            Task { await model.tagHere(r) }
-                        } label: {
-                            Label(r.meta.place == nil ? "Tag with current location" : "Replace with current location", systemImage: "location")
-                        }
-                    }
-                    Section("File") {
-                        LabeledContent("Device file", value: "\(r.day)/\(r.name).mp3")
-                        LabeledContent("Size", value: r.size.formatted(.byteCount(style: .file)))
-                        if let p = r.meta.pocket {
-                            LabeledContent("Pocket ID", value: p.advertised)
-                            if let mac = p.mac { LabeledContent("Pocket MAC", value: mac) }
-                        }
-                        ShareLink(item: r.audioURL) { Label("Share the recording", systemImage: "waveform") }
-                        if let t = r.transcriptForModel { ShareLink(item: t) { Label("Share the transcript", systemImage: "text.quote") } }
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 32)
                     }
                 }
-                .scrollContentBackground(.hidden)
                 .background(Brand.ground)
                 .navigationTitle("Details")
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbarBackground(.hidden, for: .navigationBar)
             } else {
                 ContentUnavailableView("Moment deleted", systemImage: "trash")
+                    .background(Brand.ground)
             }
         }
+    }
+
+    // MARK: The parts
+
+    private func header(_ r: Recording) -> some View {
+        let tint = r.kind.isWork ? Brand.work : r.kind.isLife ? Brand.life : Brand.raised
+        let ink = r.kind.isWork ? Brand.onWork : r.kind.isLife ? Brand.onLife : Brand.text
+        return VStack(alignment: .leading, spacing: 8) {
+            Label(r.kind.label, systemImage: r.kind.symbol)
+                .font(.caption.weight(.bold)).textCase(.uppercase).tracking(0.6).opacity(0.8)
+            Text(r.quote).font(.title2.weight(.bold)).tracking(-0.3).lineLimit(3)
+            Text(whenLine(r)).font(.subheadline.weight(.semibold)).opacity(0.85)
+        }
+        .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(tint)
+        .foregroundStyle(ink)
+    }
+
+    private func whenLine(_ r: Recording) -> String {
+        var parts: [String] = []
+        if let t = r.startedAt { parts.append(t.formatted(.dateTime.weekday(.wide).day().month(.wide).hour().minute())) }
+        if let s = r.meta.seconds { parts.append(PocketFacts.length(s)) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func facts(_ r: Recording) -> some View {
+        var items: [(String, String)] = []
+        if let t = r.startedAt { items.append(("Recorded", t.formatted(date: .abbreviated, time: .shortened))) }
+        if let s = r.meta.seconds { items.append(("Length", Duration.seconds(s).formatted(.time(pattern: .hourMinuteSecond)))) }
+        items.append(("Kind", r.kind.label + (r.meta.labelKind != nil ? ", your correction" : r.meta.insight?.readByModel == true ? ", as read" : "")))
+        if let l = r.meta.locale { items.append(("Language", Languages.name(l))) }
+        items.append(("Transcript", r.meta.transcript == nil ? "Not yet" : r.meta.liveTranscript == true ? "Made live" : "Full"))
+        if let t = r.meta.turns, Speakers.count(t) > 1 {
+            items.append(("Speakers", "\(Speakers.count(t))" + (r.people.isEmpty ? "" : " · " + r.people.prefix(2).joined(separator: ", "))))
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionTitle("The moment")
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                ForEach(items, id: \.0) { fact in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(fact.0).font(.caption2.weight(.bold)).tracking(0.6).textCase(.uppercase).foregroundStyle(Brand.muted)
+                        Text(fact.1).font(.callout.weight(.semibold)).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(14)
+                    .frame(maxWidth: .infinity, minHeight: 74, alignment: .topLeading)
+                    .background(Brand.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+            }
+        }
+    }
+
+    private func whereItWas(_ r: Recording) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle("Where")
+            VStack(alignment: .leading, spacing: 12) {
+                if let place = r.meta.place {
+                    MomentMap(place: place)
+                    Text(place.approximate ? "Approximate: where the phone was when it downloaded." : place.coordinateText)
+                        .font(.caption).foregroundStyle(Brand.muted)
+                    HStack(spacing: 8) {
+                        Button { Task { await model.tagHere(r) } } label: { pill("Use where I am", "location") }.buttonStyle(.plain)
+                        Button { model.clearPlace(r) } label: { pill("Remove", "trash", tint: Brand.bad.opacity(0.18), ink: Brand.bad) }.buttonStyle(.plain)
+                    }
+                } else {
+                    Text("No place was saved with it.").font(.subheadline).foregroundStyle(Brand.textSecondary)
+                    Button { Task { await model.tagHere(r) } } label: { pill("Tag with where I am", "location") }.buttonStyle(.plain)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Brand.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+
+    private func pocket(_ r: Recording) -> some View {
+        let advertised = r.meta.pocket?.advertised ?? devices.devices.first { $0.id == r.deviceID }?.advertisedName ?? ""
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionTitle("The Pocket")
+            HStack(spacing: 16) {
+                PocketIllustration(fill: PocketLook(advertised: advertised).fill, switchDown: r.isCall)
+                    .frame(height: 70)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(r.pocketName(devices.devices)).font(.headline)
+                    Text(r.isCall ? "Switch on call: the contact mic, on the phone" : "Switch on audio: the room")
+                        .font(.subheadline).foregroundStyle(Brand.textSecondary)
+                    if let p = r.meta.pocket {
+                        Text(p.advertised + (p.mac.map { " · \($0)" } ?? ""))
+                            .font(.caption.monospaced()).foregroundStyle(Brand.muted).lineLimit(1).minimumScaleFactor(0.7)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(16)
+            .background(Brand.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+
+    private func file(_ r: Recording) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionTitle("The file")
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("\(r.name).mp3").font(.callout.monospaced()).lineLimit(1).minimumScaleFactor(0.7)
+                    Spacer(minLength: 8)
+                    Text(r.size.formatted(.byteCount(style: .file))).font(.caption.weight(.semibold)).foregroundStyle(Brand.muted)
+                }
+                Text("Kept on this iPhone under \(r.day). The Pocket keeps its own copy until you clear it over USB.")
+                    .font(.caption).foregroundStyle(Brand.muted)
+                MomentShareMenu(recording: r) {
+                    pill("Share the recording or transcript", "square.and.arrow.up", tint: Brand.act, ink: Brand.onAct)
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Brand.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+
+    private func readAgain(_ r: Recording) -> some View {
+        let busy = model.working.contains(r.id)
+        return VStack(alignment: .leading, spacing: 10) {
+            SectionTitle("Read again")
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Transcribes and reads it again, as things are set now. Your correction to the kind stays.")
+                    .font(.subheadline).foregroundStyle(Brand.textSecondary)
+                Button {
+                    Task { await model.transcribe(r) }
+                    dismiss()
+                } label: {
+                    pill(busy ? "Reading…" : "Read it again", "arrow.clockwise", tint: Brand.raised, ink: Brand.text)
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Brand.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+    }
+
+    private func pill(_ text: String, _ icon: String, tint: Color = Brand.raised, ink: Color = Brand.text) -> some View {
+        Label(text, systemImage: icon)
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .background(tint, in: Capsule())
+            .foregroundStyle(ink)
     }
 }
