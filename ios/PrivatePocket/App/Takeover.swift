@@ -19,20 +19,45 @@ struct RecordingTakeover: View {
     private var ink: Color { Brand.onRecord }
     private var cream: Color { Color(hex: 0xFFF7E8) }
 
+    /// The waveform's band: edge to edge, on the middle of the screen.
+    private let band: CGFloat = 150
+
     var body: some View {
         ZStack {
             Brand.record.ignoresSafeArea()
             Breath(levels: live.levels, active: recording && live.isActive).ignoresSafeArea()
-            VStack(spacing: 0) {
-                topBar
-                if recording {
-                    hero
-                    ScrollView {
-                        room.padding(.horizontal, 22).padding(.vertical, 14)
+            if recording {
+                GeometryReader { g in
+                    let w = g.size.width
+                    let top = g.safeAreaInsets.top
+                    // The middle of the whole screen, in this view's own coordinates (it starts under the status bar).
+                    let mid = (g.size.height + top + g.safeAreaInsets.bottom) / 2 - top
+                    let upper = max(0, mid - band / 2 - 12)
+                    let lowerTop = mid + band / 2 + 12
+                    let lower = max(0, g.size.height - lowerTop)
+                    wave
+                        .frame(width: w, height: band)
+                        .position(x: w / 2, y: mid)
+                    VStack(spacing: 10) {
+                        topBar
+                        Spacer(minLength: 0)
+                        hero
                     }
-                    .scrollIndicators(.hidden)
-                    stop
-                } else {
+                    .frame(width: w, height: upper, alignment: .top)
+                    .position(x: w / 2, y: upper / 2)
+                    VStack(spacing: 0) {
+                        ScrollView {
+                            room.padding(.horizontal, 22).padding(.top, 6).padding(.bottom, 12)
+                        }
+                        .scrollIndicators(.hidden)
+                        stop
+                    }
+                    .frame(width: w, height: lower, alignment: .top)
+                    .position(x: w / 2, y: lowerTop + lower / 2)
+                }
+            } else {
+                VStack(spacing: 0) {
+                    topBar
                     Spacer()
                     saved
                     Spacer()
@@ -78,29 +103,30 @@ struct RecordingTakeover: View {
         .padding(.top, 6)
     }
 
-    /// The timer and the waveform: what is happening, at a glance across the table.
+    /// The timer, large, and what the stream is doing: above the waveform.
     private var hero: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 6) {
             if let since = link.status.recordingSince {
                 Text(timerInterval: since...Date.distantFuture, countsDown: false)
                     .font(.system(size: timerSize, weight: .bold, design: .rounded))
                     .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                     .contentTransition(.numericText())
-            }
-            if live.isActive {
-                LiveWave(levels: live.levels, ink: ink, bar: 4, gap: 3)
-                    .frame(height: 96)
-                    .padding(.horizontal, 22)
-                    .accessibilityLabel("Streaming to this iPhone")
-            } else {
-                LevelBars(levels: [], ink: ink, bar: 4, gap: 3)
-                    .frame(height: 96)
-                    .padding(.horizontal, 22)
-                    .opacity(0.5)
             }
             Text(status).font(.footnote.weight(.bold)).opacity(0.75).multilineTextAlignment(.center).padding(.horizontal, 30)
         }
-        .padding(.top, 18)
+        .padding(.bottom, 4)
+    }
+
+    /// The waveform, from one edge of the screen to the other; faint dots while nothing streams.
+    @ViewBuilder private var wave: some View {
+        if live.isActive {
+            LiveWave(levels: live.levels, ink: ink, bar: 4, gap: 3)
+                .accessibilityLabel("Streaming to this iPhone")
+        } else {
+            LevelBars(levels: [], ink: ink, bar: 4, gap: 3).opacity(0.5)
+        }
     }
 
     private var status: String {
@@ -214,7 +240,7 @@ struct Breath: View {
         let level = active ? CGFloat(max(0, levels.values.last ?? 0)) : 0
         let swell = reduceMotion ? 0.25 : level
         RadialGradient(colors: [Color.white.opacity(0.30 + 0.25 * swell), .clear],
-                       center: UnitPoint(x: 0.5, y: 0.3), startRadius: 0, endRadius: 150 + 230 * swell)
+                       center: UnitPoint(x: 0.5, y: 0.5), startRadius: 0, endRadius: 150 + 230 * swell)
             .animation(.easeOut(duration: 0.18), value: level)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
