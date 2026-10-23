@@ -54,6 +54,8 @@ struct PocketView: View {
             .filter { $0.deviceID == devices.selectedID && $0.startedAt.map { Calendar.current.isDateInToday($0) } == true }
             .sorted { ($0.startedAt ?? .distantPast) > ($1.startedAt ?? .distantPast) }
     }
+    /// The card steps back once the day has moments, and fills the screen when idle or recording.
+    private var compactHero: Bool { !today.isEmpty && !recording && !live.isActive }
 
     var body: some View {
         NavigationStack {
@@ -121,11 +123,12 @@ struct PocketView: View {
         VStack(spacing: 16) {
             PocketIllustration(fill: look.fill, light: lampColour, blink: light == .pairing, pulse: light == .recording,
                                switchDown: link.status.mode == "CALL")
-                .frame(height: 236)
+                .frame(height: compactHero ? 132 : 236)
                 .padding(.top, 6)
                 .onTapGesture { showDetails = true }
                 .accessibilityAddTraits(.isButton)
                 .accessibilityLabel("Pocket details")
+                .animation(.spring(duration: 0.4), value: compactHero)
             VStack(spacing: 5) {
                 if recording, let since = link.status.recordingSince {
                     Text(timerInterval: since...Date.distantFuture, countsDown: false)
@@ -165,9 +168,13 @@ struct PocketView: View {
             } else if live.isActive, Prefs.liveTranscript {
                 Text("Listening…").font(.subheadline).foregroundStyle(Brand.muted)
             }
-            Text(streamText).font(.caption).foregroundStyle(live.gap ? Brand.record : Brand.dim)
-            if let n = live.engineNote { Text(n).font(.caption2).foregroundStyle(Brand.dim) }
-            if let n = live.speakersNote { Text(n).font(.caption2).foregroundStyle(Brand.dim) }
+            // Only when something needs saying: a gap, or a recording that is not streaming.
+            if live.gap || !live.isActive {
+                Text(streamText).font(.caption).foregroundStyle(live.gap ? Brand.record : Brand.dim)
+            }
+            if let n = live.engineNote, n.hasPrefix("No ") || n.contains("paused") {
+                Text(n).font(.caption2).foregroundStyle(Brand.dim)
+            }
         }
         .multilineTextAlignment(.center)
         .padding(.horizontal, 8)
