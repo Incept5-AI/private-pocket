@@ -72,12 +72,16 @@ struct NextItem: Codable, Hashable, Identifiable {
     /// When it was ticked, here or in Reminders, for the week's shape.
     var doneAt: Date?
     var dismissed: Bool?
+    /// Said plainly as something that will be done, with enough detail to act on.
+    var sure: Bool?
 
     var isAction: Bool { kind == "action" }
     var isDate: Bool { kind == "date" }
     var isPromise: Bool { kind == "promise" }
     var isDone: Bool { done == true }
     var isDismissed: Bool { dismissed == true }
+    /// Worth placing without asking: said plainly, and resting on words from the transcript.
+    var isSolid: Bool { sure == true && !(quote ?? "").isEmpty }
 }
 
 /// What came out of a conversation, kept in the recording's sidecar.
@@ -104,7 +108,7 @@ struct MomentInsight: Codable, Hashable {
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 6
+    static let readerVersion = 7
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -206,6 +210,8 @@ struct DraftItem {
     var when: String
     @Guide(description: "The exact words from the transcript it rests on, verbatim, ten words or fewer")
     var quote: String
+    @Guide(description: "true only when it was said plainly as something that will be done, with enough detail to act on; false for a suggestion, a maybe, a joke or an aside")
+    var sure: Bool
 }
 
 @Generable
@@ -243,7 +249,7 @@ struct InsightDraft {
 /// A plain copy of the draft, so a server's JSON and the on-device model meet in one place.
 private struct Draft: Decodable {
     struct Sentence: Decodable { var text: String?; var quote: String? }
-    struct Item: Decodable { var kind: String?; var text: String?; var who: String?; var place: String?; var when: String?; var quote: String? }
+    struct Item: Decodable { var kind: String?; var text: String?; var who: String?; var place: String?; var when: String?; var quote: String?; var sure: Bool? }
     struct Speaker: Decodable { var label: String?; var name: String? }
     var kind: String?
     var title: String?
@@ -260,7 +266,7 @@ private struct Draft: Decodable {
         kind = d.kind
         title = d.title
         brief = d.brief.map { Sentence(text: $0.text, quote: $0.quote) }
-        next = d.next.map { Item(kind: $0.kind, text: $0.text, who: $0.who, place: $0.place, when: $0.when, quote: $0.quote) }
+        next = d.next.map { Item(kind: $0.kind, text: $0.text, who: $0.who, place: $0.place, when: $0.when, quote: $0.quote, sure: $0.sure) }
         keyLines = d.keyLines
         people = d.people
         speakers = d.speakers.map { Speaker(label: $0.label, name: $0.name) }
@@ -307,7 +313,8 @@ enum Analyst {
         }
         let json = instructions + "\nReply with JSON only, no prose and no code fence, with exactly these keys: " +
             "\"kind\" (one of business_call, personal_call, business_meeting, personal_meeting, note, other); \"title\" (a string); " +
-            "\"brief\" (an array of {\"text\", \"quote\"}); \"next\" (an array of {\"kind\": action|date|promise, \"text\", \"who\", \"place\", \"when\", \"quote\"}); " +
+            "\"brief\" (an array of {\"text\", \"quote\"}); \"next\" (an array of {\"kind\": action|date|promise, \"text\", \"who\", \"place\", \"when\", \"quote\", " +
+            "\"sure\": true only when it was said plainly as something that will be done, with enough detail to act on}); " +
             "\"keyLines\" (an array of strings); \"people\" (an array of strings); \"speakers\" (an array of {\"label\", \"name\"}); " +
             "\"decisions\" (an array of strings: what was decided); " +
             "\"questions\" (an array of strings: questions that still had no answer when the conversation ended, never ones answered later in it); " +
@@ -355,7 +362,7 @@ enum Analyst {
                 let title = kind == "date" ? eventTitle(text, place: place) : text
                 let quote = clean(it.quote).isEmpty ? nil : clean(it.quote)
                 items.append(NextItem(kind: kind, text: title, who: who, when: when, date: found?.date, at: anchor(quote), quote: quote,
-                                      location: place, duration: found?.duration))
+                                      location: place, duration: found?.duration, sure: it.sure))
             }
         }
         out.next = Array(items.prefix(16))

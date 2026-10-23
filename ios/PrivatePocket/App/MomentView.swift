@@ -356,6 +356,8 @@ struct BriefText: View {
 /// What the user has to do, each addable to Reminders, and what others promised.
 struct TodoSection: View {
     @EnvironmentObject var model: AppModel
+    @AppStorage("autoReminders") private var autoReminders = false
+    @AppStorage("askedReminders") private var askedReminders = false
     let recording: Recording
     let open: (NextItem) -> Void
 
@@ -364,6 +366,13 @@ struct TodoSection: View {
         let items = NextList.ordered(r.meta.insight?.items ?? []).filter { $0.isAction || $0.isPromise }
         if !items.isEmpty {
             let unplaced = items.filter { $0.isAction && $0.reminderID == nil && !$0.isDone }
+            let solid = unplaced.filter(\.isSolid)
+            if !autoReminders, !askedReminders, !solid.isEmpty {
+                ConsentCard(title: "Put to-dos in Reminders from now on?",
+                            line: "Only the ones said plainly, like \(solid.count == 1 ? "the one here" : "the \(solid.count) here"). Anything vaguer waits for Add.",
+                            always: { autoReminders = true; askedReminders = true; Task { await model.placeNext(r) } },
+                            notNow: { askedReminders = true })
+            }
             SectionTitle("To do") {
                 if unplaced.count > 1 {
                     Button("Add all to Reminders") { Task { for i in unplaced { await model.place(r, i) } } }
@@ -381,6 +390,8 @@ struct TodoSection: View {
 /// Meetings, deadlines and dates, each addable to Calendar.
 struct EventSection: View {
     @EnvironmentObject var model: AppModel
+    @AppStorage("autoCalendar") private var autoCalendar = false
+    @AppStorage("askedCalendar") private var askedCalendar = false
     let recording: Recording
     let open: (NextItem) -> Void
 
@@ -388,12 +399,45 @@ struct EventSection: View {
         let r = recording
         let items = NextList.ordered(r.meta.insight?.items ?? []).filter(\.isDate)
         if !items.isEmpty {
+            let solid = items.filter { $0.isSolid && $0.eventID == nil && $0.date != nil }
+            if !autoCalendar, !askedCalendar, !solid.isEmpty {
+                ConsentCard(title: "Put dates in Calendar from now on?",
+                            line: "Only the ones said plainly with a day and time, like \(solid.count == 1 ? "the one here" : "the \(solid.count) here"). The rest wait for Add.",
+                            always: { autoCalendar = true; askedCalendar = true; Task { await model.placeNext(r) } },
+                            notNow: { askedCalendar = true })
+            }
             SectionTitle("Events")
             ForEach(items) { item in
                 NextRow(recording: r, item: item) { open(item) }
                 Divider().overlay(Brand.hairline)
             }
         }
+    }
+}
+
+/// The one question, asked where the first thing worth placing appears: Always, or Not now.
+struct ConsentCard: View {
+    let title: String
+    let line: String
+    let always: () -> Void
+    let notNow: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title).font(.headline)
+            Text(line).font(.subheadline).foregroundStyle(Brand.muted)
+            HStack(spacing: 10) {
+                Button(action: always) { Text("Always").font(.subheadline.weight(.semibold)).padding(.horizontal, 6) }
+                    .buttonStyle(.glassProminent).tint(Brand.act)
+                Button(action: notNow) { Text("Not now").font(.subheadline.weight(.semibold)).padding(.horizontal, 6) }
+                    .buttonStyle(.glass)
+            }
+            .padding(.top, 2)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(.top, 22)
     }
 }
 

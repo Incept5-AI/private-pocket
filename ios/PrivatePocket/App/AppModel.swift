@@ -555,12 +555,12 @@ final class AppModel: ObservableObject {
         guard var r = library.recordings.first(where: { $0.id == r.id }), var i = r.meta.insight, var items = i.next else { return }
         var changed = false
         for (idx, item) in items.enumerated() where !item.isDismissed {
-            if item.isAction, item.reminderID == nil, Prefs.autoReminders,
+            if item.isAction, item.reminderID == nil, Prefs.autoReminders, item.isSolid,
                let id = try? await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.") {
                 items[idx].reminderID = id
                 changed = true
             }
-            if item.isDate, item.eventID == nil, Prefs.autoCalendar, let d = item.date,
+            if item.isDate, item.eventID == nil, Prefs.autoCalendar, item.isSolid, let d = item.date,
                let id = try? await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item)) {
                 items[idx].eventID = id
                 changed = true

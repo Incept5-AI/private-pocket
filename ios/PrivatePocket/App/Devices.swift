@@ -256,6 +256,17 @@ enum Prefs {
         set { UserDefaults.standard.set(newValue, forKey: "autoCalendar") }
     }
 
+    /// The one question each, asked on the first moment with something worth placing.
+    @MainActor static var askedReminders: Bool {
+        get { UserDefaults.standard.bool(forKey: "askedReminders") }
+        set { UserDefaults.standard.set(newValue, forKey: "askedReminders") }
+    }
+
+    @MainActor static var askedCalendar: Bool {
+        get { UserDefaults.standard.bool(forKey: "askedCalendar") }
+        set { UserDefaults.standard.set(newValue, forKey: "askedCalendar") }
+    }
+
     /// What will actually run now: the server only if it answered, when that gate is on.
     @MainActor static var sttRemoteNow: Bool { sttRemote && ServerStatus.shared.allowsRemote }
     @MainActor static var llmRemoteNow: Bool { llmRemote && ServerStatus.shared.allowsRemote }
