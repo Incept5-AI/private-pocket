@@ -157,12 +157,13 @@ struct WakePage: View {
 /// A ring that fills over the hold, beside the button.
 struct HoldRing: View {
     let seconds: Double
+    var colour: Color = Lamp.ready
     @State private var progress = 0.0
 
     var body: some View {
         Circle()
             .trim(from: 0, to: progress)
-            .stroke(Lamp.ready, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+            .stroke(colour, style: StrokeStyle(lineWidth: 3, lineCap: .round))
             .rotationEffect(.degrees(-90))
             .frame(width: 44, height: 44)
             .onAppear { withAnimation(.linear(duration: seconds)) { progress = 1 } }
@@ -352,40 +353,97 @@ struct LightPage: View {
     }
 }
 
+/// Where a reset is: tapping (two quick presses), holding (the third press kept down),
+/// erasing (blinking red), ready (blinking blue, ready to pair).
+enum ResetPhase { case tapping, holding, erasing, ready }
+
+/// The card going through a reset, so the sequence reads as one thing: each quick press
+/// counted beside the button, the third kept down while a red ring fills, then the light
+/// blinking red as it erases, then blue.
+struct ResetCard: View {
+    let phase: ResetPhase
+    let presses: Int
+    let pressed: Bool
+
+    private var light: Color? { phase == .erasing ? Lamp.resetting : Lamp.ready }
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            PocketIllustration(light: light, blink: phase == .erasing || phase == .ready, buttonPressed: pressed)
+            if phase == .tapping, presses > 0 {
+                Text("\(presses)")
+                    .font(.headline.weight(.heavy))
+                    .frame(width: 38, height: 38)
+                    .background(Lamp.resetting, in: Circle())
+                    .foregroundStyle(.white)
+                    .offset(x: 36, y: 44)
+                    .id(presses)
+                    .transition(.scale(scale: 0.4).combined(with: .opacity))
+                    .accessibilityHidden(true)
+            }
+            if phase == .holding {
+                HoldRing(seconds: 2.4, colour: Lamp.resetting).offset(x: 34, y: 46)
+            }
+        }
+    }
+}
+
+/// Plays the reset on a card: two taps, the third press held, red, then blue if `ready` is asked for.
+@MainActor
+private func playReset(phase: Binding<ResetPhase>, presses: Binding<Int>, pressed: Binding<Bool>, thenReady: Bool) async -> Bool {
+    withAnimation { phase.wrappedValue = .tapping; presses.wrappedValue = 0; pressed.wrappedValue = false }
+    guard await hold(0.9) else { return false }
+    for n in 1...3 {
+        withAnimation(.spring(duration: 0.25)) { pressed.wrappedValue = true; presses.wrappedValue = n }
+        guard await hold(0.2) else { return false }
+        if n < 3 {   // the third press stays down: that is the hold
+            withAnimation(.easeOut(duration: 0.1)) { pressed.wrappedValue = false }
+            guard await hold(0.34) else { return false }
+        }
+    }
+    withAnimation { phase.wrappedValue = .holding }
+    guard await hold(2.4) else { return false }
+    withAnimation { phase.wrappedValue = .erasing; pressed.wrappedValue = false }
+    guard await hold(2.8) else { return false }
+    if thenReady {
+        withAnimation { phase.wrappedValue = .ready }
+        guard await hold(2.6) else { return false }
+    }
+    return true
+}
+
+/// Reset, as one sequence: named first, with when to use it and what it does, then the four
+/// steps lighting up in turn as the card goes through them.
 struct ResetPage: View {
-    @State private var step = 0   // press three times, hold, erasing, ready to pair
+    @State private var phase: ResetPhase = .tapping
+    @State private var presses = 0
     @State private var pressed = false
 
-    private var light: Color { step == 2 ? Lamp.resetting : Lamp.ready }
-    private var headline: String { ["Press three times.", "Then hold.", "Erasing.", "Blinking blue again."][step] }
-    private var line: String {
-        ["Quickly, like a triple click.",
-         "Keep it held until the light turns red.",
-         "Blinking red. Everything on the card is gone.",
-         "Ready to pair, like new."][step]
+    private var glow: Color? {
+        switch phase {
+        case .tapping, .holding: nil
+        case .erasing: Lamp.resetting
+        case .ready: Lamp.ready
+        }
     }
 
     var body: some View {
-        WalkPage(glow: light, headline: headline, line: line) {
-            PocketIllustration(light: light, blink: step >= 2, buttonPressed: pressed)
+        WalkPage(glow: glow, headline: "Reset the Pocket.",
+                 line: "Only if it won't pair, or keeps dropping out. A reset erases the card.") {
+            ResetCard(phase: phase, presses: presses, pressed: pressed)
+                .scaleEffect(0.84)
+        } footer: {
+            VStack(alignment: .leading, spacing: 9) {
+                RepairStep(n: 1, text: "Press the side button three times, quickly.", on: phase == .tapping, tint: Lamp.resetting)
+                RepairStep(n: 2, text: "On the third press, keep holding.", on: phase == .holding, tint: Lamp.resetting)
+                RepairStep(n: 3, text: "Let go when the light blinks red. It's erasing.", on: phase == .erasing, tint: Lamp.resetting)
+                RepairStep(n: 4, text: "Blinking blue: ready to pair, like new.", on: phase == .ready, tint: Lamp.resetting)
+            }
+            .padding(.horizontal, 32)
         }
         .task {
             while !Task.isCancelled {
-                withAnimation { step = 0 }
-                guard await hold(0.8) else { return }
-                for _ in 0..<3 {
-                    withAnimation { pressed = true }
-                    guard await hold(0.14) else { return }
-                    withAnimation { pressed = false }
-                    guard await hold(0.2) else { return }
-                }
-                guard await hold(0.6) else { return }
-                withAnimation { step = 1; pressed = true }
-                guard await hold(2.2) else { return }
-                withAnimation { step = 2; pressed = false }
-                guard await hold(2.6) else { return }
-                withAnimation { step = 3 }
-                guard await hold(2.6) else { return }
+                guard await playReset(phase: $phase, presses: $presses, pressed: $pressed, thenReady: true) else { return }
             }
         }
     }
@@ -397,20 +455,29 @@ struct ResetPage: View {
 struct RepairPage: View {
     let start: () -> Void
     @State private var step = 0   // bluetooth off, reset, bluetooth on, blinking blue, paired
+    @State private var phase: ResetPhase = .tapping
+    @State private var presses = 0
+    @State private var pressed = false
 
     private var light: Color? { [nil, Lamp.resetting, nil, Lamp.ready, Lamp.ready][step] }
     private var blink: Bool { step == 1 || step == 3 }
 
     var body: some View {
-        WalkPage(glow: step >= 3 ? Lamp.ready : nil,
+        WalkPage(glow: step >= 3 ? Lamp.ready : step == 1 && phase == .erasing ? Lamp.resetting : nil,
                  headline: "If it won't pair, or drops out.",
                  line: "") {
             ZStack(alignment: .bottom) {
-                PocketIllustration(light: light, blink: blink, buttonPressed: step == 1)
-                    .scaleEffect(0.78).offset(y: -22)
+                Group {
+                    if step == 1 {
+                        ResetCard(phase: phase, presses: presses, pressed: pressed)
+                    } else {
+                        PocketIllustration(light: light, blink: blink)
+                    }
+                }
+                .scaleEffect(0.78).offset(y: -22)
                 VStack(alignment: .leading, spacing: 9) {
                     RepairStep(n: 1, text: "Turn Bluetooth off on your iPhone, in Settings.", on: step == 0)
-                    RepairStep(n: 2, text: "Reset the Pocket: press three times, then hold until it blinks red.", on: step == 1)
+                    RepairStep(n: 2, text: "Reset the Pocket: press three times, keeping the third held until it blinks red.", on: step == 1, tint: Lamp.resetting)
                     RepairStep(n: 3, text: "Turn Bluetooth back on.", on: step == 2)
                     RepairStep(n: 4, text: "Hold the side button five seconds until it blinks blue, then tap Pair.", on: step == 3)
                 }
@@ -426,7 +493,11 @@ struct RepairPage: View {
         }
         .task {
             while !Task.isCancelled {
-                for i in 0..<5 {
+                withAnimation { step = 0 }
+                guard await hold(2.6) else { return }
+                withAnimation { step = 1 }
+                guard await playReset(phase: $phase, presses: $presses, pressed: $pressed, thenReady: false) else { return }
+                for i in 2..<5 {
                     withAnimation { step = i }
                     guard await hold(i == 4 ? 2.2 : 2.6) else { return }
                 }
@@ -439,13 +510,14 @@ struct RepairStep: View {
     let n: Int
     let text: String
     let on: Bool
+    var tint: Color = Brand.act
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(n)").font(.caption.weight(.bold))
-                .foregroundStyle(on ? Brand.onAct : Brand.act)
+                .foregroundStyle(on ? Color.white : tint)
                 .frame(width: 20, height: 20)
-                .background(on ? Brand.act : Brand.act.opacity(0.18), in: Circle())
+                .background(on ? tint : tint.opacity(0.18), in: Circle())
             Text(text).font(.subheadline).foregroundStyle(on ? Brand.text : Brand.textSecondary)
         }
         .animation(.easeInOut(duration: 0.3), value: on)
