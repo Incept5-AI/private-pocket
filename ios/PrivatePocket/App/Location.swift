@@ -22,9 +22,22 @@ struct Place: Codable, Hashable {
 /// which is the one network request the app makes, and only if enabled in Settings.
 @MainActor
 final class Locator: NSObject, ObservableObject, CLLocationManagerDelegate {
-    @Published private(set) var authorization: CLAuthorizationStatus
-    private let manager = CLLocationManager()
+    /// Learned from the manager's own callback once it exists.
+    @Published private(set) var authorization: CLAuthorizationStatus = .notDetermined
+    private var made: CLLocationManager?
     private var waiting: [CheckedContinuation<CLLocation?, Never>] = []
+
+    /// Made on first use, never while the app is being created: making one, and reading its
+    /// status, wait on the location service, and at launch (or a Bluetooth relaunch in the
+    /// background) that wait can outlast the watchdog, which then kills the app.
+    private var manager: CLLocationManager {
+        if let m = made { return m }
+        let m = CLLocationManager()
+        m.delegate = self
+        m.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        made = m
+        return m
+    }
 
     /// Places captured when a recording started, keyed by its file name, until the
     /// recording is downloaded. Persisted so a later sync still finds them.
@@ -36,11 +49,9 @@ final class Locator: NSObject, ObservableObject, CLLocationManagerDelegate {
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "pendingPlaces") }
     }
 
-    override init() {
-        authorization = manager.authorizationStatus
-        super.init()
-        manager.delegate = self
-        manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+    /// Makes the manager after launch, so Settings can show what was allowed.
+    func prepare() {
+        _ = manager
     }
 
     var enabled: Bool { Prefs.tagLocation }

@@ -69,7 +69,12 @@ struct RootView: View {
         .onChange(of: scenePhase) {
             if scenePhase == .active, recording, !model.takeover { withAnimation(.spring(duration: 0.7)) { model.takeover = true } }
         }
-        .task { if Prefs.tagLocation { model.locator.requestPermission() } }
+        .task {
+            // Location is set up after launch: doing it while the app is being created can stall past the watchdog.
+            try? await Task.sleep(for: .seconds(1))
+            model.locator.prepare()
+            if Prefs.tagLocation { model.locator.requestPermission() }
+        }
         .onChange(of: scenePhase, initial: true) { model.setActive(scenePhase == .active) }
         .fullScreenCover(isPresented: $walkthrough) { WalkthroughView() }
     }

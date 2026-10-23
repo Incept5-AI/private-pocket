@@ -166,7 +166,7 @@ final class PocketLink: NSObject, ObservableObject {
 
     func stopDiscovery() {
         discoveryMode = false
-        if phase != .scanning { central.stopScan() }
+        if phase != .scanning { stopScanning() }
     }
 
     // MARK: - Connection
@@ -281,8 +281,15 @@ final class PocketLink: NSObject, ObservableObject {
         bouncingAfterKey = false
     }
 
+    /// Stops a scan only when one is running: stopping waits on the Bluetooth daemon, and
+    /// called from a disconnect callback in the background that wait got the app killed by
+    /// the watchdog.
+    private func stopScanning() {
+        if central.isScanning { central.stopScan() }
+    }
+
     func disconnect() {
-        central.stopScan()
+        stopScanning()
         wantedName = nil
         standingBy = false
         standbyDevice = nil
@@ -298,7 +305,7 @@ final class PocketLink: NSObject, ObservableObject {
 
     private func attach(_ p: CBPeripheral) {
         if let old = peripheral, old != p { central.cancelPeripheralConnection(old) }
-        central.stopScan()
+        stopScanning()
         wantedName = nil
         peripheral = p
         p.delegate = self
@@ -311,7 +318,7 @@ final class PocketLink: NSObject, ObservableObject {
     }
 
     private func connected(_ p: CBPeripheral) {
-        central.stopScan()
+        stopScanning()
         wantedName = nil
         note("connected to \(p.name ?? "Pocket")")
         if let d = device, d.peripheralID != p.identifier { onPeripheralLearned?(d.id, p.identifier) }
