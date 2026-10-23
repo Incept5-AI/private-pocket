@@ -21,7 +21,6 @@ struct MomentView: View {
     @State private var renamingSpeaker: Int?
     @State private var newName = ""
     @State private var confirmDelete = false
-    @State private var confirmRedo = false
 
     private var recording: Recording? { library.recordings.first { $0.id == id } }
 
@@ -103,11 +102,6 @@ struct MomentView: View {
             } message: {
                 Text("The recording and everything read from it. Reminders and Calendar keep what was sent to them.")
             }
-            .confirmationDialog("Redo this moment?", isPresented: $confirmRedo, titleVisibility: .visible) {
-                Button("Transcribe and read again") { Task { await model.transcribe(r) } }
-            } message: {
-                Text("With the current speech-to-text and language-model settings.")
-            }
             .onChange(of: player.playing) { if player.playing { showAll = true } }
             .task(id: r.audioURL) {
                 player.load(r.audioURL)
@@ -145,7 +139,6 @@ struct MomentView: View {
                 .font(.caption).foregroundStyle(Brand.dim).multilineTextAlignment(.center)
             HStack(spacing: 18) {
                 Button("Details") { showDetails = true }
-                Button("Redo") { confirmRedo = true }.disabled(model.working.contains(r.id))
                 Button("Delete", role: .destructive) { confirmDelete = true }
             }
             .font(.caption.weight(.semibold))
@@ -830,7 +823,7 @@ struct MomentDetailsSheet: View {
         NavigationStack {
             if let r = library.recordings.first(where: { $0.id == id }) {
                 List {
-                    Section("Recording") {
+                    Section("Moment") {
                         if let t = r.startedAt { LabeledContent("Recorded", value: t.formatted(date: .abbreviated, time: .shortened)) }
                         if let s = r.meta.seconds { LabeledContent("Length", value: Duration.seconds(s).formatted(.time(pattern: .hourMinuteSecond))) }
                         LabeledContent("Kind", value: r.kind.label + (r.meta.labelKind != nil ? ", your correction" : r.meta.insight?.readByModel == true ? ", as read" : ""))
@@ -839,6 +832,15 @@ struct MomentDetailsSheet: View {
                             LabeledContent("Transcript", value: r.meta.liveTranscript == true ? "Made live while recording" : "Full")
                         }
                         LabeledContent("Pocket", value: "\(r.pocketName(devices.devices)) · \(r.isCall ? "call" : "audio")")
+                    }
+                    Section {
+                        Button("Read again") {
+                            Task { await model.transcribe(r) }
+                            dismiss()
+                        }
+                        .disabled(model.working.contains(r.id))
+                    } footer: {
+                        Text("Transcribes and reads it again, as things are set now. Your correction to the kind stays.")
                     }
                     Section("Location") {
                         if let place = r.meta.place {
