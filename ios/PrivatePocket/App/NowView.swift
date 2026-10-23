@@ -25,6 +25,7 @@ struct NowView: View {
     @State private var brief: Brief?
     @State private var tableMode = false
     @State private var briefsAsked = Prefs.askedBriefs
+    @State private var deleting: Recording?
     @StateObject private var replay = Replay()
 
     private var recording: Bool { link.status.recordingSince != nil }
@@ -52,6 +53,7 @@ struct NowView: View {
                                         .onAppear { visible.insert(r.id); noteScrolling() }
                                         .onDisappear { visible.remove(r.id); noteScrolling() }
                                         .contextMenu { momentMenu(r) }
+                                        .modifier(SwipeToDelete { deleting = r })
                                 }
                             }
                             if days.isEmpty { emptyTape }
@@ -84,6 +86,15 @@ struct NowView: View {
                 .fullScreenCover(item: $brief) { BriefView(brief: $0) }
                 .fullScreenCover(isPresented: $tableMode) { LiveView() }
                 .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
+                .confirmationDialog("Delete this moment?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                                    titleVisibility: .visible, presenting: deleting) { r in
+                    Button("Delete", role: .destructive) {
+                        withAnimation { library.delete(r) }
+                        deleting = nil
+                    }
+                } message: { _ in
+                    Text("The recording and everything read from it. Reminders and Calendar keep what was sent to them.")
+                }
                 .onChange(of: model.openMomentID, initial: true) {
                     guard let id = model.openMomentID else { return }
                     model.openMomentID = nil
@@ -434,6 +445,8 @@ struct NowView: View {
         if !r.people.isEmpty, let p = r.people.first {
             Button { path.append(MomentsFilter(title: p, ids: library.recordings.filter { $0.people.contains(p) }.map(\.id))) } label: { Label("Everything with \(p)", systemImage: "person") }
         }
+        Divider()
+        Button(role: .destructive) { deleting = r } label: { Label("Delete", systemImage: "trash") }
     }
 }
 
@@ -756,6 +769,69 @@ struct CardGestures: ViewModifier {
                 if let dismiss { Button(role: .destructive) { dismiss() } label: { Label("Put away for today", systemImage: "eye.slash") } }
             }
             .sensoryFeedback(.impact(weight: .medium), trigger: pulse)
+    }
+}
+
+/// Swipe a band of the tape left to show Delete; a long swipe asks at once. Delete always
+/// asks first. A tap on an open band closes it; a vertical drag is left to the scroll.
+struct SwipeToDelete: ViewModifier {
+    let delete: () -> Void
+    @State private var offset: CGFloat = 0
+    @State private var open = false
+    @State private var pulse = 0
+    private let reveal: CGFloat = 92
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: .trailing) {
+            if offset < 0 {
+                Button {
+                    close()
+                    delete()
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: "trash").font(.body.weight(.bold))
+                        Text("Delete").font(.caption.weight(.bold))
+                    }
+                    .foregroundStyle(Color.white)
+                    .frame(width: max(reveal - 8, -offset - 8))
+                    .frame(maxHeight: .infinity)
+                    .background(Brand.bad, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Delete this moment")
+            }
+            content
+                .offset(x: offset)
+                .overlay {
+                    if open { Color.clear.contentShape(Rectangle()).onTapGesture { close() } }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 24, coordinateSpace: .local)
+                        .onChanged { v in
+                            guard abs(v.translation.width) > abs(v.translation.height) * 1.5 else { return }
+                            let start: CGFloat = open ? -reveal : 0
+                            offset = min(0, start + v.translation.width)
+                        }
+                        .onEnded { v in
+                            let x = (open ? -reveal : 0) + v.translation.width
+                            if x < -240 {
+                                pulse += 1
+                                close()
+                                delete()
+                            } else if x < -reveal / 2 {
+                                pulse += 1
+                                withAnimation(.spring(duration: 0.3)) { offset = -reveal; open = true }
+                            } else {
+                                close()
+                            }
+                        }
+                )
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: pulse)
+    }
+
+    private func close() {
+        withAnimation(.spring(duration: 0.3)) { offset = 0; open = false }
     }
 }
 
