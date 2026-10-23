@@ -74,6 +74,14 @@ struct MomentView: View {
                         .padding(.top, 8)
                         .padding(.bottom, 24)
                     }
+                    // Swipe left anywhere on the moment for its details; right is the way back.
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 30, coordinateSpace: .local)
+                            .onEnded { v in
+                                guard v.translation.width < -90, abs(v.translation.height) < abs(v.translation.width) * 0.5 else { return }
+                                showDetails = true
+                            }
+                    )
                     .onChange(of: current) {
                         guard player.playing, showAll, let c = current else { return }
                         withAnimation { proxy.scrollTo(c, anchor: .center) }
@@ -84,9 +92,14 @@ struct MomentView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    Button { showDetails = true } label: { Image(systemName: "info.circle") }
+                        .accessibilityLabel("Details")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: model.notes(for: r)) { Image(systemName: "square.and.arrow.up") }
                 }
             }
+            .sensoryFeedback(.impact(weight: .light), trigger: showDetails) { _, open in open }
             .sheet(item: $behind) { b in BehindSheet(id: r.id, behind: b, player: player).presentationDetents([.medium]) }
             .sheet(isPresented: $showDetails) { MomentDetailsSheet(id: r.id) }
             .alert("Name this moment", isPresented: $renaming) {
