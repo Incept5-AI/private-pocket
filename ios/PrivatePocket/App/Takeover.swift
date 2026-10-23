@@ -140,7 +140,7 @@ struct RecordingTakeover: View {
         VStack(alignment: .leading, spacing: 16) {
             let text = live.text
             if !text.isEmpty {
-                Text(String(text.suffix(420)))
+                Text(text.tail(420))
                     .font(.title3.weight(.semibold)).lineSpacing(3)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .animation(.easeOut(duration: 0.25), value: text.count)

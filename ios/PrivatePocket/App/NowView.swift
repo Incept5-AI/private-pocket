@@ -717,7 +717,7 @@ private struct NowLiveWords: View {
 
     var body: some View {
         if !live.text.isEmpty {
-            Text(String(live.text.suffix(160))).font(.callout.weight(.medium)).lineLimit(3)
+            Text(live.text.tail(160)).font(.callout.weight(.medium)).lineLimit(3)
         } else {
             Text(live.isActive ? "Listening…" : "Started before the phone connected; it's fetched when it stops.").font(.callout.weight(.medium))
         }

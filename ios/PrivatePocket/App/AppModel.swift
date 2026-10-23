@@ -477,7 +477,7 @@ final class AppModel: ObservableObject {
                 try? await Task.sleep(for: .seconds(2))
                 guard let self, !Task.isCancelled else { return }
                 let streaming = self.live.isActive && !self.live.levels.stalled
-                self.activity.updateRecording(line: String(self.live.text.suffix(140)), streaming: self.live.isActive,
+                self.activity.updateRecording(line: self.live.text.tail(140), streaming: self.live.isActive,
                                               gap: self.live.gap, paired: self.canCommand,
                                               levels: streaming ? self.live.levels.bars(30, seconds: 7.5) : nil,
                                               context: self.recordingContext?.label, caught: self.caughtLine,

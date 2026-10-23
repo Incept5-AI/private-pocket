@@ -832,7 +832,7 @@ struct AskSection: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(qa.question).font(.subheadline.weight(.semibold))
                 if let a = qa.answer {
-                    Text(a).font(.body).foregroundStyle(Brand.textSecondary).textSelection(.enabled)
+                    Text(a.answerText).font(.body).foregroundStyle(Brand.textSecondary).textSelection(.enabled)
                 } else if let e = qa.error {
                     Text(e).font(.subheadline).foregroundStyle(Brand.muted)
                 } else {

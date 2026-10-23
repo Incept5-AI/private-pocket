@@ -99,6 +99,9 @@ struct ThreadsView: View {
 }
 
 enum ThreadText {
+    /// "1 moment", "2 moments".
+    static func moments(_ n: Int) -> String { n == 1 ? "1 moment" : "\(n) moments" }
+
     /// "March", or "March 2025" when it is not this year.
     static func month(_ d: Date) -> String {
         Calendar.current.isDate(d, equalTo: Date(), toGranularity: .year)
@@ -133,7 +136,7 @@ struct ThreadRow: View {
     }
 
     private var meta: String {
-        var parts = ["\(thread.moments.count) moments"]
+        var parts = [ThreadText.moments(thread.moments.count)]
         if let f = thread.first { parts.append("since \(ThreadText.month(f))") }
         if !thread.people.isEmpty { parts.append("with " + thread.people.prefix(2).joined(separator: ", ")) }
         if let o = thread.alive.first(where: { $0.item.isAction }) { parts.append("yours: \(o.item.text.lowercased())") }
@@ -399,7 +402,7 @@ struct ThreadView: View {
     private func header(_ t: LiveThread, tint: Color, ink: Color) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("\(t.moments.count) moments" + (t.first.map { " · since \(ThreadText.month($0))" } ?? ""))
+                Text(ThreadText.moments(t.moments.count) + (t.first.map { " · since \(ThreadText.month($0))" } ?? ""))
                     .font(.caption2.weight(.bold)).tracking(0.7).textCase(.uppercase).opacity(0.75)
                 Spacer(minLength: 6)
                 if t.isBack, let g = t.gapBeforeLast {
@@ -549,7 +552,7 @@ struct ThreadView: View {
     private func momentsSection(_ t: LiveThread) -> some View {
         let ms = Array(t.moments.reversed())
         return VStack(alignment: .leading, spacing: 8) {
-            SectionTitle("Its \(ms.count) moments")
+            SectionTitle("Its " + ThreadText.moments(ms.count))
             ForEach(Array(ms.enumerated()), id: \.element.id) { i, r in
                 NavigationLink(value: r.id) { TapeBand(recording: r) }
                     .buttonStyle(.plain)
@@ -882,6 +885,6 @@ struct LiveLine: View {
     @EnvironmentObject var live: LiveSession
 
     var body: some View {
-        Text(live.text.isEmpty ? "Listening…" : String(live.text.suffix(140)))
+        Text(live.text.isEmpty ? "Listening…" : live.text.tail(140))
     }
 }

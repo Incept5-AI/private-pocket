@@ -199,7 +199,7 @@ struct AnswerCard: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(qa.question).font(.subheadline.weight(.semibold)).foregroundStyle(Brand.muted)
             if let a = qa.answer {
-                Text(a).font(.title3.weight(.medium)).lineSpacing(4).textSelection(.enabled)
+                Text(a.answerText).font(.title3.weight(.medium)).lineSpacing(4).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 if !sources.isEmpty {
                     VStack(spacing: 6) {
@@ -249,5 +249,14 @@ struct AnswerCard: View {
         .padding(.horizontal, 12).padding(.vertical, 8)
         .background(Brand.raised.opacity(0.55), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .contentShape(Rectangle())
+    }
+}
+
+extension String {
+    /// A model's answer as it was written: bold, italics and links shown as such, line breaks
+    /// and list dashes kept; plain text if it is not markdown at all. Models answer in markdown
+    /// more often than not, and the asterisks used to show.
+    var answerText: AttributedString {
+        (try? AttributedString(markdown: self, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(self)
     }
 }

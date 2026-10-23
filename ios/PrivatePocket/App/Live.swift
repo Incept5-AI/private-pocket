@@ -588,3 +588,14 @@ final class LiveLevels: ObservableObject {
     }
 }
 
+
+extension String {
+    /// About the last `n` characters, from the start of a word, with an ellipsis when cut:
+    /// the end of a live transcript, never beginning halfway through a word.
+    func tail(_ n: Int) -> String {
+        guard count > n else { return self }
+        let cut = suffix(n)
+        guard let space = cut.firstIndex(where: \.isWhitespace) else { return "…" + cut }
+        return "…" + cut[cut.index(after: space)...]
+    }
+}
