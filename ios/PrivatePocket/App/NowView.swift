@@ -25,6 +25,10 @@ struct NowView: View {
     @State private var brief: Brief?
     @State private var briefsAsked = Prefs.askedBriefs
     @State private var deleting: Recording?
+    /// Choosing moments to delete together: entered from a moment's menu.
+    @State private var selecting = false
+    @State private var picked: Set<String> = []
+    @State private var confirmMany = false
     @StateObject private var replay = Replay()
 
     private var recording: Bool { link.status.recordingSince != nil }
@@ -34,26 +38,18 @@ struct NowView: View {
         let days = TapeDays.grouped(all)
         NavigationStack(path: $path) {
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14, pinnedViews: []) {
+                // A list, styled as the page, so swiping a row is the system's own and never fights the scroll.
+                List {
+                    Group {
                         header
                         blocks(all)
                         tapeHeader
                         switch scale {
                         case .day:
                             ForEach(days, id: \.day) { group in
-                                Text(TapeDays.label(group.day))
-                                    .font(.title3.weight(.bold)).padding(.top, 10)
+                                dayHeader(group.day, moments: group.moments)
                                     .id(TapeDays.id(group.day))
-                                ForEach(group.moments) { r in
-                                    NavigationLink(value: r.id) { TapeBand(recording: r) }
-                                        .buttonStyle(.plain)
-                                        .id(r.id)
-                                        .onAppear { visible.insert(r.id); noteScrolling() }
-                                        .onDisappear { visible.remove(r.id); noteScrolling() }
-                                        .contextMenu { momentMenu(r) }
-                                        .modifier(SwipeToDelete { deleting = r })
-                                }
+                                ForEach(group.moments) { r in band(r) }
                             }
                             if days.isEmpty { emptyTape }
                         case .week: TapeWeek(all: all, focus: focus) { land($0, proxy) }
@@ -61,12 +57,19 @@ struct NowView: View {
                         case .year: TapeYear(all: all, focus: focus) { land($0, proxy) }
                         }
                     }
-                    .padding(.horizontal, 20).padding(.top, 6).padding(.bottom, 28)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 7, leading: 20, bottom: 7, trailing: 20))
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+                .environment(\.defaultMinListRowHeight, 1)
+                .contentMargins(.bottom, 28, for: .scrollContent)
                 .background(Brand.ground)
                 .scrollIndicators(.hidden)
+                .safeAreaInset(edge: .bottom) { selectionBar }
                 .overlay(alignment: .trailing) {
-                    if scale == .day, all.count >= 2 {
+                    if scale == .day, all.count >= 2, !selecting {
                         DateFinder(moments: all.compactMap { r in r.startedAt.map { (id: r.id, at: $0) } }.sorted { $0.at > $1.at },
                                    topDate: all.filter { visible.contains($0.id) }.compactMap(\.startedAt).max(),
                                    active: scrolling) { id in
@@ -444,7 +447,103 @@ struct NowView: View {
         }
     }
 
+    // MARK: Bands, and choosing several
+
+    /// A moment on the tape: tap to open it, swipe left to delete it, hold for its menu.
+    /// While choosing, a tap ticks it instead.
+    @ViewBuilder private func band(_ r: Recording) -> some View {
+        let chosen = picked.contains(r.id)
+        Button {
+            if selecting {
+                if chosen { picked.remove(r.id) } else { picked.insert(r.id) }
+            } else {
+                path.append(r.id)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                if selecting {
+                    Image(systemName: chosen ? "checkmark.circle.fill" : "circle")
+                        .font(.title3)
+                        .foregroundStyle(chosen ? Brand.act : Brand.dim)
+                        .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+                TapeBand(recording: r)
+                    .opacity(selecting && !chosen ? 0.75 : 1)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .id(r.id)
+        .onAppear { visible.insert(r.id); noteScrolling() }
+        .onDisappear { visible.remove(r.id); noteScrolling() }
+        .contextMenu { momentMenu(r) }
+        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+            if !selecting {
+                Button { deleting = r } label: { Label("Delete", systemImage: "trash") }
+                    .tint(Brand.bad)
+            }
+        }
+        .accessibilityAddTraits(selecting && chosen ? .isSelected : [])
+    }
+
+    /// A day's name on the tape; while choosing, a way to take the whole day.
+    private func dayHeader(_ day: Date, moments: [Recording]) -> some View {
+        let ids = Set(moments.map(\.id))
+        let all = !ids.isEmpty && ids.isSubset(of: picked)
+        return HStack(alignment: .firstTextBaseline) {
+            Text(TapeDays.label(day)).font(.title3.weight(.bold))
+            Spacer()
+            if selecting {
+                Button(all ? "Deselect" : "Select all") {
+                    if all { picked.subtract(ids) } else { picked.formUnion(ids) }
+                }
+                .font(.subheadline.weight(.semibold))
+                .tint(Brand.act)
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(.top, 10)
+    }
+
+    /// While choosing: how many, Delete, and Done.
+    @ViewBuilder private var selectionBar: some View {
+        if selecting {
+            HStack(spacing: 12) {
+                Button("Done") { withAnimation(.spring(duration: 0.3)) { selecting = false; picked = [] } }
+                    .font(.body.weight(.semibold))
+                    .tint(Brand.act)
+                Spacer()
+                Text(picked.isEmpty ? "Tap moments to choose them" : "\(picked.count) chosen")
+                    .font(.subheadline.weight(.semibold)).foregroundStyle(Brand.textSecondary)
+                Spacer()
+                Button(role: .destructive) { confirmMany = true } label: {
+                    Label("Delete", systemImage: "trash").font(.body.weight(.semibold))
+                }
+                .tint(Brand.bad)
+                .disabled(picked.isEmpty)
+                .confirmationDialog(picked.count == 1 ? "Delete this moment?" : "Delete \(picked.count) moments?",
+                                    isPresented: $confirmMany, titleVisibility: .visible) {
+                    Button(picked.count == 1 ? "Delete" : "Delete \(picked.count)", role: .destructive) {
+                        let gone = library.recordings.filter { picked.contains($0.id) }
+                        withAnimation { library.delete(gone) }
+                        picked = []
+                        selecting = false
+                    }
+                } message: {
+                    Text("The recordings and everything read from them. Reminders and Calendar keep what was sent to them.")
+                }
+            }
+            .padding(.horizontal, 20).padding(.vertical, 12)
+            .glassEffect(.regular, in: Capsule())
+            .padding(.horizontal, 16).padding(.bottom, 6)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        }
+    }
+
     @ViewBuilder private func momentMenu(_ r: Recording) -> some View {
+        Button { withAnimation(.spring(duration: 0.3)) { selecting = true; picked.insert(r.id) } } label: {
+            Label("Select", systemImage: "checkmark.circle")
+        }
         Button { path.append(r.id) } label: { Label("Open", systemImage: "arrow.up.right") }
         ShareLink(item: model.notes(for: r)) { Label("Share as notes", systemImage: "square.and.arrow.up") }
         if !r.people.isEmpty, let p = r.people.first {
@@ -553,131 +652,32 @@ struct LiveWave: View {
     }
 }
 
-/// A block on Now answers to the hand: tap for its one thing, swipe right to do it,
-/// swipe left to put it away for today, hold for the menu. A vertical drag is left
-/// to the scroll.
+/// A block on Now answers to the hand: tap for its one thing, swipe right for it too,
+/// swipe left to put it away for today, hold for the menu. The swipes are the system's own
+/// list swipes, so they never fight the scroll.
 struct CardGestures: ViewModifier {
     let primary: String?
     let act: (() -> Void)?
     let dismiss: (() -> Void)?
-    @State private var offset: CGFloat = 0
-    @State private var gone = false
-    @State private var pulse = 0
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func body(content: Content) -> some View {
         content
-            .offset(x: offset)
-            .opacity(gone ? 0 : 1 - min(0.35, abs(offset) / 500))
-            .background(alignment: .leading) {
-                if offset > 24, let primary {
-                    Text(primary.uppercased()).font(.caption.weight(.bold)).tracking(0.8).foregroundStyle(Brand.act)
-                        .padding(.leading, 6).opacity(min(1, (offset - 24) / 60))
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                if let primary, let act {
+                    Button { act() } label: { Label(primary, systemImage: "arrow.up.right") }
+                        .tint(Brand.act)
                 }
             }
-            .background(alignment: .trailing) {
-                if offset < -24, dismiss != nil {
-                    Text("PUT AWAY").font(.caption.weight(.bold)).tracking(0.8).foregroundStyle(Brand.muted)
-                        .padding(.trailing, 6).opacity(min(1, (-offset - 24) / 60))
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                if let dismiss {
+                    Button { withAnimation { dismiss() } } label: { Label("Put away", systemImage: "eye.slash") }
+                        .tint(Brand.raised)
                 }
             }
-            .gesture(
-                DragGesture(minimumDistance: 24, coordinateSpace: .local)
-                    .onChanged { v in
-                        guard abs(v.translation.width) > abs(v.translation.height) * 1.5 else { return }
-                        let w = v.translation.width
-                        let allowed = (w > 0 && act != nil) || (w < 0 && dismiss != nil)
-                        offset = allowed ? w : w * 0.18
-                    }
-                    .onEnded { v in
-                        let w = v.translation.width
-                        if w > 96, let act {
-                            pulse += 1
-                            withAnimation(.spring(duration: 0.35)) { offset = 0 }
-                            act()
-                        } else if w < -96, let dismiss {
-                            pulse += 1
-                            if reduceMotion { gone = true; dismiss() }
-                            else {
-                                withAnimation(.easeOut(duration: 0.22)) { offset = -520; gone = true }
-                                Task { @MainActor in
-                                    try? await Task.sleep(for: .milliseconds(230))
-                                    dismiss()
-                                }
-                            }
-                        } else {
-                            withAnimation(.spring(duration: 0.35)) { offset = 0 }
-                        }
-                    }
-            )
             .contextMenu {
                 if let primary, let act { Button { act() } label: { Label(primary, systemImage: "arrow.up.right") } }
                 if let dismiss { Button(role: .destructive) { dismiss() } label: { Label("Put away for today", systemImage: "eye.slash") } }
             }
-            .sensoryFeedback(.impact(weight: .medium), trigger: pulse)
-    }
-}
-
-/// Swipe a band of the tape left to show Delete; a long swipe asks at once. Delete always
-/// asks first. A tap on an open band closes it; a vertical drag is left to the scroll.
-struct SwipeToDelete: ViewModifier {
-    let delete: () -> Void
-    @State private var offset: CGFloat = 0
-    @State private var open = false
-    @State private var pulse = 0
-    private let reveal: CGFloat = 92
-
-    func body(content: Content) -> some View {
-        ZStack(alignment: .trailing) {
-            if offset < 0 {
-                Button {
-                    close()
-                    delete()
-                } label: {
-                    VStack(spacing: 3) {
-                        Image(systemName: "trash").font(.body.weight(.bold))
-                        Text("Delete").font(.caption.weight(.bold))
-                    }
-                    .foregroundStyle(Color.white)
-                    .frame(width: max(reveal - 8, -offset - 8))
-                    .frame(maxHeight: .infinity)
-                    .background(Brand.bad, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Delete this moment")
-            }
-            content
-                .offset(x: offset)
-                .overlay {
-                    if open { Color.clear.contentShape(Rectangle()).onTapGesture { close() } }
-                }
-                .gesture(
-                    DragGesture(minimumDistance: 24, coordinateSpace: .local)
-                        .onChanged { v in
-                            guard abs(v.translation.width) > abs(v.translation.height) * 1.5 else { return }
-                            let start: CGFloat = open ? -reveal : 0
-                            offset = min(0, start + v.translation.width)
-                        }
-                        .onEnded { v in
-                            let x = (open ? -reveal : 0) + v.translation.width
-                            if x < -240 {
-                                pulse += 1
-                                close()
-                                delete()
-                            } else if x < -reveal / 2 {
-                                pulse += 1
-                                withAnimation(.spring(duration: 0.3)) { offset = -reveal; open = true }
-                            } else {
-                                close()
-                            }
-                        }
-                )
-        }
-        .sensoryFeedback(.impact(weight: .light), trigger: pulse)
-    }
-
-    private func close() {
-        withAnimation(.spring(duration: 0.3)) { offset = 0; open = false }
     }
 }
 

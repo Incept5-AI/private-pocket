@@ -228,8 +228,15 @@ final class Library: ObservableObject {
     }
 
     func delete(_ r: Recording) {
-        try? FileManager.default.removeItem(at: r.audioURL)
-        try? FileManager.default.removeItem(at: metaURL(r.audioURL))
+        delete([r])
+    }
+
+    /// Several at once, with one reload.
+    func delete(_ rs: [Recording]) {
+        for r in rs {
+            try? FileManager.default.removeItem(at: r.audioURL)
+            try? FileManager.default.removeItem(at: metaURL(r.audioURL))
+        }
         reload()
     }
 
