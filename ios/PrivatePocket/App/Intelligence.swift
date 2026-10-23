@@ -617,6 +617,12 @@ enum Planner {
         try? store.save(r, commit: true)
     }
 
+    static func renameEvent(_ id: String, to title: String) {
+        guard let e = store.calendarItem(withIdentifier: id) as? EKEvent else { return }
+        e.title = title
+        try? store.save(e, span: .thisEvent, commit: true)
+    }
+
     static func removeReminder(_ id: String) {
         if let r = store.calendarItem(withIdentifier: id) as? EKReminder { try? store.remove(r, commit: true) }
     }

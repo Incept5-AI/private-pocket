@@ -773,29 +773,41 @@ struct BehindSheet: View {
                     Text("The words behind this weren't found in the transcript.").font(.subheadline).foregroundStyle(Brand.muted)
                 }
                 if let item {
-                    ScrollView(.horizontal, showsIndicators: false) { HStack(spacing: 10) {
+                    VStack(spacing: 10) {
                         if item.isAction {
                             if let rid = item.reminderID, let u = Planner.reminderURL(rid) {
-                                pill("Open in Reminders", prominent: true) { openURL(u) }
+                                primary("Open in Reminders") { openURL(u) }
                             } else {
-                                pill("Add to Reminders", prominent: true) { Task { await model.place(r, item) } }
+                                primary("Add to Reminders") { Task { await model.place(r, item) } }
                             }
-                            pill(item.isDone ? "Not done" : "Done") { model.setDone(r, item: item, done: !item.isDone) }
-                            pill("Edit") { newText = item.text; editing = true }
-                            pill("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                            HStack(spacing: 10) {
+                                secondary(item.isDone ? "Not done" : "Done") { model.setDone(r, item: item, done: !item.isDone) }
+                                secondary("Edit") { newText = item.text; editing = true }
+                                secondary("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                            }
                         } else if item.isDate {
                             if let d = item.date, let u = Planner.calendarURL(at: d) {
-                                pill(item.eventID != nil ? "Open in Calendar" : "Add to Calendar", prominent: true) {
+                                primary(item.eventID != nil ? "Open in Calendar" : "Add to Calendar") {
                                     if item.eventID != nil { openURL(u) } else { Task { await model.place(r, item) } }
                                 }
                             }
-                            pill("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                            HStack(spacing: 10) {
+                                secondary("Edit") { newText = item.text; editing = true }
+                                secondary("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                            }
                         } else {
-                            pill(item.reminderID == nil ? "Remind me to chase" : "Reminder set", prominent: true) { Task { await model.remindMe(r, item: item) } }
-                            pill("Edit") { newText = item.text; editing = true }
-                            pill("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                            if let rid = item.reminderID, let u = Planner.reminderURL(rid) {
+                                primary("Open in Reminders") { openURL(u) }
+                            } else {
+                                primary("Remind me to chase") { Task { await model.remindMe(r, item: item) } }
+                            }
+                            HStack(spacing: 10) {
+                                secondary("Edit") { newText = item.text; editing = true }
+                                secondary("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                            }
                         }
-                    } }
+                    }
+                    .padding(.top, 4)
                 }
                 Spacer(minLength: 0)
             }
@@ -811,14 +823,23 @@ struct BehindSheet: View {
         }
     }
 
-    private func pill(_ title: String, prominent: Bool = false, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+    /// The one thing to do with it, full width.
+    private func primary(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(title).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                .frame(maxWidth: .infinity).padding(.vertical, 11)
+            Text(title).font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 6)
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(prominent ? Brand.onAct : destructive ? Brand.bad : Brand.text)
-        .background(prominent ? Brand.act : Brand.raised, in: Capsule())
+        .buttonStyle(.glassProminent)
+        .tint(Brand.act)
+    }
+
+    /// The rest, sharing one row at equal widths.
+    private func secondary(_ title: String, destructive: Bool = false, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title).font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity).padding(.vertical, 6)
+        }
+        .buttonStyle(.glass)
+        .tint(destructive ? Brand.bad : Brand.text)
     }
 }
 

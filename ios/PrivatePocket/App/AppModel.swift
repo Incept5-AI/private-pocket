@@ -641,6 +641,7 @@ final class AppModel: ObservableObject {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, t != item.text else { return }
         if let id = item.reminderID { Planner.renameReminder(id, to: t) }
+        if let id = item.eventID { Planner.renameEvent(id, to: t) }
         change(r, item) { $0.text = t }
     }
 
