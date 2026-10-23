@@ -104,6 +104,7 @@ struct RecordingsView: View {
                             withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .top) }
                         }
                         .padding(.vertical, 6).padding(.trailing, 2)
+                        .accessibilityHidden(true)   // the day headers do the same job for VoiceOver
                     }
                 }
             }
@@ -454,8 +455,8 @@ struct DateFinder: View {
                     k += 1
                 }
             }
-            Text("Now").font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted).offset(x: -4, y: inset - 18)
-            Text(earliest.formatted(.dateTime.day().month(.abbreviated))).font(.system(size: 9, weight: .semibold)).foregroundStyle(Brand.muted)
+            Text("Now").font(.caption2.weight(.semibold)).foregroundStyle(Brand.muted).offset(x: -4, y: inset - 18)
+            Text(earliest.formatted(.dateTime.day().month(.abbreviated))).font(.caption2.weight(.semibold)).foregroundStyle(Brand.muted)
                 .fixedSize().offset(x: -2, y: inset + inner + 6)
         }
         .frame(height: h, alignment: .topTrailing)

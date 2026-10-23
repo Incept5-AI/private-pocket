@@ -42,6 +42,7 @@ struct PocketView: View {
     @State private var showDetails = false
     @State private var showSettings = false
     @State private var showWalkthrough = false
+    @ScaledMetric(relativeTo: .largeTitle) private var timerSize = 54.0
 
     private var isConnected: Bool { link.connectedDeviceID != nil && link.connectedDeviceID == devices.selectedID }
     private var busy: Bool { if case .busy = link.phase { true } else { link.phase == .scanning || link.phase == .connecting } }

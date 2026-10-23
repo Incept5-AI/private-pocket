@@ -245,7 +245,7 @@ struct MomentHeader: View {
                 }
             }
             Text(r.displayTitle)
-                .font(.system(size: 30, weight: .bold)).tracking(-0.3).lineLimit(2)
+                .font(.title.weight(.bold)).tracking(-0.3).lineLimit(2)
                 .padding(.top, 6)
                 .onTapGesture(perform: rename)
             Text(meta).font(.subheadline).foregroundStyle(Brand.muted)
@@ -261,7 +261,7 @@ struct MomentHeader: View {
                             } label: {
                                 HStack(spacing: 6) {
                                     Text(String(f.name.prefix(1)).uppercased())
-                                        .font(.system(size: 11, weight: .bold))
+                                        .font(.caption2.weight(.bold))
                                         .frame(width: 24, height: 24)
                                         .background(colour.opacity(0.22), in: Circle())
                                         .foregroundStyle(colour)
@@ -329,7 +329,7 @@ struct BriefText: View {
 
     var body: some View {
         Text(attributed)
-            .font(.system(size: 19, weight: .medium))
+            .font(.title3.weight(.medium))
             .lineSpacing(4)
             .tint(Brand.text)
             .environment(\.openURL, OpenURLAction { url in
@@ -515,8 +515,8 @@ struct NextRow: View {
             .padding(.top, 1)
         } else if item.isDate, let d = item.date {
             VStack(spacing: 0) {
-                Text(d.formatted(.dateTime.month(.abbreviated)).uppercased()).font(.system(size: 9, weight: .bold)).foregroundStyle(Brand.bad)
-                Text(d.formatted(.dateTime.day())).font(.system(size: 18, weight: .semibold))
+                Text(d.formatted(.dateTime.month(.abbreviated)).uppercased()).font(.caption2.weight(.bold)).foregroundStyle(Brand.bad)
+                Text(d.formatted(.dateTime.day())).font(.title3.weight(.semibold))
             }
             .frame(width: 40).padding(.vertical, 4)
             .background(Brand.surface, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -524,7 +524,7 @@ struct NextRow: View {
             Image(systemName: "calendar").foregroundStyle(Brand.muted).frame(width: 22).padding(.top, 2)
         } else {
             Text(String((item.who ?? "?").prefix(1)).uppercased())
-                .font(.system(size: 11, weight: .bold))
+                .font(.caption2.weight(.bold))
                 .frame(width: 24, height: 24)
                 .background(Brand.life.opacity(0.2), in: Circle())
                 .foregroundStyle(Brand.life)
@@ -561,6 +561,9 @@ struct PlayerBar: View {
             .buttonStyle(.plain)
             VStack(spacing: 4) {
                 WaveformView(envelope: envelope, progress: player.position / total) { player.seek($0 * total) }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Playback position")
+                    .accessibilityValue("\(Int((player.position / max(1, total)) * 100)) percent")
                     .frame(height: 26)
                 HStack {
                     Text(Speakers.stamp(player.position))

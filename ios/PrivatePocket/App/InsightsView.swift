@@ -77,7 +77,7 @@ struct InsightsView: View {
 
     @ViewBuilder private func header(_ d: Digest) -> some View {
         Text(spanName == "week" ? "This week" : "This month")
-            .font(.system(size: 30, weight: .bold)).tracking(-0.3).padding(.top, 22)
+            .font(.title.weight(.bold)).tracking(-0.3).padding(.top, 22)
         HStack(spacing: 0) {
             figure("\(d.moments.count)", d.moments.count == 1 ? "moment" : "moments")
             figure(Digest.hours(d.totalSeconds), "recorded")
@@ -89,7 +89,7 @@ struct InsightsView: View {
 
     private func figure(_ value: String, _ label: String) -> some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(value).font(.system(size: 20, weight: .semibold, design: .rounded)).monospacedDigit()
+            Text(value).font(.system(.title3, design: .rounded, weight: .semibold)).monospacedDigit()
             Text(label).font(.caption).foregroundStyle(Brand.muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -97,7 +97,7 @@ struct InsightsView: View {
 
     @ViewBuilder private func briefing(_ d: Digest) -> some View {
         if let b = briefings.texts[key], !b.text.isEmpty {
-            Text(b.text).font(.system(size: 19, weight: .medium)).lineSpacing(4).padding(.top, 20)
+            Text(b.text).font(.title3.weight(.medium)).lineSpacing(4).padding(.top, 20)
             Text("Written from the findings and the moments' summaries, \(b.remote ? "on your server" : "on this iPhone").")
                 .font(.caption).foregroundStyle(Brand.dim).padding(.top, 8)
         } else if briefings.writing.contains(key) {
@@ -201,10 +201,10 @@ struct InsightsView: View {
                     .frame(height: 96, alignment: .bottom)
                     if d.days.count <= 10 || cal.component(.weekday, from: day.date) == 2 {
                         Text(d.days.count <= 10 ? day.date.formatted(.dateTime.weekday(.narrow)) : day.date.formatted(.dateTime.day()))
-                            .font(.system(size: 10, weight: cal.isDateInToday(day.date) ? .bold : .medium))
+                            .font(.caption2.weight(cal.isDateInToday(day.date) ? .bold : .medium))
                             .foregroundStyle(cal.isDateInToday(day.date) ? Brand.text : Brand.muted)
                     } else {
-                        Text(" ").font(.system(size: 10))
+                        Text(" ").font(.caption2)
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -239,7 +239,7 @@ struct InsightsView: View {
             ForEach(d.needs) { n in
                 HStack(alignment: .top, spacing: 12) {
                     Text(n.why.uppercased())
-                        .font(.system(size: 9, weight: .bold)).tracking(0.5)
+                        .font(.caption2.weight(.bold)).tracking(0.5)
                         .foregroundStyle(whyColour(n.why))
                         .frame(width: 62, alignment: .leading).padding(.top, 4)
                     NavigationLink(value: n.recording.id) {
@@ -459,7 +459,7 @@ struct InsightsView: View {
             NavigationLink(value: MomentsFilter(title: p.name, ids: p.moments.map(\.id))) {
                 HStack(spacing: 12) {
                     Text(String(p.name.prefix(1)).uppercased())
-                        .font(.system(size: 12, weight: .bold))
+                        .font(.caption.weight(.bold))
                         .frame(width: 30, height: 30)
                         .background(Brand.speakers[i % Brand.speakers.count].opacity(0.22), in: Circle())
                         .foregroundStyle(Brand.speakers[i % Brand.speakers.count])
@@ -517,9 +517,9 @@ struct FindingCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(finding.tag.uppercased())
-                .font(.system(size: 10, weight: .bold)).tracking(0.7)
+                .font(.caption2.weight(.bold)).tracking(0.7)
                 .foregroundStyle(finding.tint)
-            if let v = finding.visual { FindingVisual(visual: v) }
+            if let v = finding.visual { FindingVisual(visual: v).accessibilityHidden(true) }
             Text(finding.text)
                 .font(.body.weight(.medium)).lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
@@ -611,7 +611,7 @@ struct RingView: View {
                         .stroke(Brand.dim, style: StrokeStyle(lineWidth: 3, lineCap: .round))
                         .rotationEffect(.degrees(-90))
                 }
-                Text("\(done)/\(total)").font(.system(size: 13, weight: .semibold, design: .rounded)).monospacedDigit()
+                Text("\(done)/\(total)").font(.system(.footnote, design: .rounded, weight: .semibold)).monospacedDigit()
             }
             .frame(width: 66, height: 66)
             VStack(alignment: .leading, spacing: 5) {
@@ -657,7 +657,7 @@ struct GrowthView: View {
             .frame(height: 64)
             HStack {
                 ForEach(labels.indices, id: \.self) { i in
-                    Text(labels[i]).font(.system(size: 9)).foregroundStyle(Brand.muted)
+                    Text(labels[i]).font(.caption2).foregroundStyle(Brand.muted)
                     if i < labels.count - 1 { Spacer(minLength: 0) }
                 }
             }
@@ -680,7 +680,7 @@ struct SpikeView: View {
                     RoundedRectangle(cornerRadius: 3, style: .continuous)
                         .fill(i == peak ? Brand.record : Brand.raised)
                         .frame(height: max(3, 48 * CGFloat(intake[i]) / CGFloat(top)))
-                    if i < labels.count { Text(labels[i]).font(.system(size: 9)).foregroundStyle(i == peak ? Brand.text : Brand.muted) }
+                    if i < labels.count { Text(labels[i]).font(.caption2).foregroundStyle(i == peak ? Brand.text : Brand.muted) }
                 }
                 .frame(maxWidth: .infinity)
             }
@@ -819,13 +819,13 @@ struct StepView: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 16) {
             VStack(alignment: .leading, spacing: 2) {
-                Text(fromValue).font(.system(size: 22, weight: .semibold, design: .rounded)).foregroundStyle(Brand.textSecondary)
+                Text(fromValue).font(.system(.title2, design: .rounded, weight: .semibold)).foregroundStyle(Brand.textSecondary)
                 Text(fromLabel).font(.caption).foregroundStyle(Brand.muted)
             }
             StepShape(up: up).stroke(Brand.act, style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
                 .frame(width: 44, height: 22)
             VStack(alignment: .leading, spacing: 2) {
-                Text(toValue).font(.system(size: 22, weight: .semibold, design: .rounded)).foregroundStyle(Brand.act)
+                Text(toValue).font(.system(.title2, design: .rounded, weight: .semibold)).foregroundStyle(Brand.act)
                 Text(toLabel).font(.caption).foregroundStyle(Brand.muted)
             }
             Spacer(minLength: 0)
@@ -858,7 +858,7 @@ struct PresenceDots: View {
                         .fill(present[i] ? Brand.act : Color.clear)
                         .overlay(Circle().stroke(present[i] ? Brand.act : Brand.dim, lineWidth: 1.5))
                         .frame(width: 14, height: 14)
-                    if i < labels.count { Text(labels[i]).font(.system(size: 9)).foregroundStyle(Brand.muted) }
+                    if i < labels.count { Text(labels[i]).font(.caption2).foregroundStyle(Brand.muted) }
                 }
                 .frame(maxWidth: .infinity)
             }

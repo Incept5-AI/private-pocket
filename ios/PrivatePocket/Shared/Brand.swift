@@ -13,7 +13,7 @@ enum Brand {
     static let text = Color(hex: 0xE8EDF2)
     static let textSecondary = Color(hex: 0xB6C0CA)
     static let muted = Color(hex: 0x7F8A96)
-    static let dim = Color(hex: 0x5B6572)
+    static let dim = Color(hex: 0x768290)
     /// Anything you can tap, and dark text on it.
     static let act = Color(hex: 0x2AD4FF)
     static let onAct = Color(hex: 0x04202A)

@@ -30,6 +30,13 @@ struct WalkthroughView: View {
                 .padding(.horizontal, 22).padding(.top, 14)
                 .opacity(page == last ? 0 : 1)
                 .animation(.easeInOut(duration: 0.2), value: page)
+            Button("Next") { withAnimation { page = min(last, page + 1) } }
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Brand.act)
+                .padding(.horizontal, 22).padding(.bottom, 46)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .opacity(page == last ? 0 : 1)
+                .animation(.easeInOut(duration: 0.2), value: page)
         }
         .preferredColorScheme(.dark)
     }
@@ -67,7 +74,7 @@ struct WalkPage<Card: View, Footer: View>: View {
                 card.frame(height: 310)
                 VStack(spacing: 10) {
                     Text(headline)
-                        .font(.system(size: 30, weight: .bold))
+                        .font(.title.weight(.bold))
                         .multilineTextAlignment(.center)
                         .id(headline)
                         .transition(.opacity)
@@ -105,6 +112,7 @@ private func hold(_ seconds: Double) async -> Bool {
 // MARK: - The screens
 
 struct WelcomePage: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var nudge = false
 
     var body: some View {
@@ -116,7 +124,7 @@ struct WelcomePage: View {
                 Image(systemName: "chevron.right").font(.subheadline.weight(.semibold)).offset(x: nudge ? 5 : 0)
             }
             .foregroundStyle(Brand.act)
-            .onAppear { withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { nudge = true } }
+            .onAppear { if !reduceMotion { withAnimation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true)) { nudge = true } } }
         }
     }
 }

@@ -195,7 +195,7 @@ struct AnswerCard: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(qa.question).font(.subheadline.weight(.semibold)).foregroundStyle(Brand.muted)
             if let a = qa.answer {
-                Text(a).font(.system(size: 19, weight: .medium)).lineSpacing(4).textSelection(.enabled)
+                Text(a).font(.title3.weight(.medium)).lineSpacing(4).textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                 if !sources.isEmpty {
                     VStack(spacing: 6) {

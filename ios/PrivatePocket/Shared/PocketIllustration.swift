@@ -24,7 +24,7 @@ struct PocketIllustration: View {
     var buttonPressed = false
     /// The side switch: down is call, the contact mic.
     var switchDown = false
-
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var phase = false
 
     var body: some View {
@@ -69,10 +69,10 @@ struct PocketIllustration: View {
             .animation(blink || pulse ? .easeInOut(duration: 0.6).repeatForever(autoreverses: true) : .default, value: phase)
             .animation(.spring(duration: 0.35), value: switchDown)
             .animation(.easeOut(duration: 0.12), value: buttonPressed)
-            .onAppear { phase = blink || pulse }
+            .onAppear { phase = (blink || pulse) && !reduceMotion }
             .onChange(of: blink || pulse) { _, on in
                 phase = false
-                if on { Task { @MainActor in phase = true } }
+                if on, !reduceMotion { Task { @MainActor in phase = true } }
             }
         }
         .aspectRatio(230.0 / 366.0, contentMode: .fit)
