@@ -256,6 +256,12 @@ enum Prefs {
         set { UserDefaults.standard.set(newValue, forKey: "autoCalendar") }
     }
 
+    /// Findings sent away with Not right, as "<span key>|<finding id>".
+    @MainActor static var dismissedFindings: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: "dismissedFindings") ?? []) }
+        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: "dismissedFindings") }
+    }
+
     /// The one question each, asked on the first moment with something worth placing.
     @MainActor static var askedReminders: Bool {
         get { UserDefaults.standard.bool(forKey: "askedReminders") }

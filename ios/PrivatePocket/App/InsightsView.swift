@@ -6,7 +6,8 @@ import SwiftUI
 struct InsightsView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var model: AppModel
-    @StateObject private var briefings = Briefings()
+    @State private var allFindings = false
+    @State private var dismissed: Set<String> = Prefs.dismissedFindings
     @State private var span = 0   // this week, this month
     @State private var record: RecordTab?
     @State private var showYours = true
@@ -46,9 +47,8 @@ struct InsightsView: View {
                                 .font(.body).foregroundStyle(Brand.muted).padding(.top, 28)
                         } else {
                             header(d)
-                            briefing(d)
-                            findingCards(findings, proxy)
                             if d.totalSeconds > 0 { daysChart(d, previous: history.first) }
+                            findingCards(findings.filter { !dismissed.contains(key + "|" + $0.id) }, proxy)
                             needs(d)
                             recordBlock(d)
                             reading(d)
@@ -62,11 +62,9 @@ struct InsightsView: View {
                 .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
                 .overlay(alignment: .bottom) { toastView }
                 .sensoryFeedback(.success, trigger: toastCount)
-                // While older readings are being redone the id holds still, so the re-reading runs
-                // once through; the briefing is written when the readings have settled.
+                // While older readings are being redone the id holds still, so the re-reading runs once through.
                 .task(id: key + "|" + (d.outdated.isEmpty ? d.stamp : "rereading")) {
-                    if !d.outdated.isEmpty { await model.rereadOutdated(d.outdated); return }
-                    await briefings.ensure(key: key, digest: d, findings: findings)
+                    if !d.outdated.isEmpty { await model.rereadOutdated(d.outdated) }
                 }
                 .onAppear { for r in d.moments { model.refreshDone(r) } }
             }
@@ -95,26 +93,23 @@ struct InsightsView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder private func briefing(_ d: Digest) -> some View {
-        if let b = briefings.texts[key], !b.text.isEmpty {
-            Text(b.text).font(.title3.weight(.medium)).lineSpacing(4).padding(.top, 20)
-            Text("Written from the findings and the moments' summaries, \(b.remote ? "on your server" : "on this iPhone").")
-                .font(.caption).foregroundStyle(Brand.dim).padding(.top, 8)
-        } else if briefings.writing.contains(key) {
-            HStack(spacing: 10) { ProgressView().controlSize(.small); Text("Writing the briefing…").font(.subheadline).foregroundStyle(Brand.muted) }
-                .padding(.top, 20)
-        } else if let why = Summariser.availability {
-            Text(why).font(.subheadline).foregroundStyle(Brand.muted).padding(.top, 20)
-        }
-    }
-
     // MARK: Findings
 
     @ViewBuilder private func findingCards(_ fs: [Finding], _ proxy: ScrollViewProxy) -> some View {
         if !fs.isEmpty {
+            let shown = allFindings ? fs : Array(fs.prefix(4))
             SectionTitle("What stands out")
             VStack(spacing: 12) {
-                ForEach(fs) { f in FindingCard(finding: f) { perform($0, proxy) } }
+                ForEach(shown) { f in
+                    FindingCard(finding: f, perform: { perform($0, proxy) }, notRight: {
+                        withAnimation(.easeInOut(duration: 0.25)) { dismissed.insert(key + "|" + f.id) }
+                        Prefs.dismissedFindings = dismissed
+                    })
+                }
+                if fs.count > shown.count {
+                    Button("Show \(fs.count - shown.count) more") { withAnimation(.easeInOut(duration: 0.25)) { allFindings = true } }
+                        .font(.footnote.weight(.semibold)).frame(maxWidth: .infinity)
+                }
             }
             .padding(.top, 4)
         }
@@ -513,6 +508,8 @@ struct InsightsView: View {
 struct FindingCard: View {
     let finding: Finding
     let perform: (Finding.Action) -> Void
+    /// A wrong guess goes away for this span, before it costs trust.
+    let notRight: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -523,16 +520,18 @@ struct FindingCard: View {
             Text(finding.text)
                 .font(.body.weight(.medium)).lineSpacing(2)
                 .fixedSize(horizontal: false, vertical: true)
-            if !finding.choices.isEmpty {
-                HStack(spacing: 8) {
-                    ForEach(finding.choices) { c in
-                        Button(c.label) { perform(c.action) }
-                            .buttonStyle(.glass)
-                            .font(.footnote.weight(.semibold))
-                    }
+            HStack(spacing: 8) {
+                ForEach(finding.choices) { c in
+                    Button(c.label) { perform(c.action) }
+                        .buttonStyle(.glass)
+                        .font(.footnote.weight(.semibold))
                 }
-                .padding(.top, 2)
+                Spacer(minLength: 0)
+                Button("Not right", action: notRight)
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Brand.muted)
+                    .buttonStyle(.plain)
             }
+            .padding(.top, 2)
         }
         .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
