@@ -67,7 +67,7 @@ struct InsightsView: View {
                 .task(id: key + "|" + (d.outdated.isEmpty ? d.stamp : "rereading")) {
                     if !d.outdated.isEmpty { await model.rereadOutdated(d.outdated) }
                 }
-                .onAppear { Task { for r in d.moments { await model.refreshDone(r) } } }
+                .onAppear { model.syncAllPlaced() }
             }
         }
     }

@@ -149,7 +149,12 @@ final class AppModel: ObservableObject {
     /// Keep the selected Pocket connected so recordings stream live. In the foreground
     /// that means scanning every 15 s; in the background a pending connection that iOS
     /// completes whenever the Pocket is in range (an existing connection just stays up).
+    private var storeObserver: NSObjectProtocol?
+
     func setActive(_ active: Bool) {
+        if storeObserver == nil {
+            storeObserver = Planner.onChange { [weak self] in Task { @MainActor in self?.syncAllPlaced(after: 1) } }
+        }
         if active { Task { await ServerStatus.shared.check() } }
         if active { Task { await self.transcribeWhatLanded() } }
         self.active = active
@@ -571,7 +576,7 @@ final class AppModel: ObservableObject {
     func placeNext(_ r: Recording) async {
         guard var r = library.recordings.first(where: { $0.id == r.id }), var i = r.meta.insight, var items = i.next else { return }
         var changed = false
-        for (idx, item) in items.enumerated() where !item.isDismissed {
+        for (idx, item) in items.enumerated() where !item.isDismissed && item.unplaced != true {
             do {
                 if item.isAction, item.reminderID == nil, Prefs.autoReminders, item.isSolid {
                     items[idx].reminderID = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
@@ -598,10 +603,10 @@ final class AppModel: ObservableObject {
         do {
             if item.isAction {
                 let id = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
-                change(r, item) { $0.reminderID = id }
+                change(r, item) { $0.reminderID = id; $0.unplaced = nil }
             } else if item.isDate, let d = item.date {
                 let id = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item), link: Planner.momentURL(r))
-                change(r, item) { $0.eventID = id }
+                change(r, item) { $0.eventID = id; $0.unplaced = nil }
             }
         } catch {
             report(error)
@@ -679,17 +684,56 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func refreshDone(_ r: Recording) async {
+    /// Two-way sync for everything this moment placed: a tick, a new wording, a moved
+    /// date or a removal made in Reminders or Calendar comes back here, and an older
+    /// item is given its link.
+    func syncPlaced(_ r: Recording) async {
         guard let items = r.meta.insight?.next else { return }
         await Planner.warm()
         let link = Planner.momentURL(r)
-        for item in items where !item.isDismissed {   // made before links existed: given one now
-            if let id = item.reminderID { await Planner.ensureLink(id, link) }
-            if let id = item.eventID { await Planner.ensureLink(id, link) }
+        for item in items where !item.isDismissed {
+            if let id = item.reminderID {
+                switch Planner.lookup(id) {
+                case .missing:
+                    change(r, item) { $0.reminderID = nil; $0.unplaced = true }
+                case .found(let p):
+                    await Planner.ensureLink(id, link)
+                    change(r, item) { Self.take(p, into: &$0) }
+                }
+            }
+            if let id = item.eventID {
+                switch Planner.lookup(id) {
+                case .missing:
+                    change(r, item) { $0.eventID = nil; $0.unplaced = true }
+                case .found(let p):
+                    await Planner.ensureLink(id, link)
+                    change(r, item) { Self.take(p, into: &$0) }
+                }
+            }
         }
-        for item in items where item.isAction {
-            if let id = item.reminderID, let c = Planner.reminderCompleted(id), c != item.isDone {
-                change(r, item) { $0.done = c; $0.doneAt = c ? Date() : nil }
+    }
+
+    /// What Reminders or Calendar now says, onto the item; only fields that differ.
+    private static func take(_ p: Planner.Placed, into item: inout NextItem) {
+        let title = p.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty, title != item.text, !title.hasPrefix("Chase ") { item.text = title }
+        if let c = p.completed, c != item.isDone { item.done = c; item.doneAt = c ? Date() : nil }
+        if let d = p.date, abs(d.timeIntervalSince(item.date ?? .distantPast)) > 60 { item.date = d }
+        if let l = p.location, !l.isEmpty, l != item.location { item.location = l }
+        if let dur = p.duration, item.isDate, dur != item.duration { item.duration = dur }
+    }
+
+    private var placedSync: Task<Void, Never>?
+
+    /// Every moment with something placed, a moment after Reminders or Calendar change
+    /// (several notices arrive together), and on every return to the foreground.
+    func syncAllPlaced(after delay: Double = 0) {
+        placedSync?.cancel()
+        placedSync = Task { [weak self] in
+            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+            guard let self, !Task.isCancelled else { return }
+            for r in library.recordings where r.meta.insight?.next?.contains(where: { $0.reminderID != nil || $0.eventID != nil }) == true {
+                await syncPlaced(r)
             }
         }
     }
@@ -736,10 +780,7 @@ final class AppModel: ObservableObject {
         }
         // Moments read by an older reader are read again, so Insights has what the new one finds.
         await rereadOutdated(library.recordings)
-        // Reminders and events made before links existed get theirs; ticks made in Reminders are read back.
-        for r in library.recordings where r.meta.insight?.next?.contains(where: { $0.reminderID != nil || $0.eventID != nil }) == true {
-            await refreshDone(r)
-        }
+        syncAllPlaced()
     }
 
     /// Everything under Recordings as one zip, for the share sheet: a copy to keep

@@ -74,6 +74,8 @@ struct NextItem: Codable, Hashable, Identifiable {
     var dismissed: Bool?
     /// Said plainly as something that will be done, with enough detail to act on.
     var sure: Bool?
+    /// Was in Reminders or Calendar and the user removed it there: not put back by itself.
+    var unplaced: Bool?
 
     var isAction: Bool { kind == "action" }
     var isDate: Bool { kind == "date" }
@@ -594,6 +596,36 @@ enum Planner {
         c.host = "moment"
         c.queryItems = [URLQueryItem(name: "id", value: r.id)]
         return c.url
+    }
+
+    /// What Reminders or Calendar holds for an item the app placed, read back for sync.
+    struct Placed {
+        var title: String
+        var date: Date?
+        var completed: Bool?
+        var location: String?
+        var duration: Double?
+    }
+
+    enum Lookup { case missing, found(Placed) }
+
+    /// The item as Reminders or Calendar has it now; missing when the user removed it there.
+    static func lookup(_ id: String) -> Lookup {
+        guard let c = store.calendarItem(withIdentifier: id) else { return .missing }
+        if let r = c as? EKReminder {
+            let due = r.dueDateComponents.flatMap { Calendar.current.date(from: $0) }
+            return .found(Placed(title: r.title ?? "", date: due, completed: r.isCompleted, location: nil, duration: nil))
+        }
+        if let e = c as? EKEvent {
+            let length = e.endDate.timeIntervalSince(e.startDate)
+            return .found(Placed(title: e.title ?? "", date: e.startDate, completed: nil, location: e.location, duration: length > 0 ? length : nil))
+        }
+        return .missing
+    }
+
+    /// Fires whenever Reminders or Calendar change, from any app, on the main queue.
+    static func onChange(_ f: @escaping @Sendable () -> Void) -> NSObjectProtocol {
+        NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: store, queue: .main) { _ in f() }
     }
 
     /// A fresh store answers nothing until it has connected to the daemon, which the
