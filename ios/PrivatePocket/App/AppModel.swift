@@ -54,8 +54,17 @@ final class AppModel: ObservableObject {
     private var active = false
 
     @Published var working: Set<String> = []   // recording ids being transcribed/summarised
-    /// A moment to open, from a link in Reminders or Calendar; Moments picks it up.
+    /// A moment to open, from a link in Reminders or Calendar; Now picks it up.
     @Published var openMomentID: String?
+    /// The reader in the room: what has been said so far, while it is still being said.
+    @Published var liveItems: [NextItem] = []
+    @Published var liveDecisions: [String] = []
+    @Published var liveConfirmed: Set<String> = []
+    @Published var liveDismissed: Set<String> = []
+    private var liveReader: Task<Void, Never>?
+    private var liveReadLength = 0
+    /// Confirmations made in the room, carried into the moment once it is read.
+    private var liveCarry: [String: (confirmed: [NextItem], dismissed: [String])] = [:]
     @Published var aiError: String?
     /// The notice offers Open Settings: a permission iOS will not ask for again.
     @Published var aiErrorOpensSettings = false
@@ -86,6 +95,7 @@ final class AppModel: ObservableObject {
             self.locator.recordingStarted(name)
             if let d = self.connectedDevice { self.live.begin(name: name, device: d.id) }
             self.startActivity(name: name)
+            self.startLiveReader()
         }
         StopRecordingIntent.handler = { [weak self] in
             guard let self else { return }
@@ -329,7 +339,40 @@ final class AppModel: ObservableObject {
 
     /// After a stop: keep the streamed copy if it is the whole recording, else
     /// download the device's file (if downloading after stop is on).
+    /// Every twenty-five seconds while it records, the reader reads the rolling transcript;
+    /// new items keep their ids, so a tick in the room survives the next pass.
+    func startLiveReader() {
+        liveReader?.cancel()
+        liveItems = []; liveDecisions = []; liveConfirmed = []; liveDismissed = []
+        liveReadLength = 0
+        liveReader = Task { [weak self] in
+            while let self, !Task.isCancelled, self.link.status.recordingSince != nil {
+                try? await Task.sleep(for: .seconds(25))
+                guard !Task.isCancelled, self.link.status.recordingSince != nil else { break }
+                let text = self.live.text
+                guard Prefs.liveTranscript, LLM.availability == nil, text.count >= self.liveReadLength + 160 else { continue }
+                self.liveReadLength = text.count
+                guard let read = try? await Analyst.liveRead(text: text, config: LLM.config) else { continue }
+                var merged = self.liveItems
+                for item in read.items {
+                    let key = item.text.lowercased().trimmingCharacters(in: .punctuationCharacters)
+                    if !merged.contains(where: { $0.text.lowercased().trimmingCharacters(in: .punctuationCharacters) == key }) { merged.append(item) }
+                }
+                self.liveItems = merged
+                self.liveDecisions = read.decisions
+            }
+        }
+    }
+
+    func confirmLive(_ item: NextItem) { liveConfirmed.insert(item.id); liveDismissed.remove(item.id) }
+    func dismissLive(_ item: NextItem) { liveDismissed.insert(item.id); liveConfirmed.remove(item.id) }
+
     private func completeRecording(name: String, device d: DeviceConfig) async throws {
+        liveReader?.cancel()
+        if !liveItems.isEmpty {
+            liveCarry[name] = (liveItems.filter { liveConfirmed.contains($0.id) },
+                               liveItems.filter { liveDismissed.contains($0.id) }.map { $0.text.lowercased() })
+        }
         let streamed = await live.end(name: name)
         guard let date = PocketTime.parse(name) else { return }
         let day = PocketTime.day.string(from: date)
@@ -549,6 +592,18 @@ final class AppModel: ObservableObject {
             }
         } else if r.meta.insight == nil {
             r.meta.insight = Analyst.heuristic(r)
+        }
+        if let carry = liveCarry.removeValue(forKey: r.name), var i = r.meta.insight {
+            // What was confirmed in the room stays; what was waved away goes.
+            var items = i.items
+            for c in carry.confirmed where !items.contains(where: { $0.text.lowercased() == c.text.lowercased() }) {
+                var kept = c
+                kept.sure = true
+                items.append(kept)
+            }
+            for idx in items.indices where carry.dismissed.contains(items[idx].text.lowercased()) { items[idx].dismissed = true }
+            i.next = items
+            r.meta.insight = i
         }
         if let names = r.meta.insight?.inferredSpeakers, !names.isEmpty {
             var current = r.meta.speakerNames ?? [:]
@@ -793,6 +848,7 @@ final class AppModel: ObservableObject {
         // Moments read by an older reader are read again, so Insights has what the new one finds.
         await rereadOutdated(library.recordings)
         syncAllPlaced()
+        Briefs.schedule(library.recordings)
     }
 
     /// Everything under Recordings as one zip, for the share sheet: a copy to keep

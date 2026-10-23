@@ -262,6 +262,12 @@ enum Prefs {
         set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: "dismissedFindings") }
     }
 
+    /// Briefs before meetings: asked for the calendar once, on Now.
+    @MainActor static var askedBriefs: Bool {
+        get { UserDefaults.standard.bool(forKey: "askedBriefs") }
+        set { UserDefaults.standard.set(newValue, forKey: "askedBriefs") }
+    }
+
     /// The one question each, asked on the first moment with something worth placing.
     @MainActor static var askedReminders: Bool {
         get { UserDefaults.standard.bool(forKey: "askedReminders") }

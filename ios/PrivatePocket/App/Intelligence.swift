@@ -308,6 +308,24 @@ enum Analyst {
         return merge(drafts, for: r)
     }
 
+    /// The reader on a conversation still being spoken: the items and decisions so far,
+    /// from the last stretch of the rolling transcript, without anchors.
+    static func liveRead(text: String, config c: LLMConfig) async throws -> (items: [NextItem], decisions: [String]) {
+        let tail = String(text.suffix(2800))
+        guard tail.count > 80 else { return ([], []) }
+        let d = try await draft(c, prompt: "This conversation is still in progress; read what has been said so far. Transcript:\n\n\(tail)")
+        var items: [NextItem] = []
+        for it in d.next ?? [] {
+            let text = (it.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, let kind = it.kind?.lowercased().trimmingCharacters(in: .whitespaces),
+                  ["action", "date", "promise"].contains(kind) else { continue }
+            let when = (it.when ?? "").trimmingCharacters(in: .whitespaces)
+            items.append(NextItem(kind: kind, text: text, who: cleanWho(it.who), when: when.isEmpty ? nil : when,
+                                  date: when.isEmpty ? nil : Planner.date(in: when), quote: it.quote, sure: it.sure))
+        }
+        return (items, (d.decisions ?? []).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+    }
+
     private static func draft(_ c: LLMConfig, prompt: String) async throws -> Draft {
         guard c.remote else {
             let session = LanguageModelSession(model: .default, instructions: instructions)
@@ -626,6 +644,18 @@ enum Planner {
     /// Fires whenever Reminders or Calendar change, from any app, on the main queue.
     static func onChange(_ f: @escaping @Sendable () -> Void) -> NSObjectProtocol {
         NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: store, queue: .main) { _ in f() }
+    }
+
+    /// The calendar's events in a span, for the brief before each.
+    static func events(from: Date, to: Date) -> [EKEvent] {
+        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
+        return store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil))
+            .sorted { $0.startDate < $1.startDate }
+    }
+
+    /// Asks for the calendar, for briefs; a prompt the first time only.
+    static func allowEvents() async -> Bool {
+        (try? await store.requestFullAccessToEvents()) ?? false
     }
 
     /// A fresh store answers nothing until it has connected to the daemon, which the

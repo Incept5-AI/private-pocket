@@ -20,6 +20,9 @@ struct NowView: View {
     @State private var hideHandle: Task<Void, Never>?
     @State private var dismissed: Set<String> = Prefs.dismissedFindings
     @State private var toast: String?
+    @State private var brief: Brief?
+    @State private var briefsAsked = Prefs.askedBriefs
+    @StateObject private var replay = Replay()
 
     private var recording: Bool { link.status.recordingSince != nil }
 
@@ -74,6 +77,7 @@ struct NowView: View {
                 .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
                 .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
                 .sheet(isPresented: $showPocket) { PocketView() }
+                .fullScreenCover(item: $brief) { BriefView(brief: $0) }
                 .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
                 .onChange(of: model.openMomentID, initial: true) {
                     guard let id = model.openMomentID else { return }
@@ -124,16 +128,62 @@ struct NowView: View {
                      action: "Show me") { showPocket = true }
         }
         if recording || live.isActive { liveBlock }
+        if !recording, Briefs.calendarAllowed, let b = Briefs.upcoming(all).first {
+            NowBlock(tint: Brand.act, ink: Brand.onAct,
+                     tag: "At \(b.start.formatted(date: .omitted, time: .shortened)) · \(b.person.name)" + (b.minutesAway > 0 ? " · in \(b.minutesAway) min" : ""),
+                     title: b.count == 0 ? "Nothing open with \(b.person.name)." : "\(b.count) thing\(b.count == 1 ? "" : "s") open with \(b.person.name).",
+                     line: Briefs.line(b), action: "Read the brief") { brief = b }
+        } else if !recording, !Briefs.calendarAllowed, !briefsAsked, !all.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("BRIEFS BEFORE MEETINGS").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
+                Text("Ten minutes before a meeting with someone you've recorded, see what's open between you.").font(.callout.weight(.semibold)).foregroundStyle(Brand.onPaper)
+                HStack(spacing: 10) {
+                    Button {
+                        Task {
+                            if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all) }
+                            Prefs.askedBriefs = true; briefsAsked = true
+                        }
+                    } label: { Text("Allow Calendar").font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8).background(Brand.onPaper, in: Capsule()).foregroundStyle(Brand.paper) }
+                    .buttonStyle(.plain)
+                    Button("Not now") { Prefs.askedBriefs = true; briefsAsked = true }.font(.subheadline.weight(.bold)).foregroundStyle(Brand.onPaper).buttonStyle(.plain)
+                }
+            }
+            .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
         if let r = justRead(all) {
             NowBlock(tint: r.kind.isLife ? Brand.life : Brand.work, ink: r.kind.isLife ? Brand.onLife : Brand.onWork,
                      tag: "Just read · \(r.kind.label)", title: r.quote,
                      line: readLine(r), action: "Open it") { path.append(r.id) }
         }
         if hour < 12, let y = yesterday(all, cal: cal) {
-            NowBlock(tint: Brand.paper, ink: Brand.onPaper, tag: "Yesterday, set · \(y.moments.count) conversation\(y.moments.count == 1 ? "" : "s")",
-                     title: y.headline, line: y.line, action: "Yesterday's tape") {
-                path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id)))
+            let lines = Replay.lines(from: y.moments)
+            VStack(alignment: .leading, spacing: 8) {
+                Text("YESTERDAY, SET · \(y.moments.count) CONVERSATION\(y.moments.count == 1 ? "" : "S")").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
+                Text(y.headline).font(.title3.weight(.bold)).foregroundStyle(Brand.onPaper).fixedSize(horizontal: false, vertical: true)
+                Text(y.line).font(.subheadline).foregroundStyle(Brand.onPaper.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    if !lines.isEmpty {
+                        Button {
+                            if replay.playing { replay.stop() } else { replay.play(lines) }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: replay.playing ? "stop.fill" : "play.fill").foregroundStyle(Brand.record)
+                                Text(replay.playing ? "Stop · \(replay.index + 1) of \(lines.count)" : "Listen back · \(lines.count) lines, \(max(1, lines.count * 8 / 60)) min")
+                            }
+                            .font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8)
+                            .background(Brand.onPaper, in: Capsule()).foregroundStyle(Brand.paper)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Button("Yesterday's tape") { path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id))) }
+                        .font(.subheadline.weight(.bold)).foregroundStyle(Brand.onPaper).buttonStyle(.plain)
+                }
+                .padding(.top, 2)
+                if let c = replay.current { Text("“\(c.text)”").font(.footnote.weight(.medium)).foregroundStyle(Brand.onPaper.opacity(0.8)).lineLimit(2) }
             }
+            .padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         }
         if hour >= 17, let t = todayLine(all, cal: cal) {
             NowBlock(tint: Brand.work, ink: Brand.onWork, tag: "Six o'clock", title: t.title, line: t.line, action: t.action) {
@@ -168,6 +218,30 @@ struct NowView: View {
                 Text(String(live.text.suffix(160))).font(.callout.weight(.medium)).lineLimit(3)
             } else {
                 Text(live.isActive ? "Listening…" : "Started before the phone connected; it's fetched when it stops.").font(.callout.weight(.medium))
+            }
+            if !model.liveItems.isEmpty || !model.liveDecisions.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(model.liveItems) { item in
+                        let confirmed = model.liveConfirmed.contains(item.id), gone = model.liveDismissed.contains(item.id)
+                        HStack(spacing: 10) {
+                            Text(item.isAction ? "TO DO" : item.isDate ? "DATE" : "PROMISE").font(.caption2.weight(.bold)).tracking(0.6).foregroundStyle(Brand.record).frame(width: 56, alignment: .leading)
+                            Text((item.isPromise ? (item.who.map { "\($0): " } ?? "") : "") + item.text).font(.subheadline.weight(.semibold)).foregroundStyle(Color(hex: 0xFFF7E8)).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+                            Button { model.confirmLive(item) } label: { Image(systemName: "checkmark").font(.caption.weight(.bold)).frame(width: 30, height: 30).background(confirmed ? Brand.act : Color(hex: 0x4A3410), in: Circle()).foregroundStyle(confirmed ? Brand.onAct : Color(hex: 0xFFF7E8)) }.buttonStyle(.plain)
+                            Button { model.dismissLive(item) } label: { Image(systemName: "xmark").font(.caption.weight(.bold)).frame(width: 30, height: 30).background(Color(hex: 0x4A3410), in: Circle()).foregroundStyle(Color(hex: 0xFFF7E8)) }.buttonStyle(.plain)
+                        }
+                        .padding(10)
+                        .background(Brand.onRecord, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .opacity(gone ? 0.45 : 1)
+                    }
+                    ForEach(model.liveDecisions.prefix(3), id: \.self) { d in
+                        HStack(spacing: 10) {
+                            Text("DECIDED").font(.caption2.weight(.bold)).tracking(0.6).frame(width: 56, alignment: .leading).opacity(0.7)
+                            Text(d).font(.subheadline.weight(.semibold)).lineLimit(2)
+                        }
+                    }
+                    Text("Read in the room. A tick keeps it; a cross drops it; the rest is read again at the stop.").font(.caption2).opacity(0.7)
+                }
+                .padding(.top, 4)
             }
             if model.canCommand, recording {
                 Button { Task { await model.toggleRecording() } } label: {
