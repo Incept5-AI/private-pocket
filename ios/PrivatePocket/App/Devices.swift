@@ -268,6 +268,13 @@ enum Prefs {
         set { UserDefaults.standard.set(Array(newValue.sorted().suffix(200)), forKey: "hiddenBlocks") }
     }
 
+    /// Calendars switched off in Settings, by identifier: briefs and speaker names do not read
+    /// them. A calendar added later is read until it is switched off. Read from anywhere.
+    static var excludedCalendars: Set<String> {
+        get { Set(UserDefaults.standard.stringArray(forKey: "excludedCalendars") ?? []) }
+        set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: "excludedCalendars") }
+    }
+
     /// Briefs before meetings: asked for the calendar once, on Now.
     @MainActor static var askedBriefs: Bool {
         get { UserDefaults.standard.bool(forKey: "askedBriefs") }

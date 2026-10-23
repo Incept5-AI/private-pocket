@@ -1,4 +1,5 @@
 import CoreLocation
+import EventKit
 import Speech
 import SwiftUI
 
@@ -26,6 +27,7 @@ struct SettingsView: View {
     @State private var islandPresence = Prefs.islandPresence
     @State private var autoReminders = Prefs.autoReminders
     @State private var autoCalendar = Prefs.autoCalendar
+    @State private var calendarsLine = ""
     @AppStorage("sttModel") private var sttModel = RemoteSTT.defaultModel
 
     var body: some View {
@@ -124,6 +126,19 @@ struct SettingsView: View {
                         .onChange(of: autoCalendar) { Prefs.autoCalendar = autoCalendar }
                 } header: { Text("After each moment") } footer: {
                     Text("Each moment lists its to-dos and events with Add beside them. Turn these on and they go in by themselves as soon as a moment is read: to-dos into a Pocket list in Reminders with their due dates, events into Calendar. Tick one off in either place and the moment shows it done.")
+                }
+
+                Section {
+                    NavigationLink { CalendarsView() } label: {
+                        HStack {
+                            Label("Calendars to read", systemImage: "calendar")
+                            Spacer()
+                            Text(calendarsLine).foregroundStyle(.secondary)
+                        }
+                    }
+                    .onAppear { calendarsLine = CalendarsView.summary() }
+                } header: { Text("Calendar") } footer: {
+                    Text("The brief before a meeting, and naming who spoke in a moment recorded during one, read only the calendars switched on here. Dates from moments still go to your default calendar.")
                 }
 
                 Section {
@@ -587,3 +602,90 @@ extension SettingsView {
         return parts.joined(separator: " ")
     }
 }
+
+/// Which calendars the app reads, one switch each, grouped by account. Off means the brief
+/// before a meeting and naming speakers never look at it; a calendar added later is read
+/// until it is switched off.
+struct CalendarsView: View {
+    @EnvironmentObject var model: AppModel
+    @State private var off: Set<String> = Prefs.excludedCalendars
+    @State private var calendars: [EKCalendar] = []
+    @State private var allowed = Briefs.calendarAllowed
+
+    /// "All", "5 of 7", "Not allowed": the line beside the row in Settings.
+    static func summary() -> String {
+        guard Briefs.calendarAllowed else { return "Not allowed" }
+        let all = Planner.eventCalendars()
+        let on = all.filter { !Prefs.excludedCalendars.contains($0.calendarIdentifier) }.count
+        return on == all.count ? "All" : "\(on) of \(all.count)"
+    }
+
+    private var groups: [(account: String, calendars: [EKCalendar])] {
+        let byAccount = Dictionary(grouping: calendars) { $0.source?.title ?? "Other" }
+        return byAccount.keys.sorted().map { key in
+            (key, (byAccount[key] ?? []).sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending })
+        }
+    }
+
+    var body: some View {
+        Form {
+            if !allowed {
+                Section {
+                    Button("Allow Calendar") {
+                        Task {
+                            if EKEventStore.authorizationStatus(for: .event) == .notDetermined {
+                                allowed = await Planner.allowEvents()
+                            } else if let url = URL(string: UIApplication.openSettingsURLString) {
+                                await UIApplication.shared.open(url)
+                            }
+                            load()
+                        }
+                    }
+                } footer: {
+                    Text("Private Pocket reads your calendar for the brief before a meeting and to name who spoke in a moment recorded during one. Allow it to choose which calendars.")
+                }
+            } else if calendars.isEmpty {
+                Section { Text("No calendars on this iPhone.").foregroundStyle(.secondary) }
+            } else {
+                ForEach(Array(groups.enumerated()), id: \.element.account) { i, g in
+                    Section {
+                        ForEach(g.calendars, id: \.calendarIdentifier) { c in
+                            Toggle(isOn: binding(c)) {
+                                HStack(spacing: 10) {
+                                    Circle().fill(Color(cgColor: c.cgColor)).frame(width: 10, height: 10)
+                                    Text(c.title)
+                                }
+                            }
+                        }
+                    } header: {
+                        Text(g.account)
+                    } footer: {
+                        if i == groups.count - 1 {
+                            Text("Switched off, a calendar is never read: not for briefs, not for naming speakers. A calendar added later is read until you switch it off. Moments already named from a calendar keep their names.")
+                        }
+                    }
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Brand.ground)
+        .navigationTitle("Calendars to read")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        allowed = Briefs.calendarAllowed
+        calendars = Planner.eventCalendars()
+        off = Prefs.excludedCalendars
+    }
+
+    private func binding(_ c: EKCalendar) -> Binding<Bool> {
+        Binding(get: { !off.contains(c.calendarIdentifier) }, set: { on in
+            if on { off.remove(c.calendarIdentifier) } else { off.insert(c.calendarIdentifier) }
+            Prefs.excludedCalendars = off
+            if on { model.calendarSwitchedOn() }
+        })
+    }
+}
+

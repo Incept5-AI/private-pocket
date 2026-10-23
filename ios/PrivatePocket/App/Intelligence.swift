@@ -653,11 +653,21 @@ enum Planner {
         NotificationCenter.default.addObserver(forName: .EKEventStoreChanged, object: store, queue: .main) { _ in f() }
     }
 
-    /// The calendar's events in a span, for the brief before each.
+    /// Events in a span, from the calendars switched on in Settings: for the brief before a
+    /// meeting and the event a recording happened in.
     static func events(from: Date, to: Date) -> [EKEvent] {
         guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
-        return store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: nil))
+        let off = Prefs.excludedCalendars
+        let calendars = store.calendars(for: .event).filter { !off.contains($0.calendarIdentifier) }
+        guard !calendars.isEmpty else { return [] }
+        return store.events(matching: store.predicateForEvents(withStart: from, end: to, calendars: calendars))
             .sorted { $0.startDate < $1.startDate }
+    }
+
+    /// Every calendar on the phone that holds events, for Settings.
+    static func eventCalendars() -> [EKCalendar] {
+        guard EKEventStore.authorizationStatus(for: .event) == .fullAccess else { return [] }
+        return store.calendars(for: .event)
     }
 
     /// Asks for the calendar, for briefs; a prompt the first time only.

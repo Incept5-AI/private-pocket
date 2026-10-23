@@ -467,6 +467,16 @@ final class AppModel: ObservableObject {
         String(s.lowercased().map { $0.isLetter || $0.isNumber ? $0 : " " }).split(separator: " ").joined(separator: " ")
     }
 
+    /// A calendar switched back on in Settings: moments that found no event look again on the
+    /// next sweep, and those that find one are read again.
+    func calendarSwitchedOn() {
+        for r in library.recordings where r.meta.event == nil && r.meta.calendarChecked != nil && r.meta.sampleID == nil {
+            var r = r
+            r.meta.calendarChecked = nil
+            library.update(r)
+        }
+    }
+
     /// A moment just read: the threads it starts, and every thread it is in, read on with it.
     func readThreads(containing id: String) async {
         let all = library.recordings
@@ -694,6 +704,7 @@ final class AppModel: ObservableObject {
         defer { working.remove(r.id) }
         var r = r
         // The calendar event it happened in, if Calendar is allowed: the reader is told who was invited.
+        if let e = r.meta.event, !e.isReadable { r.meta.event = nil }   // its calendar has been switched off
         if r.meta.calendarChecked == nil, r.meta.sampleID == nil, Briefs.calendarAllowed, let start = r.startedAt {
             r.meta.event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
             r.meta.calendarChecked = Date()

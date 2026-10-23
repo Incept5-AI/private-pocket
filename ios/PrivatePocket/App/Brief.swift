@@ -102,6 +102,11 @@ struct CalendarEventRef: Codable, Hashable {
     var end: Date
     var attendees: [String]
     var location: String?
+    /// The calendar it is in, so switching that calendar off in Settings stops it being used.
+    var calendarID: String?
+
+    /// Still readable: its calendar has not been switched off since.
+    var isReadable: Bool { calendarID.map { !Prefs.excludedCalendars.contains($0) } ?? true }
 
     /// What the reader is told: the event, who was invited, and to name a speaker only on the conversation's evidence.
     var hint: String {
@@ -134,7 +139,7 @@ extension Briefs {
             if let n = displayName(p), !names.contains(where: { $0.caseInsensitiveCompare(n) == .orderedSame }) { names.append(n) }
         }
         return CalendarEventRef(id: e.calendarItemExternalIdentifier ?? e.eventIdentifier, title: e.title ?? "", start: e.startDate, end: e.endDate,
-                                attendees: Array(names.prefix(12)), location: e.location)
+                                attendees: Array(names.prefix(12)), location: e.location, calendarID: e.calendar?.calendarIdentifier)
     }
 
     /// A participant's name, or one made from their address: maya.chen@… → Maya Chen.

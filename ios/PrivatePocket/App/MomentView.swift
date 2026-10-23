@@ -27,7 +27,8 @@ struct MomentView: View {
     /// The people invited to the moment's calendar event who are not yet a speaker's name.
     private func invitees(_ r: Recording) -> [String] {
         let used = Set((r.meta.speakerNames ?? [:]).values.map { $0.lowercased() })
-        return Array((r.meta.event?.attendees ?? []).filter { !used.contains($0.lowercased()) }.prefix(4))
+        guard let e = r.meta.event, e.isReadable else { return [] }
+        return Array(e.attendees.filter { !used.contains($0.lowercased()) }.prefix(4))
     }
 
     var body: some View {
@@ -50,7 +51,7 @@ struct MomentView: View {
                                 renamingSpeaker = i
                             })
                             MomentThreads(recording: r)
-                            if let e = r.meta.event { MomentEventLine(event: e) }
+                            if let e = r.meta.event, e.isReadable { MomentEventLine(event: e) }
                             stage(r)
                             if let brief = r.meta.insight?.brief, !brief.isEmpty {
                                 SectionTitle("Summary")
@@ -103,7 +104,7 @@ struct MomentView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                if let e = r.meta.event, !e.attendees.isEmpty {
+                if let e = r.meta.event, e.isReadable, !e.attendees.isEmpty {
                     Text("Invited to \(e.title.isEmpty ? "the event" : e.title): pick a name, or type one.")
                 } else {
                     Text("Used wherever this moment names them.")
