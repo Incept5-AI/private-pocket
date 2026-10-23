@@ -91,6 +91,7 @@ struct MomentView: View {
             .safeAreaInset(edge: .bottom) { PlayerBar(player: player, envelope: envelope, recording: r) }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarTrailing) { RecordButton(size: 30) }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showDetails = true } label: { Image(systemName: "info.circle") }
                         .accessibilityLabel("Details")

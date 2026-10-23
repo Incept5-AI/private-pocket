@@ -388,6 +388,7 @@ struct ThreadView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { RecordButton(size: 30) }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu { ThreadMenuItems(thread: t, live: all, mending: $mending) } label: { Image(systemName: "ellipsis") }
                     .accessibilityLabel("Mend this thread")

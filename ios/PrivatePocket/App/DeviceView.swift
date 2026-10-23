@@ -9,6 +9,7 @@ struct RootView: View {
     @EnvironmentObject var devices: DeviceStore
     @Environment(\.scenePhase) private var scenePhase
     @State private var walkthrough = !Prefs.walkthroughSeen
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var tab = 0
 
     private var recording: Bool { link.status.recordingSince != nil }
@@ -29,7 +30,6 @@ struct RootView: View {
             model.openMomentID = id
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory(isEnabled: !devices.devices.isEmpty) { RecordAccessory() }
         .sensoryFeedback(trigger: recording) { _, now in now ? .start : .stop }
         .sensoryFeedback(.success, trigger: model.canCommand) { was, now in !was && now }
         .sensoryFeedback(.impact(weight: .light), trigger: library.recordings.count) { was, now in now > was }   // a moment landed
@@ -42,6 +42,20 @@ struct RootView: View {
                 model.aiErrorOpensSettings = false
             }
             .animation(.easeInOut(duration: 0.25), value: model.aiError)
+        }
+        // While it records, the whole screen: rises out of the Dynamic Island at the start,
+        // and again when the app opens during a recording.
+        .overlay {
+            if model.takeover {
+                RecordingTakeover { withAnimation(.spring(duration: 0.5)) { model.takeover = false } }
+                    .transition(reduceMotion ? .opacity : .islandReveal)
+            }
+        }
+        .onChange(of: recording, initial: true) { _, now in
+            if now { withAnimation(.spring(duration: 0.7)) { model.takeover = true } }
+        }
+        .onChange(of: scenePhase) {
+            if scenePhase == .active, recording, !model.takeover { withAnimation(.spring(duration: 0.7)) { model.takeover = true } }
         }
         .task { if Prefs.tagLocation { model.locator.requestPermission() } }
         .onChange(of: scenePhase, initial: true) { model.setActive(scenePhase == .active) }

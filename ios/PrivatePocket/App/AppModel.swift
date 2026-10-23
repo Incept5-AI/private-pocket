@@ -78,6 +78,9 @@ final class AppModel: ObservableObject {
     private var cardWatch: AnyCancellable?
     /// What the screen in front shows, so Record can be pressed into it.
     @Published var pageContext: RecordContext?
+    /// The recording takeover is on screen (`RecordingTakeover`): raised when a recording
+    /// starts or the app opens during one, lowered by Hide or a moment after the stop.
+    @Published var takeover = false
     /// What the recording now running was pressed into.
     @Published var recordingContext: RecordContext?
     /// A thread named in the room, with what was said last time.

@@ -314,6 +314,7 @@ struct PersonView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { RecordButton(size: 30) }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     PersonMenuItems(name: p.name, others: Digest.people(all, limit: 40).map(\.name), renaming: $renaming, newName: $newName) { dismiss() }
