@@ -348,22 +348,28 @@ struct PocketView: View {
         return paired ? .on : .pairing
     }
 
+    /// Five words for the whole state: Ready, Recording (the timer stands in for it),
+    /// Saving, Away, Needs pairing. The link's own phases are in Pocket details.
     private var statusText: String {
-        if link.bouncingAfterKey, !paired { return "Connected, not paired yet" }   // a refused key bounces the link; it is back in a moment
+        if link.bouncingAfterKey, !paired { return "Needs pairing" }   // a refused key bounces the link; it is back in a moment
         switch link.phase {
-        case .idle: return model.userDisconnected ? "Disconnected" : "Not connected"
-        case .waiting: return "Waiting for your Pocket"
-        case .scanning: return "Looking for your Pocket…"
-        case .connecting: return "Connecting…"
-        case .busy(let what): return "\(what)…"
-        case .ready: return paired ? "Ready" : (link.keyRejected ? "Connected, pair again" : "Connected, not paired yet")
+        case .idle: return model.userDisconnected ? "Disconnected" : "Away"
+        case .waiting, .scanning, .connecting: return "Away"
+        case .busy: return link.progress != nil ? "Saving" : (paired ? "Ready" : "Needs pairing")
+        case .ready: return paired ? "Ready" : "Needs pairing"
         }
     }
 
     private var detailText: String? {
         if let p = link.progress {
             let pct = p.total > 0 ? Int(Double(p.done) / Double(p.total) * 100) : 0
-            return "Getting \(p.label) · \(pct)%"
+            return "Fetching the recording · \(pct)%"
+        }
+        switch link.phase {
+        case .waiting, .scanning, .connecting: return "Looking for your Pocket"
+        case .idle: return model.userDisconnected ? nil : "Asleep, or out of range"
+        case .busy(let what): return "\(what)…"
+        case .ready: break
         }
         guard isConnected else { return nil }
         var parts: [String] = []
@@ -444,6 +450,18 @@ struct PocketDetails: View {
 
     private var busy: Bool { if case .busy = link.phase { true } else { false } }
 
+    /// The link's own phase, in its own words.
+    private var linkText: String {
+        switch link.phase {
+        case .idle: "Not connected"
+        case .waiting: "Waiting for the Pocket to advertise"
+        case .scanning: "Scanning"
+        case .connecting: "Connecting"
+        case .busy(let what): what
+        case .ready: link.keyRejected ? "Connected, key refused" : "Connected"
+        }
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -457,6 +475,7 @@ struct PocketDetails: View {
                     }
                     LabeledContent("Switch", value: s.mode.map { $0 == "CALL" ? "Call (contact mic)" : "Audio" } ?? "–")
                     LabeledContent("Firmware", value: fw.isEmpty ? "–" : fw)
+                    LabeledContent("Link", value: linkText)
                     LabeledContent("Bluetooth name", value: devices.selected?.advertisedName ?? "–")
                     LabeledContent("MAC", value: s.mac ?? "–")
                     LabeledContent("USB drive (Web Sync)", value: s.webSync.map { $0 ? "On" : "Off" } ?? "–")
