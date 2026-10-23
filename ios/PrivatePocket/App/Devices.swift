@@ -265,7 +265,7 @@ enum Prefs {
     /// Blocks on Now put away with a swipe, as "<kind>|<day or id>"; day keys expire by themselves.
     @MainActor static var hiddenBlocks: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: "hiddenBlocks") ?? []) }
-        set { UserDefaults.standard.set(Array(newValue).sorted().suffix(200), forKey: "hiddenBlocks") }
+        set { UserDefaults.standard.set(Array(newValue.sorted().suffix(200)), forKey: "hiddenBlocks") }
     }
 
     /// Briefs before meetings: asked for the calendar once, on Now.
