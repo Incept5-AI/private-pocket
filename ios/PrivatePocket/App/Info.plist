@@ -24,13 +24,13 @@
 		<true/>
 	</dict>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Adds events found in your recordings to Calendar, only when you tap Add.</string>
+	<string>Adds dates found in your moments to Calendar, when you tap Add or choose to have them added always.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Adds events found in your recordings to Calendar, only when you tap Add.</string>
+	<string>Adds dates found in your moments to Calendar, when you tap Add or choose to have them added always.</string>
 	<key>NSRemindersFullAccessUsageDescription</key>
-	<string>Adds actions found in your recordings to Reminders, only when you tap Add.</string>
+	<string>Adds to-dos found in your moments to Reminders, when you tap Add or choose to have them added always.</string>
 	<key>NSRemindersUsageDescription</key>
-	<string>Adds actions found in your recordings to Reminders, only when you tap Add.</string>
+	<string>Adds to-dos found in your moments to Reminders, when you tap Add or choose to have them added always.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>NSSupportsLiveActivitiesFrequentUpdates</key>

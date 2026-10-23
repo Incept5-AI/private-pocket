@@ -55,6 +55,8 @@ final class AppModel: ObservableObject {
 
     @Published var working: Set<String> = []   // recording ids being transcribed/summarised
     @Published var aiError: String?
+    /// The notice offers Open Settings: a permission iOS will not ask for again.
+    @Published var aiErrorOpensSettings = false
     /// Questions and answers for this session, keyed by scope ("all" or a recording id).
     @Published var conversations: [String: [QA]] = [:]
 
@@ -568,15 +570,18 @@ final class AppModel: ObservableObject {
         guard var r = library.recordings.first(where: { $0.id == r.id }), var i = r.meta.insight, var items = i.next else { return }
         var changed = false
         for (idx, item) in items.enumerated() where !item.isDismissed {
-            if item.isAction, item.reminderID == nil, Prefs.autoReminders, item.isSolid,
-               let id = try? await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.") {
-                items[idx].reminderID = id
-                changed = true
-            }
-            if item.isDate, item.eventID == nil, Prefs.autoCalendar, item.isSolid, let d = item.date,
-               let id = try? await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item)) {
-                items[idx].eventID = id
-                changed = true
+            do {
+                if item.isAction, item.reminderID == nil, Prefs.autoReminders, item.isSolid {
+                    items[idx].reminderID = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.")
+                    changed = true
+                }
+                if item.isDate, item.eventID == nil, Prefs.autoCalendar, item.isSolid, let d = item.date {
+                    items[idx].eventID = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item))
+                    changed = true
+                }
+            } catch {
+                report(error)   // once: a refused permission would refuse every item
+                break
             }
         }
         if changed {
@@ -597,16 +602,24 @@ final class AppModel: ObservableObject {
                 change(r, item) { $0.eventID = id }
             }
         } catch {
-            aiError = Self.placingFailed(error)
+            report(error)
         }
     }
 
-    /// What to say when Reminders or Calendar refused: where to allow it, in plain words.
+    /// What to say when Reminders or Calendar refused, in plain words. iOS asks for a
+    /// permission once; after a Don't Allow it never asks again, so the notice carries
+    /// an Open Settings button instead (`aiErrorOpensSettings`).
     static func placingFailed(_ error: Error) -> String {
         let d = error.localizedDescription
-        if d.localizedCaseInsensitiveContains("reminder") { return "Private Pocket isn't allowed to use Reminders. Allow it in iOS Settings, under Privacy & Security, then try again." }
-        if d.localizedCaseInsensitiveContains("calendar") { return "Private Pocket isn't allowed to use Calendar. Allow it in iOS Settings, under Privacy & Security, then try again." }
+        if d.localizedCaseInsensitiveContains("reminder") { return "Private Pocket isn't allowed to use Reminders yet. Open Settings, switch Reminders on, and try again." }
+        if d.localizedCaseInsensitiveContains("calendar") { return "Private Pocket isn't allowed to use Calendar yet. Open Settings, switch Calendars on, and try again." }
         return "That didn't go in. Try again in a moment."
+    }
+
+    /// A notice for a failed placing; a refused permission gets the Open Settings button.
+    func report(_ error: Error) {
+        aiError = Self.placingFailed(error)
+        if case PlannerError.denied = error { aiErrorOpensSettings = true } else { aiErrorOpensSettings = false }
     }
 
     /// What the event or reminder says about where it came from.
@@ -647,7 +660,7 @@ final class AppModel: ObservableObject {
             let id = try await Planner.addReminder("Chase \(who): \(item.text)", due: due, note: "From \(r.sourceLabel), in Private Pocket.")
             change(r, item) { $0.reminderID = id }
         } catch {
-            aiError = Self.placingFailed(error)
+            report(error)
         }
     }
 
@@ -658,7 +671,7 @@ final class AppModel: ObservableObject {
             _ = try await Planner.addReminder(title, due: due, note: note)
             return true
         } catch {
-            aiError = Self.placingFailed(error)
+            report(error)
             return false
         }
     }

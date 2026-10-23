@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct RootView: View {
+    @Environment(\.openURL) private var openURL
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var link: PocketLink
     @EnvironmentObject var live: LiveSession
@@ -23,8 +24,14 @@ struct RootView: View {
         .sensoryFeedback(.success, trigger: model.canCommand) { was, now in !was && now }
         .sensoryFeedback(.impact(weight: .light), trigger: library.recordings.count) { was, now in now > was }   // a moment landed
         .overlay(alignment: .top) {
-            NoticeBar(text: model.aiError) { model.aiError = nil }
-                .animation(.easeInOut(duration: 0.25), value: model.aiError)
+            NoticeBar(text: model.aiError,
+                      action: model.aiErrorOpensSettings
+                          ? NoticeBar.Action(label: "Open Settings") { if let u = URL(string: UIApplication.openSettingsURLString) { openURL(u) } }
+                          : nil) {
+                model.aiError = nil
+                model.aiErrorOpensSettings = false
+            }
+            .animation(.easeInOut(duration: 0.25), value: model.aiError)
         }
         .task { if Prefs.tagLocation { model.locator.requestPermission() } }
         .onChange(of: scenePhase, initial: true) { model.setActive(scenePhase == .active) }
@@ -546,14 +553,27 @@ struct TurnRow: View {
 /// A line at the top for something that went wrong, in plain words, with what happens
 /// next. Gone on tap or after a few seconds; never a modal.
 struct NoticeBar: View {
+    struct Action {
+        let label: String
+        let run: () -> Void
+    }
+
     let text: String?
+    var action: Action? = nil
     let dismiss: () -> Void
 
     var body: some View {
         if let text {
             HStack(alignment: .top, spacing: 12) {
                 Image(systemName: "exclamationmark.circle").foregroundStyle(Brand.record).padding(.top, 2)
-                Text(text).font(.subheadline).foregroundStyle(Brand.text).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(text).font(.subheadline).foregroundStyle(Brand.text).fixedSize(horizontal: false, vertical: true)
+                    if let action {
+                        Button(action.label) { action.run(); dismiss() }
+                            .font(.subheadline.weight(.semibold)).foregroundStyle(Brand.act)
+                            .buttonStyle(.plain)
+                    }
+                }
                 Spacer(minLength: 0)
                 Button(action: dismiss) { Image(systemName: "xmark").font(.caption.weight(.bold)).foregroundStyle(Brand.muted) }
                     .buttonStyle(.plain)
@@ -566,7 +586,7 @@ struct NoticeBar: View {
             .transition(.move(edge: .top).combined(with: .opacity))
             .onTapGesture(perform: dismiss)
             .task(id: text) {
-                try? await Task.sleep(for: .seconds(8))
+                try? await Task.sleep(for: .seconds(action == nil ? 8 : 20))   // one with a button waits longer
                 if !Task.isCancelled { dismiss() }
             }
         }
