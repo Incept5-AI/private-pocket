@@ -303,35 +303,14 @@ struct MomentCard: View {
                 .font(.body.weight(.medium))
                 .lineLimit(2)
                 .foregroundStyle(r.meta.transcript == nil && r.meta.title == nil ? Brand.muted : Brand.text)
-            if !foot.isEmpty || verdict != nil {
-                HStack(alignment: .center, spacing: 10) {
-                    if !foot.isEmpty { Text(foot).font(.caption).foregroundStyle(Brand.muted).lineLimit(1) }
-                    Spacer(minLength: 8)
-                    if let v = verdict {
-                        HStack(spacing: 4) {
-                            Image(systemName: v.ok ? "checkmark.circle.fill" : "xmark.circle.fill")
-                            Text(v.text)
-                        }
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(v.ok ? Brand.good : Brand.bad)
-                        .lineLimit(1)
-                        .fixedSize()
-                        .layoutPriority(1)
-                    }
-                }
-            }
+            if !foot.isEmpty { Text(foot).font(.caption).foregroundStyle(Brand.muted).lineLimit(1) }
         }
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Brand.surface, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
-    /// For a sample moment that has been read: whether the kind matched.
-    private var verdict: (ok: Bool, text: String)? {
-        guard let e = recording.meta.expectedKind, let i = recording.meta.insight, i.readByModel else { return nil }
-        let ok = e == i.kind
-        return (ok, ok ? "As expected" : "Expected \(MomentKind(rawValue: e)?.label ?? e)")
-    }
+
 }
 
 /// A moment in the day's list: the time on a rail, the card beside it.
