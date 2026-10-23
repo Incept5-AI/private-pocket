@@ -29,7 +29,7 @@ struct SplashView: View {
             finish()
             return
         }
-        withAnimation(.spring(duration: 0.5, bounce: 0.25).delay(0.05)) { scene.keyhole = 1 }   // the keyhole opens
+        withAnimation(.easeOut(duration: 0.45).delay(0.05)) { scene.keyhole = 1 }   // the keyhole opens, cleanly
         withAnimation(.easeOut(duration: 2.8)) { scene.push = true }
         withAnimation(.easeInOut(duration: 2.0).delay(0.3)) { scene.light = 1.6 }
         try? await Task.sleep(for: .seconds(0.75))
@@ -121,13 +121,11 @@ struct SplashScene: View {
                 RadialGradient(colors: [.clear, .black.opacity(0.7)], center: .center,
                                startRadius: min(w, h) * 0.22, endRadius: max(w, h) * 0.72)
                     .allowsHitTesting(false)
-                // The amber plate with the keyhole cut in it, and the keyhole's edge.
+                // The amber plate with the keyhole cut in it.
                 if state.plate {
                     let small = min(w, h) * 0.42, large = max(w, h) * 5.4
                     KeyholePlate(progress: state.keyhole, small: small, large: large)
                         .fill(Brand.record, style: FillStyle(eoFill: true))
-                    KeyholeEdge(progress: state.keyhole, small: small, large: large)
-                        .stroke(Color(hex: 0xB9821B), lineWidth: 2.5)
                 }
             }
             .frame(width: w, height: h)
@@ -224,15 +222,13 @@ enum Keyhole {
         let cy = c.y - height / 2 + r
         let a = r * 0.42, b = r * 0.7
         let d = (r * r - a * a).squareRoot()
-        let start = atan2(d, -a)                  // the left join, below the circle's centre
-        let end = atan2(d, a) + 2 * .pi           // the right join, the long way round over the top
+        // An exact arc from the left join, below the circle's centre, the long way round over
+        // the top to the right join: sharp at any size.
+        let start = Angle(radians: Double(atan2(d, -a)))
+        let end = Angle(radians: Double(atan2(d, a)))
         var p = Path()
-        let steps = 96
-        for i in 0...steps {
-            let t = start + (end - start) * CGFloat(i) / CGFloat(steps)
-            let pt = CGPoint(x: c.x + r * cos(t), y: cy + r * sin(t))
-            if i == 0 { p.move(to: pt) } else { p.addLine(to: pt) }
-        }
+        p.move(to: CGPoint(x: c.x - a, y: cy + d))
+        p.addArc(center: CGPoint(x: c.x, y: cy), radius: r, startAngle: start, endAngle: end, clockwise: false)
         let foot = c.y + height / 2
         p.addLine(to: CGPoint(x: c.x + b, y: foot))
         p.addLine(to: CGPoint(x: c.x - b, y: foot))
@@ -263,20 +259,3 @@ struct KeyholePlate: Shape {
         return p
     }
 }
-
-/// The keyhole's edge, a darker amber, as if cut through the plate.
-struct KeyholeEdge: Shape {
-    var progress: CGFloat
-    let small: CGFloat
-    let large: CGFloat
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let h = Keyhole.height(progress, small: small, large: large)
-        return h > 0.5 ? Keyhole.path(center: CGPoint(x: rect.midX, y: rect.midY), height: h) : Path()
-    }
-}
-
