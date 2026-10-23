@@ -142,8 +142,13 @@ final class Library: ObservableObject {
 
     let root: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let r = docs.appendingPathComponent("Recordings", isDirectory: true)
+        var r = docs.appendingPathComponent("Recordings", isDirectory: true)
         try? FileManager.default.createDirectory(at: r, withIntermediateDirectories: true)
+        // Kept out of iCloud and computer backups: the moments stay on this iPhone, the Pocket
+        // keeps its own copies, and Export everything in Settings makes a copy to keep.
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? r.setResourceValues(values)
         return r
     }()
 

@@ -582,6 +582,7 @@ extension SettingsView {
         var parts = ["Your moments stay on this iPhone, in Files under On My iPhone, and reach it from the Pocket over Bluetooth. No account, no cloud."]
         parts.append(Prefs.sttRemoteNow ? "Speech to text runs on your own server, which receives the audio." : "Speech to text runs on this iPhone.")
         parts.append(Prefs.llmRemoteNow ? "Reading, summaries and questions run on your own server, which receives the transcripts." : "Reading, summaries and questions run on this iPhone.")
+        parts.append("Backups of this iPhone leave the moments out; the Pocket keeps its own copies, and Export everything below makes a copy to keep.")
         parts.append("Apple's speech models download once. Place names are looked up only when that is switched on.")
         return parts.joined(separator: " ")
     }
