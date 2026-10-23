@@ -101,8 +101,6 @@ extension AppModel {
 
     /// Your correction of what a moment was; nil goes back to the model's reading.
     func setKind(_ r: Recording, _ kind: MomentKind?) {
-        var r = r
-        r.meta.labelKind = kind?.rawValue
-        library.update(r)
+        library.mutate(r.id) { $0.labelKind = kind?.rawValue }
     }
 }

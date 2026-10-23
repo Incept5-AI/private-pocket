@@ -76,6 +76,8 @@ struct NextItem: Codable, Hashable, Identifiable {
     var sure: Bool?
     /// Was in Reminders or Calendar and the user removed it there: not put back by itself.
     var unplaced: Bool?
+    /// Added by hand, or ticked in the room: kept when the moment is read again.
+    var byHand: Bool?
 
     var isAction: Bool { kind == "action" }
     var isDate: Bool { kind == "date" }

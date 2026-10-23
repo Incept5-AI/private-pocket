@@ -159,7 +159,37 @@ final class Library: ObservableObject {
         return r
     }()
 
-    init() { reload() }
+    init() {
+        loadDeleted()
+        reload()
+    }
+
+    /// Keeps a folder out of iCloud and computer backups.
+    static func keepOutOfBackups(_ url: URL) {
+        var u = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try? u.setResourceValues(values)
+    }
+
+    // MARK: Deleted, and not fetched back
+
+    /// Recordings deleted here, as `device/day/name` (a moment's id): the card keeps its own
+    /// copy until it is cleared over USB, and a sync must not fetch back what was deleted.
+    private(set) var deleted: Set<String> = []
+    private var deletedURL: URL { root.appendingPathComponent("deleted.json") }
+
+    private func loadDeleted() {
+        if let d = try? Data(contentsOf: deletedURL), let ids = try? JSONDecoder().decode([String].self, from: d) { deleted = Set(ids) }
+    }
+
+    private func saveDeleted() {
+        try? JSONEncoder().encode(Array(deleted).sorted()).write(to: deletedURL, options: .atomic)
+    }
+
+    func wasDeleted(device: UUID, day: String, name: String) -> Bool {
+        deleted.contains("\(device.uuidString)/\(day)/\(name)")
+    }
 
     func folder(device: UUID, day: String) -> URL {
         root.appendingPathComponent(device.uuidString).appendingPathComponent(day)
@@ -207,8 +237,13 @@ final class Library: ObservableObject {
         meta.place = place
         meta.pocket = pocket
         try writeMeta(meta, for: url)
-        reload()
-        return Recording(deviceID: device, day: day, name: name, audioURL: url, meta: meta)
+        let rec = Recording(deviceID: device, day: day, name: name, audioURL: url, meta: meta)
+        if deleted.remove(rec.id) != nil { saveDeleted() }
+        // Added in place rather than by reading every sidecar again.
+        recordings.removeAll { $0.id == rec.id }
+        recordings.append(rec)
+        recordings.sort { ($0.startedAt ?? .distantPast, $0.name) > ($1.startedAt ?? .distantPast, $1.name) }
+        return rec
     }
 
     /// Stamps recordings saved before `pocket` existed with the device whose folder
@@ -222,37 +257,71 @@ final class Library: ObservableObject {
         }
     }
 
+    /// Writes a whole copy back. Only for a copy taken just now: a job that awaited first
+    /// uses `mutate`, so it cannot write a stale copy over what changed meanwhile.
     func update(_ r: Recording) {
+        guard FileManager.default.fileExists(atPath: r.audioURL.path) else { return }   // deleted meanwhile: no sidecar comes back
         try? writeMeta(r.meta, for: r.audioURL)
         if let i = recordings.firstIndex(where: { $0.id == r.id }) { recordings[i] = r }
+    }
+
+    /// Changes one moment as it is now, so a transcription, a reading or a placing that
+    /// awaited for minutes never writes its old copy over a rename, a tick or a name made
+    /// meanwhile. Each job changes only the fields it owns. Nothing happens if the moment
+    /// was deleted, and nothing is written if nothing changed.
+    @discardableResult
+    func mutate(_ id: String, _ edit: (inout RecordingMeta) -> Void) -> Recording? {
+        guard let i = recordings.firstIndex(where: { $0.id == id }) else { return nil }
+        var r = recordings[i]
+        guard FileManager.default.fileExists(atPath: r.audioURL.path) else { return nil }
+        let before = r.meta
+        edit(&r.meta)
+        guard r.meta != before else { return r }
+        try? writeMeta(r.meta, for: r.audioURL)
+        recordings[i] = r
+        return r
     }
 
     func delete(_ r: Recording) {
         delete([r])
     }
 
-    /// Several at once, with one reload.
+    /// Several at once. Each is remembered as deleted, so a sync does not fetch it back from the card.
     func delete(_ rs: [Recording]) {
         for r in rs {
             try? FileManager.default.removeItem(at: r.audioURL)
             try? FileManager.default.removeItem(at: metaURL(r.audioURL))
+            deleted.insert(r.id)
         }
-        reload()
+        saveDeleted()
+        let gone = Set(rs.map(\.id))
+        recordings.removeAll { gone.contains($0.id) }
     }
 
-    /// Everything under Recordings, then an empty library.
+    /// Everything under Recordings, then an empty library. What was here is remembered as
+    /// deleted, so the card's copies are not fetched back; the folder stays out of backups.
     func deleteAll() {
+        deleted.formUnion(recordings.map(\.id))
         try? FileManager.default.removeItem(at: root)
         try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        reload()
+        Self.keepOutOfBackups(root)
+        saveDeleted()
+        recordings = []
     }
 
     private func metaURL(_ audio: URL) -> URL { audio.deletingPathExtension().appendingPathExtension("json") }
 
     private func loadMeta(_ audio: URL) -> RecordingMeta {
-        guard let d = try? Data(contentsOf: metaURL(audio)),
-              let m = try? JSONDecoder().decode(RecordingMeta.self, from: d) else { return RecordingMeta() }
-        return m
+        let url = metaURL(audio)
+        guard let d = try? Data(contentsOf: url) else { return RecordingMeta() }
+        do {
+            return try JSONDecoder().decode(RecordingMeta.self, from: d)
+        } catch {
+            // Kept aside before anything writes over it, so a reading that no longer decodes is not lost.
+            let bad = url.appendingPathExtension("bad")
+            if !FileManager.default.fileExists(atPath: bad.path) { try? d.write(to: bad) }
+            return RecordingMeta()
+        }
     }
 
     private func writeMeta(_ m: RecordingMeta, for audio: URL) throws {

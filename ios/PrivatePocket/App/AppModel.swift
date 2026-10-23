@@ -306,25 +306,48 @@ final class AppModel: ObservableObject {
         await autoSync(d)
     }
 
-    /// Fetch every recording on the device that is not on the phone yet.
+    /// A sync is running: one at a time, so two never share the download channel.
+    private var syncing = false
+
+    /// Fetch every recording on the device that is not on the phone yet, and was not deleted here.
     func sync(quiet: Bool = false) async {
         guard let d = devices.selected else { return }
         guard d.isPaired, !link.keyRejected else {
             if !quiet { link.lastError = "Pair the Pocket to fetch recordings from it." }
             return
         }
+        guard !syncing else { return }
+        syncing = true
+        defer { syncing = false }
         await link.run("Fetching", quiet: quiet) {
             try await link.connect(d)
             let remote = try await link.listFiles()
-            let missing = remote.filter { !library.has(device: d.id, day: $0.day, name: $0.name) }
+            let missing = remote.filter { !library.has(device: d.id, day: $0.day, name: $0.name) && !library.wasDeleted(device: d.id, day: $0.day, name: $0.name) }
             for f in missing {
+                // A recording starting takes the audio channel: the rest waits for the next sync.
+                guard link.status.recordingSince == nil else { break }
                 let data = try await link.download(f)
+                guard !data.isEmpty, link.status.recordingSince == nil else { break }
                 let place = await locator.place(for: f.name, seconds: f.seconds)
                 let r = try library.save(device: d.id, day: f.day, name: f.name, audio: data, seconds: f.seconds, place: place,
                                          pocket: pocketID(d))
-                if d.autoTranscribe { Task { await transcribe(r) } }
+                if d.autoTranscribe { enqueueTranscription(r) }
             }
             try await link.refreshStatus()
+        }
+    }
+
+    private var transcriptions: Task<Void, Never>?
+
+    /// Transcriptions one after another, as the launch sweep does: a first sync of thirty
+    /// recordings is thirty in a row, not thirty uploads at once.
+    func enqueueTranscription(_ r: Recording) {
+        let previous = transcriptions
+        let id = r.id
+        transcriptions = Task { [weak self] in
+            await previous?.value
+            guard let self, let now = self.library.recordings.first(where: { $0.id == id }) else { return }
+            await self.transcribe(now)
         }
     }
 
@@ -569,7 +592,7 @@ final class AppModel: ObservableObject {
             library.update(r)
             let rec = r
             if d.autoTranscribe {
-                Task { await transcribe(rec) }
+                enqueueTranscription(rec)
             } else if Prefs.diarize, !s.words.isEmpty {
                 Task {
                     await findSpeakers(rec)   // the whole recording, so ids hold throughout
@@ -579,7 +602,7 @@ final class AppModel: ObservableObject {
                 Task { await analyse(rec, quiet: true) }
             }
         } else if d.autoTranscribe {
-            Task { await transcribe(r) }
+            enqueueTranscription(r)
         }
     }
 
@@ -612,29 +635,32 @@ final class AppModel: ObservableObject {
     /// else the default from Settings.
     func transcribe(_ r: Recording, localeID: String? = nil, quiet: Bool = false) async {
         await ServerStatus.shared.check()
+        guard let r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
         working.insert(r.id)
         defer { working.remove(r.id) }
+        let id = localeID ?? r.meta.locale ?? Prefs.transcriptionLocale
+        // Who spoke when runs alongside the words; it only needs the audio.
+        let url = r.audioURL
+        let speakers: Task<[SpeakerSegment], Error>? = Prefs.diarize
+            ? Task { try await Diarizer.diarize(try Data(contentsOf: url), filename: url.lastPathComponent) } : nil
         do {
-            var r = r
-            let id = localeID ?? r.meta.locale ?? Prefs.transcriptionLocale
-            // Who spoke when runs alongside the words; it only needs the audio.
-            let url = r.audioURL
-            let speakers: Task<[SpeakerSegment], Error>? = Prefs.diarize
-                ? Task { try await Diarizer.diarize(try Data(contentsOf: url), filename: url.lastPathComponent) } : nil
             let t = try await Transcriber.transcribe(url, localeID: id)
-            r.meta.transcript = t.text
-            r.meta.words = t.words.isEmpty ? nil : t.words
-            // With auto-detect, record the language that came back so summaries match it.
-            r.meta.locale = id == Languages.auto ? NLLanguageRecognizer.dominantLanguage(for: t.text)?.rawValue : id
-            r.meta.liveTranscript = nil
-            r.meta.transcribedAt = Date()
-            r.meta.turns = nil
-            r.meta.speakersError = nil
-            if let speakers { applySpeakers(await speakers.result, to: &r) }
-            library.update(r)
-            let read = r
-            Task { await self.analyse(read, quiet: true) }
+            let segments = await speakers?.result
+            // Only what transcription owns is written, onto the moment as it is now.
+            guard let saved = library.mutate(r.id, { m in
+                m.transcript = t.text
+                m.words = t.words.isEmpty ? nil : t.words
+                // With auto-detect, record the language that came back so summaries match it.
+                m.locale = id == Languages.auto ? NLLanguageRecognizer.dominantLanguage(for: t.text)?.rawValue : id
+                m.liveTranscript = nil
+                m.transcribedAt = Date()
+                m.turns = nil
+                m.speakersError = nil
+                if let segments { Self.applySpeakers(segments, to: &m) }
+            }) else { return }   // deleted meanwhile
+            Task { await self.analyse(saved, quiet: true) }
         } catch {
+            speakers?.cancel()
             if !quiet {
                 aiError = Prefs.sttRemoteNow ? "Your server didn't answer, so this moment wasn't transcribed. It's tried again on the next launch."
                                              : "This moment couldn't be transcribed on your iPhone. It's tried again on the next launch."
@@ -647,34 +673,33 @@ final class AppModel: ObservableObject {
     func findSpeakers(_ r: Recording) async {
         working.insert(r.id)
         defer { working.remove(r.id) }
-        var r = r
+        let result: Result<[SpeakerSegment], Error>
         do {
-            let segments = try await Diarizer.diarize(try Data(contentsOf: r.audioURL), filename: r.audioURL.lastPathComponent)
-            applySpeakers(.success(segments), to: &r)
+            result = .success(try await Diarizer.diarize(try Data(contentsOf: r.audioURL), filename: r.audioURL.lastPathComponent))
         } catch {
-            applySpeakers(.failure(error), to: &r)
+            result = .failure(error)
         }
-        library.update(r)
+        library.mutate(r.id) { Self.applySpeakers(result, to: &$0) }
     }
 
-    private func applySpeakers(_ result: Result<[SpeakerSegment], Error>, to r: inout Recording) {
+    private static func applySpeakers(_ result: Result<[SpeakerSegment], Error>, to m: inout RecordingMeta) {
         switch result {
         case .success(let segments):
-            let turns = Speakers.align(r.meta.words ?? [], segments)
-            r.meta.turns = turns.isEmpty ? nil : turns
-            r.meta.speakersError = turns.isEmpty && !(r.meta.words ?? []).isEmpty ? "No speech found by the diarizer." : nil
+            let turns = Speakers.align(m.words ?? [], segments)
+            m.turns = turns.isEmpty ? nil : turns
+            m.speakersError = turns.isEmpty && !(m.words ?? []).isEmpty ? "No speech found by the diarizer." : nil
         case .failure(let e):
-            r.meta.speakersError = e.localizedDescription
+            m.speakersError = e.localizedDescription
         }
     }
 
     func renameSpeaker(_ r: Recording, speaker: Int, to name: String) {
-        var r = r
-        var names = r.meta.speakerNames ?? [:]
         let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        names[String(speaker)] = n.isEmpty ? nil : n
-        r.meta.speakerNames = names.isEmpty ? nil : names
-        library.update(r)
+        library.mutate(r.id) { m in
+            var names = m.speakerNames ?? [:]
+            names[String(speaker)] = n.isEmpty ? nil : n
+            m.speakerNames = names.isEmpty ? nil : names
+        }
     }
 
     func summarise(_ r: Recording) async {
@@ -683,11 +708,8 @@ final class AppModel: ObservableObject {
         working.insert(r.id)
         defer { working.remove(r.id) }
         do {
-            var r = r
-            r.meta.summary = try await Summariser.summarise(transcript, instructions: Prefs.summaryInstructions,
-                                                            localeID: r.meta.locale)
-            r.meta.summarisedAt = Date()
-            library.update(r)
+            let summary = try await Summariser.summarise(transcript, instructions: Prefs.summaryInstructions, localeID: r.meta.locale)
+            library.mutate(r.id) { $0.summary = summary; $0.summarisedAt = Date() }
         } catch {
             aiError = Prefs.llmRemoteNow ? "Your server didn't answer, so there's no summary yet. Try again in a moment."
                                          : "The summary didn't come through on your iPhone. Try again in a moment."
@@ -719,55 +741,105 @@ final class AppModel: ObservableObject {
     /// coming up.
     func analyse(_ r: Recording, quiet: Bool = false) async {
         await ServerStatus.shared.check()
+        guard var r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
         working.insert(r.id)
         defer { working.remove(r.id) }
-        var r = r
         // The calendar event it happened in, if Calendar is allowed: the reader is told who was invited.
         if let e = r.meta.event, !e.isReadable { r.meta.event = nil }   // its calendar has been switched off
         if r.meta.calendarChecked == nil, r.meta.sampleID == nil, Briefs.calendarAllowed, let start = r.startedAt {
             r.meta.event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
             r.meta.calendarChecked = Date()
         }
-        defer {   // the Lock Screen gets the first sentence, if this is the moment it just showed as Saved
-            if activity.lastSavedName == r.name, let first = r.meta.insight?.brief?.first?.text, r.meta.insight?.readByModel == true {
-                activity.showRead("\(r.kind.label) · \(first)")
-            }
-        }
+        var reading: MomentInsight?
         if LLM.availability == nil {
             do {
-                r.meta.insight = try await Analyst.analyse(r, config: LLM.config)
+                reading = try await Analyst.analyse(r, config: LLM.config)
             } catch {
                 if !quiet {
-                    aiError = Prefs.llmRemoteNow ? "Your server didn't answer, so this moment hasn't been read yet. It's tried again when Insights opens."
-                                                 : "This moment couldn't be read on your iPhone yet. It's tried again when Insights opens."
+                    aiError = Prefs.llmRemoteNow ? "Your server didn't answer, so this moment hasn't been read yet. It's read again the next time the app opens."
+                                                 : "This moment couldn't be read on your iPhone yet. It's read again the next time the app opens."
                 }
-                if r.meta.insight == nil { r.meta.insight = Analyst.heuristic(r) }
             }
-        } else if r.meta.insight == nil {
-            r.meta.insight = Analyst.heuristic(r)
         }
-        if let carry = liveCarry.removeValue(forKey: r.name), var i = r.meta.insight {
-            // What was confirmed in the room stays; what was waved away goes.
-            var items = i.items
-            for c in carry.confirmed where !items.contains(where: { $0.text.lowercased() == c.text.lowercased() }) {
-                var kept = c
-                kept.sure = true
-                items.append(kept)
+        let fallback = Analyst.heuristic(r)
+        let event = r.meta.event, checked = r.meta.calendarChecked
+        let carry = liveCarry.removeValue(forKey: r.name)
+        // Only what reading owns is written, onto the moment as it is now: a rename, a speaker
+        // named or a tick made while the model read is kept.
+        guard let saved = library.mutate(r.id, { m in
+            m.event = event
+            m.calendarChecked = checked
+            var insight: MomentInsight
+            if let reading {
+                insight = Self.carryOver(from: m.insight, into: reading)
+            } else {
+                insight = m.insight ?? fallback
             }
-            for idx in items.indices where carry.dismissed.contains(items[idx].text.lowercased()) { items[idx].dismissed = true }
-            i.next = items
-            r.meta.insight = i
+            if let carry {
+                // What was confirmed in the room stays; what was waved away goes.
+                var items = insight.items
+                for c in carry.confirmed where !items.contains(where: { $0.text.lowercased() == c.text.lowercased() }) {
+                    var kept = c
+                    kept.sure = true
+                    kept.byHand = true
+                    items.append(kept)
+                }
+                for idx in items.indices where carry.dismissed.contains(items[idx].text.lowercased()) { items[idx].dismissed = true }
+                insight.next = items
+            }
+            if let names = insight.inferredSpeakers, !names.isEmpty {
+                var current = m.speakerNames ?? [:]
+                for (k, v) in names where (current[k] ?? "").isEmpty { current[k] = v }
+                m.speakerNames = current
+            }
+            m.insight = insight
+            m.analysedAt = Date()
+        }) else { return }   // deleted meanwhile
+        // The Lock Screen gets the first sentence, if this is the moment it just showed as Saved.
+        if activity.lastSavedName == saved.name, let first = saved.meta.insight?.brief?.first?.text, saved.meta.insight?.readByModel == true {
+            activity.showRead("\(saved.kind.label) · \(first)")
         }
-        if let names = r.meta.insight?.inferredSpeakers, !names.isEmpty {
-            var current = r.meta.speakerNames ?? [:]
-            for (k, v) in names where (current[k] ?? "").isEmpty { current[k] = v }
-            r.meta.speakerNames = current
-        }
-        r.meta.analysedAt = Date()
-        library.update(r)
-        let read = r.id
+        let read = saved.id
         threads.enqueue { [weak self] in await self?.readThreads(containing: read) }
-        await placeNext(r)
+        await placeNext(saved)
+    }
+
+    /// A new reading keeps what was done with the last one. An item read again keeps its id,
+    /// its reminder or event, its tick, its Not mine and, once placed or added by hand, its
+    /// wording, so nothing is placed twice and nothing done is undone; placed, ticked or
+    /// dismissed items the new reading did not find, and items added by hand, stay as they were.
+    static func carryOver(from old: MomentInsight?, into new: MomentInsight) -> MomentInsight {
+        guard let old else { return new }
+        func key(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+        var fresh = new.items
+        let before = old.items
+        var used = Set<String>()
+        for idx in fresh.indices {
+            let n = fresh[idx]
+            guard let o = before.first(where: { o in
+                !used.contains(o.id) && o.kind == n.kind
+                    && (key(o.text) == key(n.text) || (o.quote != nil && o.quote == n.quote) || Ageing.similar(o.text, n.text))
+            }) else { continue }
+            used.insert(o.id)
+            fresh[idx].id = o.id
+            fresh[idx].reminderID = o.reminderID
+            fresh[idx].eventID = o.eventID
+            fresh[idx].done = o.done
+            fresh[idx].doneAt = o.doneAt
+            fresh[idx].dismissed = o.dismissed
+            fresh[idx].unplaced = o.unplaced
+            fresh[idx].byHand = o.byHand
+            if o.reminderID != nil || o.eventID != nil || o.byHand == true { fresh[idx].text = o.text }
+        }
+        for o in before where !used.contains(o.id)
+            && (o.reminderID != nil || o.eventID != nil || o.isDone || o.isDismissed || o.byHand == true) {
+            fresh.append(o)
+        }
+        var out = new
+        out.next = fresh
+        out.actions = fresh.filter(\.isAction).map(\.text)
+        out.promises = fresh.filter(\.isPromise).map(\.text)
+        return out
     }
 
     /// Moments read by an older reader, read again one at a time, quietly.
@@ -782,44 +854,51 @@ final class AppModel: ObservableObject {
         for r in rs where r.meta.transcript != nil && !working.contains(r.id) { await analyse(r, quiet: true) }
     }
 
+    /// Items on their way into Reminders or Calendar now, so no two paths place one twice.
+    private var placing: Set<String> = []
+
     /// Puts new actions in Reminders and new dates in Calendar, when those are on.
     func placeNext(_ r: Recording) async {
-        guard var r = library.recordings.first(where: { $0.id == r.id }), var i = r.meta.insight, var items = i.next else { return }
-        var changed = false
-        for (idx, item) in items.enumerated() where !item.isDismissed && item.unplaced != true {
+        guard Prefs.autoReminders || Prefs.autoCalendar,
+              let items = library.recordings.first(where: { $0.id == r.id })?.meta.insight?.next else { return }
+        for item in items where item.isSolid && !item.isDismissed && item.unplaced != true {
+            let wanted = (item.isAction && Prefs.autoReminders && item.reminderID == nil)
+                || (item.isDate && Prefs.autoCalendar && item.eventID == nil && item.date != nil)
+            guard wanted else { continue }
             do {
-                if item.isAction, item.reminderID == nil, Prefs.autoReminders, item.isSolid {
-                    items[idx].reminderID = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
-                    changed = true
-                }
-                if item.isDate, item.eventID == nil, Prefs.autoCalendar, item.isSolid, let d = item.date {
-                    items[idx].eventID = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item), link: Planner.momentURL(r))
-                    changed = true
-                }
+                try await placeItem(r.id, item.id)
             } catch {
                 report(error)   // once: a refused permission would refuse every item
                 break
             }
         }
-        if changed {
-            i.next = items
-            r.meta.insight = i
-            library.update(r)
+    }
+
+    /// Places one item, read again first, unless it is there already or on its way.
+    private func placeItem(_ rid: String, _ iid: String) async throws {
+        guard !placing.contains(iid), let rec = library.recordings.first(where: { $0.id == rid }),
+              let now = rec.meta.insight?.items.first(where: { $0.id == iid }), !now.isDismissed else { return }
+        placing.insert(iid)
+        defer { placing.remove(iid) }
+        if now.isAction, now.reminderID == nil {
+            let id = try await Planner.addReminder(now.text, due: now.date, note: "From \(rec.sourceLabel), in Private Pocket.", link: Planner.momentURL(rec))
+            setItem(rid, iid) { $0.reminderID = id; $0.unplaced = nil }
+        } else if now.isDate, now.eventID == nil, let d = now.date {
+            let id = try await Planner.addEvent(now.text, at: d, duration: now.duration, location: now.location, note: eventNote(rec, now), link: Planner.momentURL(rec))
+            setItem(rid, iid) { $0.eventID = id; $0.unplaced = nil }
         }
     }
 
-    /// Places one item by hand, whatever the settings.
-    func place(_ r: Recording, _ item: NextItem) async {
+    /// Places one item by hand, whatever the settings. True when it went in.
+    @discardableResult
+    func place(_ r: Recording, _ item: NextItem) async -> Bool {
         do {
-            if item.isAction {
-                let id = try await Planner.addReminder(item.text, due: item.date, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
-                change(r, item) { $0.reminderID = id; $0.unplaced = nil }
-            } else if item.isDate, let d = item.date {
-                let id = try await Planner.addEvent(item.text, at: d, duration: item.duration, location: item.location, note: eventNote(r, item), link: Planner.momentURL(r))
-                change(r, item) { $0.eventID = id; $0.unplaced = nil }
-            }
+            try await placeItem(r.id, item.id)
+            let now = library.recordings.first(where: { $0.id == r.id })?.meta.insight?.items.first(where: { $0.id == item.id })
+            return now?.reminderID != nil || now?.eventID != nil
         } catch {
             report(error)
+            return false
         }
     }
 
@@ -856,13 +935,15 @@ final class AppModel: ObservableObject {
     /// A line of the transcript made into a to-do by hand, anchored to where it was said.
     func addItem(_ r: Recording, text: String, at: Double?, quote: String?) {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty, var r = library.recordings.first(where: { $0.id == r.id }) else { return }
-        var i = r.meta.insight ?? Analyst.heuristic(r)
-        var items = i.items
-        items.append(NextItem(kind: "action", text: t, at: at, quote: quote, sure: true))
-        i.next = items
-        r.meta.insight = i
-        library.update(r)
+        guard !t.isEmpty, let now = library.recordings.first(where: { $0.id == r.id }) else { return }
+        let fallback = Analyst.heuristic(now)
+        library.mutate(r.id) { m in
+            var i = m.insight ?? fallback
+            var items = i.items
+            items.append(NextItem(kind: "action", text: t, at: at, quote: quote, sure: true, byHand: true))
+            i.next = items
+            m.insight = i
+        }
     }
 
     /// A corrected wording, here and in Reminders if it is there already.
@@ -882,15 +963,21 @@ final class AppModel: ObservableObject {
     }
 
     /// A reminder to chase a promise, on the day it was due, else tomorrow morning.
-    func remindMe(_ r: Recording, item: NextItem) async {
-        guard item.reminderID == nil else { return }
-        let due = item.date ?? Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date().addingTimeInterval(86_400)) ?? Date()
-        let who = item.who ?? "them"
+    @discardableResult
+    func remindMe(_ r: Recording, item: NextItem) async -> Bool {
+        let now = library.recordings.first(where: { $0.id == r.id })?.meta.insight?.items.first(where: { $0.id == item.id }) ?? item
+        guard now.reminderID == nil, !placing.contains(item.id) else { return now.reminderID != nil }
+        placing.insert(item.id)
+        defer { placing.remove(item.id) }
+        let due = now.date ?? Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date().addingTimeInterval(86_400)) ?? Date()
+        let who = now.who ?? "them"
         do {
-            let id = try await Planner.addReminder("Chase \(who): \(item.text)", due: due, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
-            change(r, item) { $0.reminderID = id }
+            let id = try await Planner.addReminder("Chase \(who): \(now.text)", due: due, note: "From \(r.sourceLabel), in Private Pocket.", link: Planner.momentURL(r))
+            setItem(r.id, item.id) { $0.reminderID = id }
+            return true
         } catch {
             report(error)
+            return false
         }
     }
 
@@ -961,13 +1048,19 @@ final class AppModel: ObservableObject {
     }
 
     private func change(_ r: Recording, _ item: NextItem, _ edit: (inout NextItem) -> Void) {
-        guard var r = library.recordings.first(where: { $0.id == r.id }), var i = r.meta.insight else { return }
-        var items = i.items
-        guard let idx = items.firstIndex(where: { $0.id == item.id }) else { return }
-        edit(&items[idx])
-        i.next = items
-        r.meta.insight = i
-        library.update(r)
+        setItem(r.id, item.id, edit)
+    }
+
+    /// One item of a moment, changed on the moment as it is now; nothing written if nothing changed.
+    private func setItem(_ rid: String, _ iid: String, _ edit: (inout NextItem) -> Void) {
+        library.mutate(rid) { m in
+            guard var i = m.insight else { return }
+            var items = i.items
+            guard let idx = items.firstIndex(where: { $0.id == iid }) else { return }
+            edit(&items[idx])
+            i.next = items
+            m.insight = i
+        }
     }
 
     /// The moment as a note to send: title, when, the brief, what's next.
@@ -990,6 +1083,8 @@ final class AppModel: ObservableObject {
     }
 
     private var sweptThisSession: Set<String> = []
+    /// Moments whose failed reading was tried again this session.
+    private var readThisSession: Set<String> = []
 
     /// Every recording on this phone that was never transcribed, one at a time, quietly:
     /// nothing should need a tap to become a moment. Each is tried once per session.
@@ -1003,6 +1098,14 @@ final class AppModel: ObservableObject {
         }
         // Moments read by an older reader are read again, so Insights has what the new one finds.
         await rereadOutdated(library.recordings)
+        // Moments whose reading failed (the server away, the model busy) are read again, once a session.
+        if LLM.availability == nil {
+            for r in library.recordings where r.meta.transcript != nil && r.meta.insight?.readByModel != true
+                && !working.contains(r.id) && !readThisSession.contains(r.id) {
+                readThisSession.insert(r.id)
+                await analyse(r, quiet: true)
+            }
+        }
         syncAllPlaced()
         Briefs.schedule(library.recordings)
         // Moments from before Calendar was allowed: the event each happened in, read again where there was one.
@@ -1010,13 +1113,11 @@ final class AppModel: ObservableObject {
             var again = 0
             for r in library.recordings where r.meta.calendarChecked == nil && r.meta.sampleID == nil && r.meta.transcript != nil && !working.contains(r.id) {
                 guard let start = r.startedAt else { continue }
-                var r = r
-                r.meta.event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
-                r.meta.calendarChecked = Date()
-                library.update(r)
-                if r.meta.event != nil, again < 10, LLM.availability == nil {
+                let event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
+                guard let saved = library.mutate(r.id, { $0.event = event; $0.calendarChecked = Date() }) else { continue }
+                if event != nil, again < 10, LLM.availability == nil {
                     again += 1
-                    await analyse(r, quiet: true)
+                    await analyse(saved, quiet: true)
                 }
             }
         }
@@ -1063,6 +1164,7 @@ final class AppModel: ObservableObject {
         threads.clear()
         conversations = [:]
         sweptThisSession = []
+        readThisSession = []
         UserDefaults.standard.removeObject(forKey: "briefings")
         let live = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Live", isDirectory: true)
         try? FileManager.default.removeItem(at: live)
@@ -1092,10 +1194,8 @@ final class AppModel: ObservableObject {
 
     /// Sets the title (empty clears it, so the place or time shows instead).
     func rename(_ r: Recording, to title: String) {
-        var r = r
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        r.meta.title = t.isEmpty ? nil : t
-        library.update(r)
+        library.mutate(r.id) { $0.title = t.isEmpty ? nil : t }
     }
 
     /// Tags a recording with where the phone is now, for when it was not captured.
@@ -1105,22 +1205,18 @@ final class AppModel: ObservableObject {
             return
         }
         place.approximate = false
-        var r = r
-        r.meta.place = place
-        library.update(r)
+        library.mutate(r.id) { $0.place = place }
     }
 
     func clearPlace(_ r: Recording) {
-        var r = r
-        r.meta.place = nil
-        library.update(r)
+        library.mutate(r.id) { $0.place = nil }
     }
 
     // MARK: - USB
 
     /// Copies drive files that are missing on the phone into the library.
     func importFromDrive(_ files: [DriveFile], device: DeviceConfig) {
-        for f in files where !library.has(device: device.id, day: f.day, name: f.name) {
+        for f in files where !library.has(device: device.id, day: f.day, name: f.name) && !library.wasDeleted(device: device.id, day: f.day, name: f.name) {
             do {
                 try library.save(device: device.id, day: f.day, name: f.name, audio: try drive.read(f), seconds: nil,
                                  pocket: PocketID(device))
