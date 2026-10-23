@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// First use: seven screens, swipe only. The card does the talking, four words a
-/// screen: wake it, pair, record, the switch, what the light means, and reset. Shown
-/// once on first launch, and again from Settings or the Pocket menu.
+/// First use: eight screens, swipe only. The card does the talking, four words a
+/// screen: wake it, pair (the page finds and adds the Pocket itself), record, the
+/// switch, what the light means, reset, and the way back. Shown once on first launch,
+/// and again from Settings or the Pocket menu.
 struct WalkthroughView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var page = 0
@@ -160,24 +161,68 @@ struct HoldRing: View {
     }
 }
 
+/// Pairing, done from here. With no Pocket added yet, the page looks for one while the
+/// user holds the button, adds the one it finds, connects, and the link pairs by itself
+/// while the light blinks. With a Pocket already added, it shows that one's state.
 struct PairPage: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var devices: DeviceStore
+    @EnvironmentObject var link: PocketLink
     @State private var waited = false
+
+    private var added: Bool { !devices.devices.isEmpty }
+    private var found: [Discovered] { link.discovered.sorted { $0.rssi > $1.rssi } }
+
+    private var headline: String {
+        if model.canCommand { return "Paired. Solid blue." }
+        if added { return "Pairing. Keep it close…" }
+        return found.isEmpty ? "Hold the side button." : found.count == 1 ? "Found it." : "Which one is yours?"
+    }
+
+    private var line: String {
+        if model.canCommand { return "Pocket and your iPhone know each other now. Nothing to type, ever." }
+        if added {
+            return waited ? "The app does it by itself while it is open. If the light has stopped blinking, hold the side button again for five seconds."
+                          : "The app does it by itself while it is open."
+        }
+        if found.isEmpty { return "Five seconds, until the light blinks blue. Your iPhone finds it from here." }
+        return found.count == 1 ? "Adding \(found[0].name)…" : "More than one Pocket is nearby. Tap yours."
+    }
 
     var body: some View {
         let done = model.canCommand
-        WalkPage(glow: Lamp.ready,
-                 headline: done ? "Paired. Solid blue." : "Pairing. Keep it close…",
-                 line: done ? "Pocket and your iPhone know each other now. Nothing to type, ever."
-                     : waited ? "The app does it by itself while it is open. If the light has stopped blinking, hold the side button again for five seconds."
-                              : "The app does it by itself while it is open.") {
+        WalkPage(glow: Lamp.ready, headline: headline, line: line) {
             PocketIllustration(light: Lamp.ready, blink: !done)
+        } footer: {
+            if !added, found.count > 1 {
+                VStack(spacing: 8) {
+                    ForEach(found) { d in
+                        Button { add(d) } label: {
+                            Text(d.name).font(.subheadline.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 6)
+                        }
+                        .buttonStyle(.glass)
+                    }
+                }
+                .padding(.horizontal, 48)
+            }
         }
         .animation(.easeInOut(duration: 0.4), value: done)
+        .onAppear { if !added { link.disconnect(); link.startDiscovery() } }
+        .onDisappear { if link.isDiscovering { link.stopDiscovery() } }
+        .onChange(of: link.discovered) { if !added, found.count == 1, let d = found.first { add(d) } }
         .task {
             guard await hold(12) else { return }
             withAnimation { waited = true }
         }
+    }
+
+    /// Adds the Pocket and connects at once; the keyless handshake then pairs while it blinks.
+    private func add(_ d: Discovered) {
+        guard !devices.devices.contains(where: { $0.advertisedName == d.name }) else { return }
+        let c = DeviceConfig(name: DeviceStore.defaultName(d.name), advertisedName: d.name, peripheralID: d.id)
+        devices.add(c)
+        link.stopDiscovery()
+        Task { await model.userConnect() }
     }
 }
 
