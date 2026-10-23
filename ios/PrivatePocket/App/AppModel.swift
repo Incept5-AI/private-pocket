@@ -435,7 +435,10 @@ final class AppModel: ObservableObject {
             let read = r
             Task { await self.analyse(read, quiet: true) }
         } catch {
-            if !quiet { aiError = "Transcription failed: \(error.localizedDescription)" }
+            if !quiet {
+                aiError = Prefs.sttRemoteNow ? "Your server didn't answer, so this moment wasn't transcribed. It's tried again on the next launch."
+                                             : "This moment couldn't be transcribed on your iPhone. It's tried again on the next launch."
+            }
             link.note("transcription failed for \(r.name): \(error.localizedDescription)")
         }
     }
@@ -486,7 +489,8 @@ final class AppModel: ObservableObject {
             r.meta.summarisedAt = Date()
             library.update(r)
         } catch {
-            aiError = "Summary failed: \(error.localizedDescription)"
+            aiError = Prefs.llmRemoteNow ? "Your server didn't answer, so there's no summary yet. Try again in a moment."
+                                         : "The summary didn't come through on your iPhone. Try again in a moment."
         }
     }
 
@@ -522,7 +526,10 @@ final class AppModel: ObservableObject {
             do {
                 r.meta.insight = try await Analyst.analyse(r, config: LLM.config)
             } catch {
-                if !quiet { aiError = "Could not read the conversation: \(error.localizedDescription)" }
+                if !quiet {
+                    aiError = Prefs.llmRemoteNow ? "Your server didn't answer, so this moment hasn't been read yet. It's tried again when Insights opens."
+                                                 : "This moment couldn't be read on your iPhone yet. It's tried again when Insights opens."
+                }
                 if r.meta.insight == nil { r.meta.insight = Analyst.heuristic(r) }
             }
         } else if r.meta.insight == nil {
@@ -584,8 +591,16 @@ final class AppModel: ObservableObject {
                 change(r, item) { $0.eventID = id }
             }
         } catch {
-            aiError = error.localizedDescription
+            aiError = Self.placingFailed(error)
         }
+    }
+
+    /// What to say when Reminders or Calendar refused: where to allow it, in plain words.
+    static func placingFailed(_ error: Error) -> String {
+        let d = error.localizedDescription
+        if d.localizedCaseInsensitiveContains("reminder") { return "Private Pocket isn't allowed to use Reminders. Allow it in iOS Settings, under Privacy & Security, then try again." }
+        if d.localizedCaseInsensitiveContains("calendar") { return "Private Pocket isn't allowed to use Calendar. Allow it in iOS Settings, under Privacy & Security, then try again." }
+        return "That didn't go in. Try again in a moment."
     }
 
     /// What the event or reminder says about where it came from.
@@ -618,7 +633,7 @@ final class AppModel: ObservableObject {
             let id = try await Planner.addReminder("Chase \(who): \(item.text)", due: due, note: "From \(r.sourceLabel), in Private Pocket.")
             change(r, item) { $0.reminderID = id }
         } catch {
-            aiError = error.localizedDescription
+            aiError = Self.placingFailed(error)
         }
     }
 
@@ -629,7 +644,7 @@ final class AppModel: ObservableObject {
             _ = try await Planner.addReminder(title, due: due, note: note)
             return true
         } catch {
-            aiError = error.localizedDescription
+            aiError = Self.placingFailed(error)
             return false
         }
     }

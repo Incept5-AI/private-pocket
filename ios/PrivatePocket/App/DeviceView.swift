@@ -20,9 +20,10 @@ struct RootView: View {
         .tabViewBottomAccessory(isEnabled: recording || live.isActive) { NowRecordingBar() }
         .sensoryFeedback(trigger: recording) { _, now in now ? .start : .stop }
         .sensoryFeedback(.success, trigger: model.canCommand) { was, now in !was && now }
-        .alert("Error", isPresented: Binding(get: { model.aiError != nil }, set: { if !$0 { model.aiError = nil } })) {
-            Button("OK") {}
-        } message: { Text(model.aiError ?? "") }
+        .overlay(alignment: .top) {
+            NoticeBar(text: model.aiError) { model.aiError = nil }
+                .animation(.easeInOut(duration: 0.25), value: model.aiError)
+        }
         .task { if Prefs.tagLocation { model.locator.requestPermission() } }
         .onChange(of: scenePhase, initial: true) { model.setActive(scenePhase == .active) }
         .fullScreenCover(isPresented: $walkthrough) { WalkthroughView() }
@@ -105,9 +106,10 @@ struct PocketView: View {
                 link.disconnect()
                 Task { await model.ensureConnected() }
             }
-            .alert("Pocket", isPresented: Binding(get: { link.lastError != nil }, set: { if !$0 { link.lastError = nil } })) {
-                Button("OK") {}
-            } message: { Text(link.lastError ?? "") }
+            .overlay(alignment: .top) {
+                NoticeBar(text: link.lastError) { link.lastError = nil }
+                    .animation(.easeInOut(duration: 0.25), value: link.lastError)
+            }
         }
     }
 
@@ -534,6 +536,36 @@ struct TurnRow: View {
                 Text(Speakers.stamp(turn.start)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
             }
             Text(turn.text).textSelection(.enabled)
+        }
+    }
+}
+
+/// A line at the top for something that went wrong, in plain words, with what happens
+/// next. Gone on tap or after a few seconds; never a modal.
+struct NoticeBar: View {
+    let text: String?
+    let dismiss: () -> Void
+
+    var body: some View {
+        if let text {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: "exclamationmark.circle").foregroundStyle(Brand.record).padding(.top, 2)
+                Text(text).font(.subheadline).foregroundStyle(Brand.text).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+                Button(action: dismiss) { Image(systemName: "xmark").font(.caption.weight(.bold)).foregroundStyle(Brand.muted) }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss")
+            }
+            .padding(14)
+            .background(Brand.raised, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Brand.hairline, lineWidth: 1))
+            .padding(.horizontal, 16).padding(.top, 8)
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .onTapGesture(perform: dismiss)
+            .task(id: text) {
+                try? await Task.sleep(for: .seconds(8))
+                if !Task.isCancelled { dismiss() }
+            }
         }
     }
 }

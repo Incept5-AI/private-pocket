@@ -60,7 +60,7 @@ extension AppModel {
                 library.update(r)
                 added.append(r)
             } catch {
-                aiError = "Could not add \(s.title): \(error.localizedDescription)"
+                aiError = "\(s.title) couldn't be added. Try again."
             }
         }
         for r in added { await transcribe(r) }
