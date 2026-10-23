@@ -93,6 +93,28 @@ enum Briefs {
     }
 }
 
+/// A notification now: an answer the card gave, for a phone that is in a bag.
+enum Notify {
+    static func now(title: String, body: String) {
+        let centre = UNUserNotificationCenter.current()
+        centre.getNotificationSettings { settings in
+            if settings.authorizationStatus == .notDetermined {
+                centre.requestAuthorization(options: [.alert, .badge]) { ok, _ in if ok { send() } }
+            } else if settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional {
+                send()
+            }
+        }
+        func send() {
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.interruptionLevel = .timeSensitive
+            centre.add(UNNotificationRequest(identifier: "card-" + UUID().uuidString, content: content,
+                                             trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)))
+        }
+    }
+}
+
 /// The brief, as its own screen: the name large on teal, the things open, and the last call.
 struct BriefView: View {
     @Environment(\.dismiss) private var dismiss

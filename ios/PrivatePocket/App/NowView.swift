@@ -21,6 +21,7 @@ struct NowView: View {
     @State private var dismissed: Set<String> = Prefs.dismissedFindings
     @State private var toast: String?
     @State private var brief: Brief?
+    @State private var tableMode = false
     @State private var briefsAsked = Prefs.askedBriefs
     @StateObject private var replay = Replay()
 
@@ -78,6 +79,7 @@ struct NowView: View {
                 .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
                 .sheet(isPresented: $showPocket) { PocketView() }
                 .fullScreenCover(item: $brief) { BriefView(brief: $0) }
+                .fullScreenCover(isPresented: $tableMode) { LiveView() }
                 .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
                 .onChange(of: model.openMomentID, initial: true) {
                     guard let id = model.openMomentID else { return }
@@ -150,6 +152,9 @@ struct NowView: View {
             }
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        }
+        if let a = model.cardAnswers.last {
+            NowBlock(tint: Brand.record, ink: Brand.onRecord, tag: "Said to the card", title: a.answer, line: "“Pocket, \(a.question)”")
         }
         if let r = justRead(all) {
             NowBlock(tint: r.kind.isLife ? Brand.life : Brand.work, ink: r.kind.isLife ? Brand.onLife : Brand.onWork,
@@ -243,10 +248,17 @@ struct NowView: View {
                 }
                 .padding(.top, 4)
             }
-            if model.canCommand, recording {
-                Button { Task { await model.toggleRecording() } } label: {
-                    Text("Stop").font(.subheadline.weight(.bold)).padding(.horizontal, 16).padding(.vertical, 8)
-                        .background(Brand.onRecord, in: Capsule()).foregroundStyle(Brand.record)
+            HStack(spacing: 10) {
+                if model.canCommand, recording {
+                    Button { Task { await model.toggleRecording() } } label: {
+                        Text("Stop").font(.subheadline.weight(.bold)).padding(.horizontal, 16).padding(.vertical, 8)
+                            .background(Brand.onRecord, in: Capsule()).foregroundStyle(Brand.record)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Button { tableMode = true } label: {
+                    Text("Table mode").font(.subheadline.weight(.bold)).padding(.horizontal, 16).padding(.vertical, 8)
+                        .background(Brand.onRecord.opacity(0.15), in: Capsule())
                 }
                 .buttonStyle(.plain)
             }
@@ -547,5 +559,82 @@ struct RecordAccessory: View {
         .background(Brand.record)
         .animation(.easeInOut(duration: 0.25), value: recording)
         .sheet(isPresented: $showPocket) { PocketView() }
+    }
+}
+
+/// Live, in the room, in large type: the timer, the words as they come, and what the
+/// reader has caught so far with a tick and a cross on each. For the table.
+struct LiveView: View {
+    @EnvironmentObject var model: AppModel
+    @EnvironmentObject var link: PocketLink
+    @EnvironmentObject var live: LiveSession
+    @Environment(\.dismiss) private var dismiss
+    @ScaledMetric(relativeTo: .largeTitle) private var timerSize = 64.0
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                HStack(alignment: .top) {
+                    if let since = link.status.recordingSince {
+                        Text(timerInterval: since...Date.distantFuture, countsDown: false)
+                            .font(.system(size: timerSize, weight: .bold, design: .rounded)).monospacedDigit()
+                    } else {
+                        Text("Saving…").font(.largeTitle.weight(.bold))
+                    }
+                    Spacer()
+                    Button("Done") { dismiss() }.font(.subheadline.weight(.bold)).padding(.horizontal, 14).padding(.vertical, 8).background(Brand.onRecord, in: Capsule()).foregroundStyle(Brand.record).buttonStyle(.plain)
+                }
+                let text = live.text
+                if !text.isEmpty {
+                    let tail = String(text.suffix(600))
+                    Text(tail).font(.title2.weight(.semibold)).lineSpacing(3)
+                } else {
+                    Text(live.isActive ? "Listening…" : "Not streaming to this iPhone. It's read when it stops.").font(.title2.weight(.semibold))
+                }
+                if !model.liveItems.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(model.liveItems) { item in
+                            let confirmed = model.liveConfirmed.contains(item.id), gone = model.liveDismissed.contains(item.id)
+                            HStack(spacing: 12) {
+                                Text(item.isAction ? "TO DO" : item.isDate ? "DATE" : "PROMISE").font(.caption.weight(.bold)).tracking(0.8).foregroundStyle(Brand.record).frame(width: 72, alignment: .leading)
+                                Text((item.isPromise ? (item.who.map { "\($0): " } ?? "") : "") + item.text).font(.title3.weight(.bold)).foregroundStyle(Color(hex: 0xFFF7E8)).frame(maxWidth: .infinity, alignment: .leading)
+                                Button { model.confirmLive(item) } label: { Image(systemName: "checkmark").font(.title3.weight(.bold)).frame(width: 44, height: 44).background(confirmed ? Brand.act : Color(hex: 0x4A3410), in: Circle()).foregroundStyle(confirmed ? Brand.onAct : Color(hex: 0xFFF7E8)) }.buttonStyle(.plain)
+                                Button { model.dismissLive(item) } label: { Image(systemName: "xmark").font(.title3.weight(.bold)).frame(width: 44, height: 44).background(Color(hex: 0x4A3410), in: Circle()).foregroundStyle(Color(hex: 0xFFF7E8)) }.buttonStyle(.plain)
+                            }
+                            .padding(14)
+                            .background(Brand.onRecord, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .opacity(gone ? 0.45 : 1)
+                        }
+                    }
+                }
+                ForEach(model.liveDecisions.prefix(4), id: \.self) { d in
+                    HStack(spacing: 12) {
+                        Text("DECIDED").font(.caption.weight(.bold)).tracking(0.8).frame(width: 72, alignment: .leading).opacity(0.7)
+                        Text(d).font(.title3.weight(.bold))
+                    }
+                }
+                if let a = model.cardAnswers.last {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("“Pocket, \(a.question)”").font(.subheadline.weight(.semibold)).opacity(0.75)
+                        Text(a.answer).font(.title3.weight(.bold))
+                    }
+                    .padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Brand.onRecord.opacity(0.12), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                }
+                Spacer(minLength: 40)
+                if model.canCommand, link.status.recordingSince != nil {
+                    HStack { Spacer()
+                        Button { Task { await model.toggleRecording() }; dismiss() } label: {
+                            ZStack { Circle().strokeBorder(Brand.onRecord, lineWidth: 3).frame(width: 76, height: 76); RoundedRectangle(cornerRadius: 8).fill(Brand.onRecord).frame(width: 30, height: 30) }
+                        }
+                        .buttonStyle(.plain).accessibilityLabel("Stop recording")
+                        Spacer() }
+                }
+            }
+            .padding(24).padding(.top, 10)
+        }
+        .background(Brand.record.ignoresSafeArea())
+        .foregroundStyle(Brand.onRecord)
+        .statusBarHidden()
     }
 }

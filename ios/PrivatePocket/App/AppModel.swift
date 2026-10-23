@@ -1,5 +1,6 @@
 import AVFoundation
 import NaturalLanguage
+import Combine
 import SwiftUI
 
 @main
@@ -63,6 +64,15 @@ final class AppModel: ObservableObject {
     @Published var liveDismissed: Set<String> = []
     private var liveReader: Task<Void, Never>?
     private var liveReadLength = 0
+    /// Said to the card: "Pocket, …" in the live transcript, answered from the recordings.
+    struct CardAnswer: Identifiable {
+        let id = UUID()
+        let question: String
+        var answer: String
+    }
+    @Published var cardAnswers: [CardAnswer] = []
+    private var cardSeen: Set<String> = []
+    private var cardWatch: AnyCancellable?
     /// Confirmations made in the room, carried into the moment once it is read.
     private var liveCarry: [String: (confirmed: [NextItem], dismissed: [String])] = [:]
     @Published var aiError: String?
@@ -96,6 +106,7 @@ final class AppModel: ObservableObject {
             if let d = self.connectedDevice { self.live.begin(name: name, device: d.id) }
             self.startActivity(name: name)
             self.startLiveReader()
+            self.watchForCard()
         }
         StopRecordingIntent.handler = { [weak self] in
             guard let self else { return }
@@ -362,6 +373,54 @@ final class AppModel: ObservableObject {
                 self.liveDecisions = read.decisions
             }
         }
+    }
+
+    /// "Pocket, remind me to ring the garage." "Pocket, what did Ravi say the date was?"
+    /// The card is a microphone with a private model behind it: address it, and the answer
+    /// lands on Now and the Lock Screen, phone still in the bag.
+    private func watchForCard() {
+        cardWatch?.cancel()
+        cardWatch = live.$finalText
+            .debounce(for: .seconds(1.5), scheduler: DispatchQueue.main)
+            .sink { [weak self] text in self?.scanForCard(text) }
+    }
+
+    private func scanForCard(_ text: String) {
+        guard let re = try? NSRegularExpression(pattern: #"\bpocket[,:]?\s+([^.?!]{4,140})[.?!]"#, options: .caseInsensitive) else { return }
+        let ns = text as NSString
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            let phrase = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            let key = phrase.lowercased()
+            guard !cardSeen.contains(key) else { continue }
+            cardSeen.insert(key)
+            Task { await self.answerCard(phrase) }
+        }
+    }
+
+    private func answerCard(_ phrase: String) async {
+        let lower = phrase.lowercased()
+        var entry = CardAnswer(question: phrase, answer: "…")
+        cardAnswers.append(entry)
+        func finish(_ a: String) {
+            entry.answer = a
+            if let i = cardAnswers.firstIndex(where: { $0.id == entry.id }) { cardAnswers[i] = entry }
+            Notify.now(title: "Pocket", body: a)
+            link.note("card: \(phrase) → \(a.prefix(80))")
+        }
+        for lead in ["remind me to ", "remind me ", "add a to-do to ", "note to "] where lower.hasPrefix(lead) {
+            let what = String(phrase.dropFirst(lead.count)).capitalizedFirst
+            let due = Planner.date(in: what) ?? Findings.tomorrowMorning(Date())
+            if await quickReminder(what, due: due, note: "Said to the card. From Private Pocket.") {
+                finish("Done. " + (due.map { "\(Findings.dayName($0).capitalizedFirst) at \($0.formatted(date: .omitted, time: .shortened)), in Reminders." } ?? "In Reminders."))
+            } else {
+                finish("I couldn't add that to Reminders.")
+            }
+            return
+        }
+        let sources = library.recordings.filter { $0.meta.transcript != nil }
+        guard !sources.isEmpty, LLM.availability == nil else { finish("Nothing to answer from yet."); return }
+        await ask(phrase, scope: "card", recordings: sources)
+        finish(conversations["card"]?.last?.answer ?? conversations["card"]?.last?.error ?? "I couldn't find that.")
     }
 
     func confirmLive(_ item: NextItem) { liveConfirmed.insert(item.id); liveDismissed.remove(item.id) }
