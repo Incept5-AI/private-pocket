@@ -6,6 +6,7 @@ import SwiftUI
 struct InsightsView: View {
     @EnvironmentObject var library: Library
     @EnvironmentObject var model: AppModel
+    @State private var cache = DigestCache()
     @State private var allFindings = false
     @State private var dismissed: Set<String> = Prefs.dismissedFindings
     @State private var span = 0   // this week, this month
@@ -30,8 +31,8 @@ struct InsightsView: View {
 
     var body: some View {
         let all = library.recordings
-        let d = Digest.make(all, window: window)
-        let history = (1...3).map { Digest.make(all, window: shifted(window, by: -$0)) }
+        let d = cache.digest(all, window: window)
+        let history = (1...3).map { cache.digest(all, window: shifted(window, by: -$0)) }
         let findings = Findings.make(d, previous: history.first, history: history, all: all, spanName: spanName)
         NavigationStack(path: $path) {
             ScrollViewReader { proxy in
@@ -889,6 +890,39 @@ struct HoursBar: View {
             }
             .font(.caption).foregroundStyle(Brand.muted)
         }
+    }
+}
+
+/// Digests kept until the moments they were made from change, so a render costs a
+/// hash of the readings rather than a pass over every moment.
+final class DigestCache {
+    private var entries: [String: (stamp: Int, digest: Digest)] = [:]
+
+    func digest(_ all: [Recording], window: DateInterval) -> Digest {
+        let key = "\(window.start.timeIntervalSince1970)/\(window.end.timeIntervalSince1970)"
+        let stamp = Self.stamp(all)
+        if let e = entries[key], e.stamp == stamp { return e.digest }
+        let d = Digest.make(all, window: window)
+        entries[key] = (stamp, d)
+        return d
+    }
+
+    /// Everything a digest depends on, as one hash; the clock in ten-minute steps, since
+    /// what needs you depends on it.
+    static func stamp(_ all: [Recording]) -> Int {
+        var h = Hasher()
+        h.combine(all.count)
+        h.combine(Int(Date().timeIntervalSince1970 / 600))
+        for r in all {
+            h.combine(r.id)
+            h.combine(r.meta.analysedAt?.timeIntervalSince1970 ?? 0)
+            h.combine(r.meta.transcribedAt?.timeIntervalSince1970 ?? 0)
+            h.combine(r.meta.labelKind ?? "")
+            for i in r.meta.insight?.items ?? [] {
+                h.combine(i.done == true); h.combine(i.dismissed == true); h.combine(i.reminderID != nil); h.combine(i.eventID != nil)
+            }
+        }
+        return h.finalize()
     }
 }
 
