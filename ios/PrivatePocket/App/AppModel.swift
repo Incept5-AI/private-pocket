@@ -821,6 +821,9 @@ final class AppModel: ObservableObject {
             var names = m.speakerNames ?? [:]
             names[String(speaker)] = n.isEmpty ? nil : n
             m.speakerNames = names.isEmpty ? nil : names
+            var mine = Set(m.speakersNamedByHand ?? [])
+            if n.isEmpty { mine.remove(String(speaker)) } else { mine.insert(String(speaker)) }
+            m.speakersNamedByHand = mine.isEmpty ? nil : mine.sorted()
         }
     }
 
@@ -872,10 +875,12 @@ final class AppModel: ObservableObject {
             r.meta.event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
             r.meta.calendarChecked = Date()
         }
+        if Prefs.calendarName.isEmpty { You.learn() }   // who you are, so your voice is not given someone else's name
+        let wearer = await findWearer(of: r)
         var reading: MomentInsight?
         if LLM.availability == nil {
             do {
-                reading = try await Analyst.analyse(r, config: LLM.config)
+                reading = try await Analyst.analyse(r, config: LLM.config, wearer: wearer)
             } catch {
                 if !quiet {
                     aiError = Prefs.llmRemoteNow ? "Your server didn't answer, so this moment hasn't been read yet. It's read again the next time the app opens."
@@ -909,11 +914,7 @@ final class AppModel: ObservableObject {
                 for idx in items.indices where carry.dismissed.contains(items[idx].text.lowercased()) { items[idx].dismissed = true }
                 insight.next = items
             }
-            if let names = insight.inferredSpeakers, !names.isEmpty {
-                var current = m.speakerNames ?? [:]
-                for (k, v) in names where (current[k] ?? "").isEmpty { current[k] = v }
-                m.speakerNames = current
-            }
+            m.speakerNames = Self.speakerNames(m, guessedBefore: m.insight?.inferredSpeakers, now: insight.inferredSpeakers)
             m.insight = insight
             m.analysedAt = Date()
         }) else { return }   // deleted meanwhile
@@ -924,6 +925,35 @@ final class AppModel: ObservableObject {
         let read = saved.id
         threads.enqueue { [weak self] in await self?.readThreads(containing: read) }
         await placeNext(saved)
+    }
+
+    /// The voice far the loudest on a recording with two or more, the wearer's, for the reader;
+    /// never on a call, where the far voice comes through the phone. The levels go in the log,
+    /// so the margin can be checked against real moments.
+    private func findWearer(of r: Recording) async -> Int? {
+        guard !r.isCall, r.meta.sampleID == nil, let turns = r.meta.turns, Speakers.count(turns) > 1 else { return nil }
+        let url = r.audioURL
+        let levels = await Task.detached(priority: .utility) { Speakers.levels(url: url, turns: turns) }.value
+        let w = Speakers.wearer(levels)
+        if !levels.isEmpty {
+            let shown = levels.sorted { $0.key < $1.key }.map { "\($0.key + 1): \(String(format: "%.1f", $0.value)) dB" }.joined(separator: ", ")
+            DiskLog.append("voices \(r.name): \(shown); wearer \(w.map { "Speaker \($0 + 1)" } ?? "unclear")")
+        }
+        return w
+    }
+
+    /// Speaker names after a reading: the ones you gave stay, and so does any name changed
+    /// since the last reading guessed it; the last reading's guesses give way to the new one's,
+    /// which fill the speakers still unnamed with names not already used.
+    static func speakerNames(_ m: RecordingMeta, guessedBefore old: [String: String]?, now new: [String: String]?) -> [String: String]? {
+        var names = m.speakerNames ?? [:]
+        let mine = Set(m.speakersNamedByHand ?? [])
+        for (k, v) in old ?? [:] where !mine.contains(k) && names[k] == v { names[k] = nil }
+        for (k, v) in (new ?? [:]).sorted(by: { $0.key < $1.key }) where (names[k] ?? "").isEmpty
+            && !names.values.contains(where: { $0.caseInsensitiveCompare(v) == .orderedSame }) {
+            names[k] = v
+        }
+        return names.isEmpty ? nil : names
     }
 
     /// A new reading keeps what was done with the last one. An item read again keeps its id,
@@ -1217,6 +1247,7 @@ final class AppModel: ObservableObject {
     /// nothing should need a tap to become a moment. Each is tried once per session.
     func transcribeWhatLanded() async {
         MomentShare.sweep()
+        You.learn()   // the name your calendar knows you by, before anything is read
         threads.discover(library.recordings)
         await ServerStatus.shared.check()
         await respreadSamples()

@@ -87,10 +87,10 @@ enum PeopleNames {
         lock.unlock()
     }
 
-    /// The name to show for a name as read, or nil when it is not a person.
+    /// The name to show for a name as read, or nil when it is not a person, or is you.
     static func canonical(_ name: String) -> String? {
         let key = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !key.isEmpty else { return nil }
+        guard !key.isEmpty, !You.matches(key) else { return nil }
         lock.lock()
         defer { lock.unlock() }
         if book.notPeople.contains(key) { return nil }

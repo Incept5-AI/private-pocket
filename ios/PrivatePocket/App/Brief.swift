@@ -112,14 +112,19 @@ struct CalendarEventRef: Codable, Hashable {
     /// Still readable: its calendar has not been switched off since.
     var isReadable: Bool { calendarID.map { !Prefs.excludedCalendars.contains($0) } ?? true }
 
+    /// Who was invited besides you, with your own name taken out where the calendar did not
+    /// mark it as you (an invitation sent to another of your addresses).
+    var others: [String] { attendees.filter { !You.matches($0) } }
+
     /// What the reader is told: the event, who was invited, and to name a speaker only on the conversation's evidence.
     var hint: String {
+        let others = others
         var s = "This was recorded during the calendar event \"\(title)\""
-        s += attendees.isEmpty ? "." : ", to which \(attendees.joined(separator: ", ")) \(attendees.count == 1 ? "was" : "were") invited."
-        if !attendees.isEmpty {
+        s += others.isEmpty ? "." : ", to which \(others.joined(separator: ", ")) \(others.count == 1 ? "was" : "were") invited besides the user."
+        if !others.isEmpty {
             s += " They are the likely speakers besides the user. When the conversation itself shows which Speaker label is which of them"
-            s += " (they are addressed by name, introduce themselves, or it is otherwise plain), give that name under speakers, spelled as in the invitation;"
-            s += " never name a speaker from the invitation alone."
+            s += " (another speaker addresses them by name, they introduce themselves, or it is otherwise plain), give that name under speakers, spelled as in the invitation;"
+            s += " never name a speaker from the invitation alone, and never give an invitee's name to the user's voice."
         }
         s += " Use the event only where the conversation matches it."
         return s
@@ -140,20 +145,86 @@ extension Briefs {
         var names: [String] = []
         for p in (e.attendees ?? []) + [e.organizer].compactMap({ $0 })
         where !p.isCurrentUser && p.participantStatus != .declined && ![.room, .resource, .group].contains(p.participantType) {
-            if let n = displayName(p), !names.contains(where: { $0.caseInsensitiveCompare(n) == .orderedSame }) { names.append(n) }
+            if let n = displayName(p), !You.matches(n), !names.contains(where: { $0.caseInsensitiveCompare(n) == .orderedSame }) { names.append(n) }
         }
         return CalendarEventRef(id: e.calendarItemExternalIdentifier ?? e.eventIdentifier, title: e.title ?? "", start: e.startDate, end: e.endDate,
                                 attendees: Array(names.prefix(12)), location: e.location, calendarID: e.calendar?.calendarIdentifier)
     }
 
     /// A participant's name, or one made from their address: maya.chen@… → Maya Chen.
-    private static func displayName(_ p: EKParticipant) -> String? {
+    static func displayName(_ p: EKParticipant) -> String? {
         if let n = p.name?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty, !n.contains("@") { return n }
         let address = p.url.absoluteString.replacingOccurrences(of: "mailto:", with: "")
         guard let local = address.split(separator: "@").first, !local.isEmpty else { return nil }
         let parts = local.split { $0 == "." || $0 == "_" || $0 == "-" }.filter { $0.allSatisfy(\.isLetter) }
         guard !parts.isEmpty else { return nil }
         return parts.map { $0.prefix(1).uppercased() + $0.dropFirst().lowercased() }.joined(separator: " ")
+    }
+}
+
+/// Who the user is, so the reader can tell their voice from the people they talk to: the
+/// name typed in Settings, else the one their calendar's invitations know them by.
+enum You {
+    /// Every name you go by, the main one first; empty when nothing is known.
+    static var names: [String] {
+        let typed = Prefs.yourName.split(separator: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if !typed.isEmpty { return typed }
+        let learned = Prefs.calendarName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return learned.isEmpty ? [] : [learned]
+    }
+
+    static var name: String? { names.first }
+
+    /// A name that is you: one of yours, or a first name alone that begins one of yours
+    /// ("Maya" for Maya Chen, never "Maya Patel").
+    static func matches(_ s: String) -> Bool {
+        let n = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !n.isEmpty else { return false }
+        return names.contains { mine in
+            let m = mine.lowercased()
+            return n == m || (!n.contains(" ") && m.split(separator: " ").first.map(String.init) == n)
+        }
+    }
+
+    /// The calendar's name for you: the participant it marks as you in the events of the last
+    /// month and the next two weeks, the commonest (one made from an address only when no
+    /// event gives a real name). Nothing changes when no event says.
+    static func learn() {
+        guard Briefs.calendarAllowed else { return }
+        let now = Date()
+        var real: [String: Int] = [:], made: [String: Int] = [:]
+        for e in Planner.events(from: now.addingTimeInterval(-30 * 86400), to: now.addingTimeInterval(14 * 86400)) {
+            guard let p = ((e.attendees ?? []) + [e.organizer].compactMap({ $0 })).first(where: \.isCurrentUser) else { continue }
+            if let n = p.name?.trimmingCharacters(in: .whitespacesAndNewlines), !n.isEmpty, !n.contains("@") {
+                real[n, default: 0] += 1
+            } else if let n = Briefs.displayName(p) {
+                made[n, default: 0] += 1
+            }
+        }
+        let tally = real.isEmpty ? made : real
+        if let best = tally.sorted(by: { ($0.value, $1.key) > ($1.value, $0.key) }).first?.key, best != Prefs.calendarName {
+            Prefs.calendarName = best
+        }
+    }
+
+    /// What the reader is told about the user's own voice: who they are, that it is almost
+    /// always one of the labels, which one when a voice is far the loudest (the wearer's,
+    /// nearest the microphone), and never to give it anyone else's name.
+    static func hint(speakers: Int, wearer: Int?) -> String {
+        let all = names
+        var s: [String] = []
+        if let n = all.first {
+            let aka = all.dropFirst()
+            s.append("The user, who made the recording and wears the recorder, is \(n)\(aka.isEmpty ? "" : " (also called \(aka.joined(separator: ", ")))");"
+                     + " they are \"you\" in everything you write and never one of the people.")
+        }
+        guard speakers > 1 else { return s.joined(separator: " ") }
+        var voice = "The user's voice is almost always one of the Speaker labels"
+        if let w = wearer { voice += "; Speaker \(w + 1)'s voice is much the loudest, as the wearer's is, so Speaker \(w + 1) is very likely the user" }
+        s.append(voice + ".")
+        s.append(all.first.map { "Give the user's label the name \($0) when the conversation shows which label is theirs, and never give the user's voice anyone else's name." }
+                 ?? "Never give the user's voice anyone else's name; leave their label unnamed.")
+        return s.joined(separator: " ")
     }
 }
 
@@ -182,7 +253,7 @@ struct MomentEventLine: View {
 
     private var line: String {
         let time = event.start.formatted(date: .omitted, time: .shortened) + "–" + event.end.formatted(date: .omitted, time: .shortened)
-        return "In your calendar · \(time)" + (event.attendees.isEmpty ? "" : " · invited: " + event.attendees.prefix(4).joined(separator: ", "))
+        return "In your calendar · \(time)" + (event.others.isEmpty ? "" : " · invited: " + event.others.prefix(4).joined(separator: ", "))
     }
 }
 

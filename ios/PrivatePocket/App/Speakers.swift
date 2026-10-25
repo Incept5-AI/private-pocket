@@ -1,3 +1,5 @@
+import Accelerate
+import AVFoundation
 import Foundation
 
 /// A transcript with word times, so it can be split by speaker.
@@ -72,6 +74,41 @@ enum Speakers {
     }
 
     static func count(_ turns: [Turn]) -> Int { Set(turns.map(\.speaker)).count }
+
+    /// How loud each voice is on the recording: the median level, in dB, of the half seconds
+    /// of its turns that hold sound, for voices heard for five seconds or more. The wearer's,
+    /// nearest the microphone, is usually far the loudest.
+    static func levels(url: URL, turns: [Turn]) -> [Int: Double] {
+        guard !turns.isEmpty, let file = try? AVAudioFile(forReading: url) else { return [:] }
+        let rate = file.processingFormat.sampleRate
+        let per = AVAudioFrameCount(rate / 2)
+        guard per > 0, let buf = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: per) else { return [:] }
+        let sorted = turns.sorted { $0.start < $1.start }
+        var heard: [Int: [Double]] = [:]
+        var t = 0.0, i = 0
+        while true {
+            do { try file.read(into: buf, frameCount: per) } catch { break }
+            let n = Int(buf.frameLength)
+            guard n > 0, let ch = buf.floatChannelData?[0] else { break }
+            let mid = t + Double(n) / rate / 2
+            t += Double(n) / rate
+            while i < sorted.count, sorted[i].end < mid { i += 1 }
+            guard i < sorted.count, sorted[i].start <= mid else { continue }
+            var power: Float = 0
+            vDSP_measqv(ch, 1, &power, vDSP_Length(n))
+            let db = 10 * log10(Double(power) + 1e-12)
+            if db > -55 { heard[sorted[i].speaker, default: []].append(db) }
+        }
+        return heard.compactMapValues { v in v.count >= 10 ? v.sorted()[v.count / 2] : nil }
+    }
+
+    /// The voice louder than every other by `gap` dB, which is the wearer's, or nil: a
+    /// recorder lying between people hears no one that much nearer.
+    static func wearer(_ levels: [Int: Double], gap: Double = 6) -> Int? {
+        let ranked = levels.sorted { $0.value > $1.value }
+        guard ranked.count > 1, ranked[0].value - ranked[1].value >= gap else { return nil }
+        return ranked[0].key
+    }
 
     static func name(_ speaker: Int, _ names: [String: String]?) -> String {
         names?[String(speaker)].flatMap { $0.isEmpty ? nil : $0 } ?? "Speaker \(speaker + 1)"

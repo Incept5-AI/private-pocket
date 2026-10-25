@@ -275,6 +275,19 @@ enum Prefs {
         set { UserDefaults.standard.set(Array(newValue).sorted(), forKey: "excludedCalendars") }
     }
 
+    /// Your name as typed in Settings, with what people call you after commas ("Maya Chen,
+    /// May"); wins over the calendar's. Read from anywhere.
+    static var yourName: String {
+        get { UserDefaults.standard.string(forKey: "yourName") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "yourName") }
+    }
+
+    /// The name your calendar's invitations know you by, learned from them (`You.learn`).
+    static var calendarName: String {
+        get { UserDefaults.standard.string(forKey: "calendarName") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "calendarName") }
+    }
+
     /// Briefs before meetings: asked for the calendar once, on Now.
     @MainActor static var askedBriefs: Bool {
         get { UserDefaults.standard.bool(forKey: "askedBriefs") }

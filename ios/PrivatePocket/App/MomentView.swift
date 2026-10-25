@@ -30,7 +30,14 @@ struct MomentView: View {
     private func invitees(_ r: Recording) -> [String] {
         let used = Set((r.meta.speakerNames ?? [:]).values.map { $0.lowercased() })
         guard let e = r.meta.event, e.isReadable else { return [] }
-        return Array(e.attendees.filter { !used.contains($0.lowercased()) }.prefix(4))
+        return Array(e.others.filter { !used.contains($0.lowercased()) }.prefix(4))
+    }
+
+    /// Your name, offered first when naming a speaker, unless another speaker already has it.
+    private func yourName(_ r: Recording, for speaker: Int?) -> String? {
+        guard let n = You.name else { return nil }
+        let taken = (r.meta.speakerNames ?? [:]).contains { $0.key != speaker.map(String.init) && You.matches($0.value) }
+        return taken ? nil : n
     }
 
     var body: some View {
@@ -121,12 +128,15 @@ struct MomentView: View {
             .alert("Name this speaker", isPresented: Binding(get: { renamingSpeaker != nil }, set: { if !$0 { renamingSpeaker = nil } })) {
                 TextField(renamingSpeaker.map { "Speaker \($0 + 1)" } ?? "", text: $newName)
                 Button("Save") { if let i = renamingSpeaker { model.renameSpeaker(r, speaker: i, to: newName) } }
+                if let me = yourName(r, for: renamingSpeaker) {
+                    Button("That's me") { if let i = renamingSpeaker { model.renameSpeaker(r, speaker: i, to: me) } }
+                }
                 ForEach(invitees(r), id: \.self) { name in
                     Button(name) { if let i = renamingSpeaker { model.renameSpeaker(r, speaker: i, to: name) } }
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                if let e = r.meta.event, e.isReadable, !e.attendees.isEmpty {
+                if let e = r.meta.event, e.isReadable, !e.others.isEmpty {
                     Text("Invited to \(e.title.isEmpty ? "the event" : e.title): pick a name, or type one.")
                 } else {
                     Text("Used wherever this moment names them.")

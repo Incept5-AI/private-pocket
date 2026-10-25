@@ -88,6 +88,8 @@ struct RecordingMeta: Codable, Hashable {
     var turns: [Turn]?
     /// Names given to speakers, keyed by speaker number ("0", "1"…).
     var speakerNames: [String: String]?
+    /// The speakers you named yourself, which a reading never renames.
+    var speakersNamedByHand: [String]?
     var speakersError: String?
     var downloadedAt = Date()
     var transcript: String?

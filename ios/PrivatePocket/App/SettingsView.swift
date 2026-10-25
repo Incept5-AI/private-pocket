@@ -28,6 +28,7 @@ struct SettingsView: View {
     @State private var autoReminders = Prefs.autoReminders
     @State private var autoCalendar = Prefs.autoCalendar
     @State private var calendarsLine = ""
+    @State private var yourName = Prefs.yourName
     @AppStorage("sttModel") private var sttModel = RemoteSTT.defaultModel
 
     var body: some View {
@@ -137,8 +138,14 @@ struct SettingsView: View {
                         }
                     }
                     .onAppear { calendarsLine = CalendarsView.summary() }
+                    LabeledContent("Your name") {
+                        TextField(Prefs.calendarName.isEmpty ? "Your name" : Prefs.calendarName, text: $yourName)
+                            .multilineTextAlignment(.trailing)
+                            .textContentType(.name)
+                            .onChange(of: yourName) { Prefs.yourName = yourName }
+                    }
                 } header: { Text("Calendar") } footer: {
-                    Text("The brief before a meeting, and naming who spoke in a moment recorded during one, read only the calendars switched on here. Dates from moments still go to your default calendar.")
+                    Text("The brief before a meeting, and naming who spoke in a moment recorded during one, read only the calendars switched on here. Dates from moments still go to your default calendar. Your name comes from your invitations unless you type one; add what people call you after a comma. It tells your voice from the others', so yours is never given someone else's name.")
                 }
 
                 Section {

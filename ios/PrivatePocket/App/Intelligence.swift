@@ -112,7 +112,7 @@ struct MomentInsight: Codable, Hashable {
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 7
+    static let readerVersion = 8
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -230,6 +230,8 @@ struct DraftSpeaker {
     var label: String
     @Guide(description: "That person's name, if the conversation reveals it; empty if not")
     var name: String
+    @Guide(description: "The words from the transcript that show it, verbatim, ten words or fewer")
+    var evidence: String
 }
 
 @Generable
@@ -260,7 +262,7 @@ struct InsightDraft {
 private struct Draft: Decodable {
     struct Sentence: Decodable { var text: String?; var quote: String? }
     struct Item: Decodable { var kind: String?; var text: String?; var who: String?; var place: String?; var when: String?; var quote: String?; var sure: Bool? }
-    struct Speaker: Decodable { var label: String?; var name: String? }
+    struct Speaker: Decodable { var label: String?; var name: String?; var evidence: String? }
     var kind: String?
     var title: String?
     var brief: [Sentence]?
@@ -318,9 +320,9 @@ private struct Draft: Decodable {
         keyLines = list(o["keyLines"])
         people = list(o["people"])
         if let a = o["speakers"] as? [Any] {
-            speakers = a.compactMap { e in (e as? [String: Any]).map { Speaker(label: text($0["label"]), name: text($0["name"])) } }
+            speakers = a.compactMap { e in (e as? [String: Any]).map { Speaker(label: text($0["label"]), name: text($0["name"]), evidence: text($0["evidence"])) } }
         } else if let d = o["speakers"] as? [String: Any] {
-            speakers = d.map { Speaker(label: $0.key, name: text($0.value)) }
+            speakers = d.map { Speaker(label: $0.key, name: text($0.value), evidence: nil) }
         }
         decisions = list(o["decisions"])
         questions = list(o["questions"])
@@ -334,7 +336,7 @@ private struct Draft: Decodable {
         next = d.next.map { Item(kind: $0.kind, text: $0.text, who: $0.who, place: $0.place, when: $0.when, quote: $0.quote, sure: $0.sure) }
         keyLines = d.keyLines
         people = d.people
-        speakers = d.speakers.map { Speaker(label: $0.label, name: $0.name) }
+        speakers = d.speakers.map { Speaker(label: $0.label, name: $0.name, evidence: $0.evidence) }
         decisions = d.decisions
         questions = d.questions
         figures = d.figures
@@ -350,7 +352,8 @@ enum Analyst {
     You read the transcript of one recorded conversation, phone call or voice note, and give back what a good assistant would after sitting in the room. \
     Use only what is in the text; never invent names, dates or tasks. Write in the transcript's language, except the kind. \
     The user is the person who made the recording: address them as "you". \
-    Speaker labels like Speaker 1 are not names and are never people; if the conversation reveals a label's name, give it under speakers. \
+    Speaker labels like Speaker 1 are not names and are never people; if the conversation reveals a label's name, give it under speakers with the words that show it. \
+    A name said to someone belongs to the one spoken to, not the one speaking: when Speaker 1 says "Thanks, Ravi", Speaker 1 is not Ravi. \
     Write each action as a short imperative without naming who does it; things other people said they would do are promises, not actions. \
     Title each date the way it should appear in a calendar: what it is and with whom or where, specific to this conversation, with the date and time kept out of the title and given under when. \
     Note what was decided. List only the questions still unanswered when the conversation ended. \
@@ -358,18 +361,20 @@ enum Analyst {
     For every item and every sentence of the brief, quote the exact words from the transcript it rests on, verbatim, ten words or fewer.
     """
 
-    /// The whole transcript, in parts if it is long, merged into one reading.
-    static func analyse(_ r: Recording, config c: LLMConfig) async throws -> MomentInsight {
+    /// The whole transcript, in parts if it is long, merged into one reading. `wearer` is the
+    /// voice far the loudest (`Speakers.wearer`), very likely the user's.
+    static func analyse(_ r: Recording, config c: LLMConfig, wearer: Int? = nil) async throws -> MomentInsight {
         guard let text = r.transcriptForModel?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             throw AIError.emptyTranscript
         }
         let context = ((r.meta.context?.hint).map { $0.isEmpty ? "" : $0 + " " } ?? "") + (r.meta.event.map { $0.hint + " " } ?? "")
-        let hint = (r.isCall ? "The recorder's switch was on call, so this is a phone call. " : "") + context
+        let you = r.meta.sampleID == nil ? You.hint(speakers: Speakers.count(r.meta.turns ?? []), wearer: wearer) : ""   // you are not in the samples
+        let hint = (r.isCall ? "The recorder's switch was on call, so this is a phone call. " : "") + (you.isEmpty ? "" : you + " ") + context
         var drafts: [Draft] = []
         for chunk in Summariser.split(text, max: c.chunkChars).prefix(6) {
             drafts.append(try await draft(c, prompt: "\(hint)Transcript:\n\n\(chunk)"))
         }
-        return merge(drafts, for: r)
+        return merge(drafts, for: r, wearer: wearer)
     }
 
     /// The reader on a conversation still being spoken: the items and decisions so far,
@@ -399,7 +404,8 @@ enum Analyst {
             "\"kind\" (one of business_call, personal_call, business_meeting, personal_meeting, note, other); \"title\" (a string); " +
             "\"brief\" (an array of {\"text\", \"quote\"}); \"next\" (an array of {\"kind\": action|date|promise, \"text\", \"who\", \"place\", \"when\", \"quote\", " +
             "\"sure\": true only when it was said plainly as something that will be done, with enough detail to act on}); " +
-            "\"keyLines\" (an array of strings); \"people\" (an array of strings); \"speakers\" (an array of {\"label\", \"name\"}); " +
+            "\"keyLines\" (an array of strings); \"people\" (an array of strings); " +
+            "\"speakers\" (an array of {\"label\", \"name\", \"evidence\": the words from the transcript that show that label is that name, verbatim}); " +
             "\"decisions\" (an array of strings: what was decided); " +
             "\"questions\" (an array of strings: questions that still had no answer when the conversation ended, never ones answered later in it); " +
             "\"figures\" (an array of strings: amounts that matter, money, quantities or counts, each as the amount and what it is for, " +
@@ -412,7 +418,7 @@ enum Analyst {
 
     /// The kind by majority, the first title, the brief from the first part (and the
     /// end of the last), the lists joined without repeats, everything anchored.
-    private static func merge(_ drafts: [Draft], for r: Recording) -> MomentInsight {
+    private static func merge(_ drafts: [Draft], for r: Recording, wearer: Int?) -> MomentInsight {
         let words = r.meta.words ?? []
         func anchor(_ q: String?) -> Double? { q.flatMap { Anchor.find($0, in: words) } }
         func clean(_ s: String?) -> String { (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -434,8 +440,9 @@ enum Analyst {
         for d in drafts {
             for it in d.next ?? [] {
                 let text = unlabelled(clean(it.text))
-                guard !text.isEmpty, let kind = it.kind?.lowercased().trimmingCharacters(in: .whitespaces),
+                guard !text.isEmpty, var kind = it.kind?.lowercased().trimmingCharacters(in: .whitespaces),
                       ["action", "date", "promise"].contains(kind) else { continue }
+                if kind == "promise", You.matches(clean(it.who)) { kind = "action" }   // a promise you made is yours to do
                 let key = kind + "|" + text.lowercased().trimmingCharacters(in: .punctuationCharacters)
                 guard !seen.contains(key) else { continue }
                 seen.insert(key)
@@ -460,14 +467,15 @@ enum Analyst {
         out.figures = unique(drafts.flatMap { $0.figures ?? [] }, cap: 8)
         out.people = unique((drafts.flatMap { $0.people ?? [] } + out.people).filter(isPerson), cap: 10)
 
-        var inferred: [String: String] = [:]
+        var proposed: [ProposedName] = []
         for d in drafts {
             for s in d.speakers ?? [] {
                 let name = clean(s.name)
                 guard !name.isEmpty, !isLabel(name), let i = speakerIndex(clean(s.label)) else { continue }
-                inferred[String(i)] = inferred[String(i)] ?? name
+                proposed.append(ProposedName(label: i, name: name, evidence: clean(s.evidence).isEmpty ? nil : clean(s.evidence)))
             }
         }
+        let inferred = checkedSpeakers(proposed, turns: r.meta.turns ?? [], wearer: wearer, youSpeak: r.meta.sampleID == nil)
         out.inferredSpeakers = inferred.isEmpty ? nil : inferred
         out.source = "model"
         out.version = MomentInsight.readerVersion
@@ -497,6 +505,49 @@ enum Analyst {
         return t.prefix(1).uppercased() + t.dropFirst()
     }
 
+    struct ProposedName { var label: Int; var name: String; var evidence: String? }
+
+    /// The reader's speaker names, kept only where they hold up. Your own name, however
+    /// written, becomes the one you go by. A label that says the name itself is talking to
+    /// that person, unless it is introducing itself ("I'm Ravi", "Ravi here"). The wearer's
+    /// voice is never given anyone else's name, and of two voices, one is yours (`youSpeak`,
+    /// all but the samples): both named as others means one is wrong, so neither is kept. A
+    /// label keeps its first name, and a name given to two labels is given to neither.
+    static func checkedSpeakers(_ proposed: [ProposedName], turns: [Turn], wearer: Int?, youSpeak: Bool = true) -> [String: String] {
+        let voices = Speakers.count(turns)
+        guard voices > 1 else { return [:] }
+        var named: [Int: String] = [:]
+        for p in proposed where named[p.label] == nil && p.label < voices {
+            let yours = You.matches(p.name)
+            if let w = wearer, p.label == w, !yours { continue }
+            if let q = p.evidence, !evidenceHolds(p.name, quote: q, label: p.label, turns: turns) { continue }
+            named[p.label] = yours ? (You.name ?? p.name) : p.name
+        }
+        var labels: [String: [Int]] = [:]
+        for (l, n) in named { labels[n.lowercased(), default: []].append(l) }
+        for ls in labels.values where ls.count > 1 { for l in ls { named[l] = nil } }
+        if youSpeak, voices == 2, named.count == 2, You.name != nil, !named.values.contains(where: You.matches) { named = [:] }
+        return Dictionary(uniqueKeysWithValues: named.map { (String($0.key), $0.value) })
+    }
+
+    /// Whether the words given for a name hold against who said them: false only when the
+    /// label itself says the name without introducing itself; true when another voice says
+    /// it, the name is not in the words, or the words cannot be found in one voice.
+    static func evidenceHolds(_ name: String, quote: String, label: Int, turns: [Turn]) -> Bool {
+        let q = " " + plain(quote) + " "
+        guard q.count > 6 else { return true }
+        let said = Set(turns.filter { (" " + plain($0.text) + " ").contains(q) }.map(\.speaker))
+        guard said == [label], let first = plain(name).split(separator: " ").first.map(String.init),
+              q.contains(" \(first) ") else { return true }
+        let intro = ["i m", "im", "i am", "this is", "my name is", "it s", "its", "call me"].contains { q.contains(" \($0) \(first) ") }
+        return intro || ["here", "speaking"].contains { q.contains(" \(first) \($0) ") }
+    }
+
+    /// Lower case letters and digits, one space between words: "Thanks, Ravi!" → "thanks ravi".
+    private static func plain(_ s: String) -> String {
+        String(s.lowercased().map { $0.isLetter || $0.isNumber ? $0 : " " }).split(separator: " ").joined(separator: " ")
+    }
+
     /// "Speaker 2" → 1, the index `speakerNames` is keyed by.
     static func speakerIndex(_ label: String) -> Int? {
         let digits = label.drop { !$0.isNumber }.prefix { $0.isNumber }
@@ -524,7 +575,7 @@ enum Analyst {
     static func isPerson(_ s: String) -> Bool {
         let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let f = t.first, f.isUppercase, !isLabel(t) else { return false }
-        return !selfWords.contains(t.lowercased())
+        return !selfWords.contains(t.lowercased()) && !You.matches(t)
     }
 
     /// Who an item names, with the user and labels taken out: "Ravi and Recorder" is Ravi.
