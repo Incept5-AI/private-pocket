@@ -106,13 +106,15 @@ struct MomentInsight: Codable, Hashable {
     var keyLines: [Anchored]?
     /// Speaker names the conversation revealed, keyed like `speakerNames` ("0", "1"…).
     var inferredSpeakers: [String: String]?
+    /// Which of those are only the reader's best guess, shown with a question mark.
+    var guessedSpeakers: [String]?
     /// What was decided, what was asked and left open, and the figures that came up.
     var decisions: [String]?
     var questions: [String]?
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 11
+    static let readerVersion = 12
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -140,7 +142,7 @@ extension Recording {
     /// first thing that was said.
     var quote: String {
         if let t = meta.title, !t.isEmpty { return t }
-        if let t = meta.insight?.title, !t.isEmpty { return t }
+        if let t = readTitle ?? meta.insight?.title, !t.isEmpty { return t }
         if let s = firstSentence { return "“\(s)”" }
         return meta.transcript == nil ? "Not transcribed yet" : (meta.place?.name ?? "Untitled")
     }
@@ -169,6 +171,14 @@ extension Recording {
             if let c = PeopleNames.canonical(Invitation.spelling(n, invited)), seen.insert(c.lowercased()).inserted { out.append(c) }
         }
         return out
+    }
+
+    /// A speaker's name that is only the reader's guess: not given by you, not shown by the
+    /// conversation, and not changed since.
+    func speakerGuessed(_ i: Int) -> Bool {
+        let k = String(i)
+        guard let n = meta.speakerNames?[k], !n.isEmpty, !(meta.speakersNamedByHand ?? []).contains(k) else { return false }
+        return meta.insight?.guessedSpeakers?.contains(k) == true && meta.insight?.inferredSpeakers?[k] == n
     }
 
     /// Who the moment's calendar event invited, while its calendar is read.
@@ -278,6 +288,8 @@ struct DraftSpeaker {
     var name: String
     @Guide(description: "The words from the transcript that show it, verbatim, ten words or fewer")
     var evidence: String
+    @Guide(description: "true only when the conversation shows it: they are addressed by name and answer, or are introduced; false for a best guess")
+    var sure: Bool
 }
 
 @Generable
@@ -294,7 +306,7 @@ struct InsightDraft {
     var keyLines: [String]
     @Guide(description: "Names of the people who took part or were talked about; never labels like Speaker 1")
     var people: [String]
-    @Guide(description: "For each Speaker label the conversation lets you name, the label, the name and the words that show it; empty if none")
+    @Guide(description: "For each Speaker label, the person it most likely is, the words that show it and whether that is sure; empty if there are no labels")
     var speakers: [DraftSpeaker]
     @Guide(description: "Decisions made, each one short sentence; empty if none")
     var decisions: [String]
@@ -308,7 +320,7 @@ struct InsightDraft {
 private struct Draft: Decodable {
     struct Sentence: Decodable { var text: String?; var quote: String? }
     struct Item: Decodable { var kind: String?; var text: String?; var who: String?; var place: String?; var when: String?; var quote: String?; var sure: Bool? }
-    struct Speaker: Decodable { var label: String?; var name: String?; var evidence: String? }
+    struct Speaker: Decodable { var label: String?; var name: String?; var evidence: String?; var sure: Bool? }
     var kind: String?
     var title: String?
     var brief: [Sentence]?
@@ -368,14 +380,14 @@ private struct Draft: Decodable {
         keyLines = list(o["keyLines"])
         people = list(o["people"])
         if let a = o["speakers"] as? [Any] {
-            speakers = a.compactMap { e in (e as? [String: Any]).map { Speaker(label: text($0["label"]), name: text($0["name"]), evidence: text($0["evidence"])) } }
+            speakers = a.compactMap { e in (e as? [String: Any]).map { Speaker(label: text($0["label"]), name: text($0["name"]), evidence: text($0["evidence"]), sure: flag($0["sure"])) } }
             speakersForm = "a list of \(a.count)"
         } else if let d = o["speakers"] as? [String: Any] {
             // Keyed by label, with a name or an object as the value; or the other way round.
             speakers = d.map { key, value in
-                if let v = value as? [String: Any] { return Speaker(label: key, name: text(v["name"]), evidence: text(v["evidence"])) }
-                if let v = text(value), Analyst.speakerIndex(key) == nil, Analyst.speakerIndex(v) != nil { return Speaker(label: v, name: key, evidence: nil) }
-                return Speaker(label: key, name: text(value), evidence: nil)
+                if let v = value as? [String: Any] { return Speaker(label: key, name: text(v["name"]), evidence: text(v["evidence"]), sure: flag(v["sure"])) }
+                if let v = text(value), Analyst.speakerIndex(key) == nil, Analyst.speakerIndex(v) != nil { return Speaker(label: v, name: key, evidence: nil, sure: nil) }
+                return Speaker(label: key, name: text(value), evidence: nil, sure: nil)
             }
             speakersForm = "a map of \(d.count)"
         } else if o["speakers"] != nil {
@@ -393,7 +405,7 @@ private struct Draft: Decodable {
         next = d.next.map { Item(kind: $0.kind, text: $0.text, who: $0.who, place: $0.place, when: $0.when, quote: $0.quote, sure: $0.sure) }
         keyLines = d.keyLines
         people = d.people
-        speakers = d.speakers.map { Speaker(label: $0.label, name: $0.name, evidence: $0.evidence) }
+        speakers = d.speakers.map { Speaker(label: $0.label, name: $0.name, evidence: $0.evidence, sure: $0.sure) }
         speakersForm = "a list of \(d.speakers.count)"
         decisions = d.decisions
         questions = d.questions
@@ -410,8 +422,9 @@ enum Analyst {
     You read the transcript of one recorded conversation, phone call or voice note, and give back what a good assistant would after sitting in the room. \
     Use only what is in the text; never invent names, dates or tasks. Write in the transcript's language, except the kind. \
     The user is the person who made the recording: address them as "you". \
-    Speaker labels like Speaker 1 are not names and are never people. Under speakers, name every label the conversation lets you tell, with the words that show it: \
-    someone addressed by name usually answers next, people introduce themselves or are introduced, and what a voice says of its own work can fit one person only. \
+    Speaker labels like Speaker 1 are not names and are never people. Under speakers, give every label the person it most likely is, with the words that show it, \
+    and sure true only when the conversation shows it (they are addressed by name and answer, or are introduced), sure false when it is your best guess: \
+    someone addressed by name usually answers next, and what a voice says of its own work can fit one person only. \
     A name said to someone belongs to the one spoken to, not the one speaking: when Speaker 1 says "Thanks, Ravi", Speaker 1 is not Ravi. \
     Write each action as a short imperative without naming who does it; things other people said they would do are promises, not actions. \
     Title each date the way it should appear in a calendar: what it is and with whom or where, specific to this conversation, with the date and time kept out of the title and given under when. \
@@ -470,7 +483,8 @@ enum Analyst {
             "\"brief\" (an array of {\"text\", \"quote\"}); \"next\" (an array of {\"kind\": action|date|promise, \"text\", \"who\", \"place\", \"when\", \"quote\", " +
             "\"sure\": true only when it was said plainly as something that will be done, with enough detail to act on}); " +
             "\"keyLines\" (an array of strings); \"people\" (an array of strings); " +
-            "\"speakers\" (an array of {\"label\", \"name\", \"evidence\": the words from the transcript that show that label is that name, verbatim}); " +
+            "\"speakers\" (an array of {\"label\", \"name\": the person that label most likely is, \"evidence\": the words from the transcript that show it, verbatim, " +
+            "\"sure\": true only when they are addressed by name and answer or are introduced, false for a best guess}); " +
             "\"decisions\" (an array of strings: what was decided); " +
             "\"questions\" (an array of strings: questions that still had no answer when the conversation ended, never ones answered later in it); " +
             "\"figures\" (an array of strings: amounts that matter, money, quantities or counts, each as the amount and what it is for, " +
@@ -542,11 +556,12 @@ enum Analyst {
                     notes.append(name.isEmpty ? "one without a name" : isLabel(name) ? "one named as a label" : "one without a label")
                     continue
                 }
-                proposed.append(ProposedName(label: i, name: name, evidence: clean(s.evidence).isEmpty ? nil : clean(s.evidence)))
+                proposed.append(ProposedName(label: i, name: name, evidence: clean(s.evidence).isEmpty ? nil : clean(s.evidence), sure: s.sure ?? false))
             }
         }
-        let inferred = checkedSpeakers(proposed, turns: r.meta.turns ?? [], wearer: wearer, youSpeak: r.meta.sampleID == nil, notes: &notes)
-        out.inferredSpeakers = inferred.isEmpty ? nil : inferred
+        let checked = checkedSpeakers(proposed, turns: r.meta.turns ?? [], wearer: wearer, youSpeak: r.meta.sampleID == nil, notes: &notes)
+        out.inferredSpeakers = checked.names.isEmpty ? nil : checked.names
+        out.guessedSpeakers = checked.guessed.isEmpty ? nil : checked.guessed
         out.source = "model"
         out.version = MomentInsight.readerVersion
         return out
@@ -575,25 +590,28 @@ enum Analyst {
         return t.prefix(1).uppercased() + t.dropFirst()
     }
 
-    struct ProposedName { var label: Int; var name: String; var evidence: String? }
+    struct ProposedName { var label: Int; var name: String; var evidence: String?; var sure = false }
 
     /// The reader's speaker names, kept only where they hold up. Your own name, however
     /// written, becomes the one you go by. A label that says the name itself is talking to
     /// that person, unless it is introducing itself ("I'm Ravi", "Ravi here"). The wearer's
     /// voice is never given anyone else's name, and of two voices, one is yours (`youSpeak`,
     /// all but the samples): both named as others means one is wrong, so neither is kept. A
-    /// label keeps its first name, and a name given to two labels is given to neither.
+    /// label keeps its first name, and a name given to two labels is given to neither,
+    /// unless one of them is sure.
     static func checkedSpeakers(_ proposed: [ProposedName], turns: [Turn], wearer: Int?, youSpeak: Bool = true) -> [String: String] {
         var notes: [String] = []
-        return checkedSpeakers(proposed, turns: turns, wearer: wearer, youSpeak: youSpeak, notes: &notes)
+        return checkedSpeakers(proposed, turns: turns, wearer: wearer, youSpeak: youSpeak, notes: &notes).names
     }
 
     /// The same, with what became of each name for the log ("Speaker 3 dropped: says the
     /// name itself"): labels and reasons, never the names.
-    static func checkedSpeakers(_ proposed: [ProposedName], turns: [Turn], wearer: Int?, youSpeak: Bool, notes: inout [String]) -> [String: String] {
+    static func checkedSpeakers(_ proposed: [ProposedName], turns: [Turn], wearer: Int?, youSpeak: Bool,
+                                notes: inout [String]) -> (names: [String: String], guessed: [String]) {
         let voices = Speakers.count(turns)
-        guard voices > 1 else { return [:] }
+        guard voices > 1 else { return ([:], []) }
         var named: [Int: String] = [:]
+        var sure: Set<Int> = []
         for p in proposed {
             let who = "Speaker \(p.label + 1)"
             guard p.label < voices else { notes.append("\(who) dropped: no such voice"); continue }
@@ -602,21 +620,26 @@ enum Analyst {
             if let w = wearer, p.label == w, !yours { notes.append("\(who) dropped: the wearer is you"); continue }
             if let q = p.evidence, !evidenceHolds(p.name, quote: q, label: p.label, turns: turns) { notes.append("\(who) dropped: says the name itself"); continue }
             named[p.label] = yours ? (You.name ?? p.name) : p.name
+            if p.sure { sure.insert(p.label) }
             let said = p.evidence.map { voicesSaying($0, in: turns).sorted().map { "Speaker \($0 + 1)" } } ?? []
             let words = p.evidence == nil ? "no words given" : said.isEmpty ? "words not found" : "words said by " + said.joined(separator: ", ")
-            notes.append("\(who) kept\(yours ? " as you" : ""), \(words)")
+            notes.append("\(who) kept\(yours ? " as you" : "")\(p.sure ? "" : " as a guess"), \(words)")
         }
         var labels: [String: [Int]] = [:]
         for (l, n) in named { labels[n.lowercased(), default: []].append(l) }
         for ls in labels.values where ls.count > 1 {
-            for l in ls { named[l] = nil }
-            notes.append(ls.sorted().map { "Speaker \($0 + 1)" }.joined(separator: " and ") + " dropped: the same name")
+            let sureOnes = ls.filter(sure.contains)
+            let keep = sureOnes.count == 1 ? sureOnes[0] : nil
+            let dropped = ls.filter { $0 != keep }.sorted()
+            for l in dropped { named[l] = nil }
+            notes.append(dropped.map { "Speaker \($0 + 1)" }.joined(separator: " and ") + " dropped: the same name" + (keep == nil ? "" : " as a sure one"))
         }
         if youSpeak, voices == 2, named.count == 2, You.name != nil, !named.values.contains(where: You.matches) {
             named = [:]
             notes.append("both dropped: two voices, neither you")
         }
-        return Dictionary(uniqueKeysWithValues: named.map { (String($0.key), $0.value) })
+        return (Dictionary(uniqueKeysWithValues: named.map { (String($0.key), $0.value) }),
+                named.keys.filter { !sure.contains($0) }.sorted().map(String.init))
     }
 
     /// The voices whose turns hold these words.

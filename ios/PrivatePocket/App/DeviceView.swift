@@ -47,6 +47,17 @@ struct RootView: View {
             }
             .animation(.easeInOut(duration: 0.25), value: model.aiError)
         }
+        // A moment being transcribed or read: the Dynamic Island, widened, while the app is open.
+        .overlay(alignment: .top) {
+            if let w = model.workNow, !splash {
+                WorkPill(work: w) {
+                    tab = 0
+                    model.openMomentID = w.id
+                }
+                .transition(.scale(scale: 0.5, anchor: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(duration: 0.45), value: model.workNow?.id)
         // While it records, the whole screen: rises out of the Dynamic Island at the start,
         // and again when the app opens during a recording.
         .overlay {

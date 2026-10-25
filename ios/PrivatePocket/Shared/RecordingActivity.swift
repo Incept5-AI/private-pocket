@@ -51,9 +51,11 @@ struct RecordingAttributes: ActivityAttributes {
 
         /// While it works: a swell travelling along the bars, a step each update, which the
         /// island animates between. 0…1, like the waveform.
-        func swell(_ n: Int) -> [Float] {
+        func swell(_ n: Int) -> [Float] { Self.swell(n, at: Double(beat ?? 0)) }
+
+        /// The swell at any point of its travel, for the app to draw it continuously.
+        static func swell(_ n: Int, at b: Double) -> [Float] {
             let length = max(5, Double(n) * 0.45)
-            let b = Double(beat ?? 0)
             return (0..<n).map { i in
                 let c = 0.5 + 0.5 * cos(2 * .pi * (Double(i) / length) - b * 0.9)
                 return Float(0.2 + 0.7 * c * c)

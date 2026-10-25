@@ -122,9 +122,9 @@ struct CalendarEventRef: Codable, Hashable {
         var s = "This was recorded during the calendar event \"\(title)\""
         s += others.isEmpty ? "." : ", to which \(others.joined(separator: ", ")) \(others.count == 1 ? "was" : "were") invited besides the user."
         if !others.isEmpty {
-            s += " They and the user are the likely speakers. Name each Speaker label the conversation lets you tell"
-            s += " (another speaker addresses them by name and they answer, they introduce themselves, or what they say of their own work fits one of them),"
-            s += " spelled as in the invitation; never name a speaker from the invitation alone, and never give an invitee's name to the user's voice."
+            s += " They and the user are the likely speakers. Give each Speaker label the one of them it most likely is, spelled as in the invitation,"
+            s += " sure only when the conversation shows it (another speaker addresses them by name and they answer, or they introduce themselves);"
+            s += " never give an invitee's name to the user's voice."
         }
         s += " Use the event only where the conversation matches it."
         return s
@@ -225,7 +225,7 @@ enum You {
         if let n = all.first {
             let first = n.split(separator: " ").first.map(String.init) ?? n
             s.append("The user's label is the one others address as \(first) (speech to text may mishear it as a similar name), or the one left once the others are named;"
-                     + " give it the name \(n), and never give the user's voice anyone else's name.")
+                     + " give it the name \(n), and never give the user's voice anyone else's name or anyone else the user's.")
         } else {
             s.append("Never give the user's voice anyone else's name; leave their label unnamed.")
         }

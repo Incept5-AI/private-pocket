@@ -60,6 +60,10 @@ final class AppModel: ObservableObject {
     @Published var working: Set<String> = []   // recording ids being transcribed/summarised
     /// A moment to open, from a link in Reminders or Calendar; Now picks it up.
     @Published var openMomentID: String?
+    /// What the app is doing to a moment now, for the pill at the Dynamic Island while the app
+    /// is open (iOS keeps the app's own Live Activity out of the island then).
+    @Published private(set) var workNow: WorkNow?
+    struct WorkNow: Equatable { let id: String; let step: String; let title: String }
     /// The reader in the room: what has been said so far, while it is still being said.
     @Published var liveItems: [NextItem] = []
     @Published var liveDecisions: [String] = []
@@ -807,11 +811,27 @@ final class AppModel: ObservableObject {
     private func beginWork(_ step: RecordingActivity.Step, _ r: Recording) {
         islandWork.removeAll { $0.id == r.id }
         islandWork.append((r.id, step, r))
+        // Out of the app, iOS suspends it within seconds; this asks for the half minute or so
+        // it allows, so the work and the island carry on a little.
+        if backgroundWork == .invalid {
+            backgroundWork = UIApplication.shared.beginBackgroundTask(withName: "Reading moments") { [weak self] in self?.endBackgroundWork() }
+        }
         showWork()
+    }
+
+    private var backgroundWork: UIBackgroundTaskIdentifier = .invalid
+
+    private func endBackgroundWork() {
+        guard backgroundWork != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundWork)
+        backgroundWork = .invalid
     }
 
     private func showWork() {
         guard let w = islandWork.last else { return }
+        let now = WorkNow(id: w.id, step: w.step.rawValue, title: w.recording.displayTitle)
+        if now != workNow { link.note("working: \(now.step) \(w.recording.name)") }
+        workNow = now
         activity.showWorking(w.step, seconds: w.recording.meta.seconds, about: w.recording.displayTitle,
                              device: Prefs.islandPresence ? (connectedDevice ?? devices.selected) : nil)
     }
@@ -822,6 +842,8 @@ final class AppModel: ObservableObject {
         guard let i = islandWork.firstIndex(where: { $0.id == id }) else { return }
         let r = islandWork.remove(at: i).recording
         if !islandWork.isEmpty { showWork(); return }
+        workNow = nil
+        endBackgroundWork()
         if activity.lastSavedName == r.name {
             finishWorking(r)
         } else {
@@ -868,8 +890,10 @@ final class AppModel: ObservableObject {
         library.mutate(r.id) { m in
             var names = m.speakerNames ?? [:]
             names[String(speaker)] = n.isEmpty ? nil : n
-            m.speakerNames = names.isEmpty ? nil : names
             var mine = Set(m.speakersNamedByHand ?? [])
+            // The name moves here: another speaker that only had it as the reader's guess loses it.
+            for (k, v) in names where k != String(speaker) && !mine.contains(k) && !n.isEmpty && v.caseInsensitiveCompare(n) == .orderedSame { names[k] = nil }
+            m.speakerNames = names.isEmpty ? nil : names
             if n.isEmpty { mine.remove(String(speaker)) } else { mine.insert(String(speaker)) }
             m.speakersNamedByHand = mine.isEmpty ? nil : mine.sorted()
         }

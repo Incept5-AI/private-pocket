@@ -251,6 +251,45 @@ struct Breath: View {
 
 /// The takeover rising out of the Dynamic Island: a circle from the top centre that opens
 /// to the whole screen, and closes back into it.
+/// While the app is open, iOS keeps its own Live Activity out of the Dynamic Island, so the
+/// app draws the work there itself: the island widened into a black pill, the lilac swell
+/// moving on its left and the step on its right, as the compact Live Activity has them.
+/// Tap it for the moment. Without a Dynamic Island, a pill under the status bar.
+struct WorkPill: View {
+    let work: AppModel.WorkNow
+    let open: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        GeometryReader { g in
+            let island = g.safeAreaInsets.top > 55   // a notch leaves less room above the content
+            Button(action: open) {
+                HStack(spacing: 0) {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { t in
+                        LevelBars(levels: RecordingAttributes.ContentState.swell(5, at: t.date.timeIntervalSinceReferenceDate / 1.5),
+                                  ink: Brand.notice, gap: 1.5, count: 5)
+                    }
+                    .frame(width: 22, height: 15)
+                    Spacer(minLength: island ? 0 : 10)
+                    Text(work.step).font(.caption.weight(.bold)).foregroundStyle(Brand.notice)
+                        .lineLimit(1).minimumScaleFactor(0.6)
+                        .frame(width: island ? 60 : nil, alignment: .trailing)
+                }
+                .padding(.horizontal, 14)
+                .frame(width: island ? 270 : nil, height: 37)
+                .background(.black, in: Capsule())
+            }
+            .buttonStyle(.plain)
+            // Centred on the island itself: 11 points from the top of the screen, 37 high.
+            .position(x: g.size.width / 2, y: island ? 11 + 18.5 : g.safeAreaInsets.top + 4 + 18.5)
+        }
+        .ignoresSafeArea()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(work.step): \(work.title)")
+        .accessibilityHint("Opens the moment.")
+    }
+}
+
 struct IslandReveal: ViewModifier {
     let progress: CGFloat
 

@@ -309,6 +309,7 @@ struct MomentHeader: View {
                         ForEach(Array(faces.enumerated()), id: \.offset) { i, f in
                             let colour = Brand.speakers[(f.index ?? i) % Brand.speakers.count]
                             let unnamed = f.index != nil && (r.meta.speakerNames?[String(f.index!)] ?? "").isEmpty
+                            let guessed = f.index.map(r.speakerGuessed) ?? false
                             Button {
                                 if let idx = f.index { renameSpeaker(idx) }
                             } label: {
@@ -318,8 +319,9 @@ struct MomentHeader: View {
                                         .frame(width: 24, height: 24)
                                         .background(colour.opacity(0.22), in: Circle())
                                         .foregroundStyle(colour)
-                                    Text(f.name).font(.subheadline.weight(.medium)).foregroundStyle(unnamed ? Brand.muted : Brand.text)
+                                    Text(f.name).font(.subheadline.weight(.medium)).foregroundStyle(unnamed ? Brand.muted : guessed ? Brand.textSecondary : Brand.text)
                                     if unnamed { Image(systemName: "pencil").font(.caption2).foregroundStyle(Brand.dim) }
+                                    if guessed { Text("?").font(.subheadline.weight(.semibold)).foregroundStyle(Brand.dim) }
                                 }
                                 .padding(.trailing, 10).padding(.leading, 4).padding(.vertical, 4)
                                 .background(Brand.surface, in: Capsule())

@@ -22,9 +22,17 @@ struct Recording: Identifiable, Hashable {
         self.meta = meta
         startedAt = PocketTime.parse(name)
     }
-    /// The user's title, else the place, else the start time.
+    /// The user's title, else the reading's, else the place, else the start time.
     var displayTitle: String {
-        meta.title ?? meta.place?.name ?? startedAt?.formatted(date: .omitted, time: .shortened) ?? name
+        meta.title ?? readTitle ?? meta.place?.name ?? startedAt?.formatted(date: .omitted, time: .shortened) ?? name
+    }
+
+    /// The title a model's reading gave, without the tags a calendar title brings with it:
+    /// "[HOLD] Change requests" is "Change requests".
+    var readTitle: String? {
+        guard let i = meta.insight, i.readByModel, var t = i.title?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        while let r = t.range(of: #"^[\[(][^\])]{1,24}[\])]\s*"#, options: .regularExpression) { t.removeSubrange(r) }
+        return t.isEmpty ? nil : t
     }
     var size: Int { (try? audioURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0 }
     /// Made with the switch on call: the contact mic, with the card on the phone.
