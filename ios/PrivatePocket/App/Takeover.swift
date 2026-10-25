@@ -252,39 +252,33 @@ struct Breath: View {
 /// The takeover rising out of the Dynamic Island: a circle from the top centre that opens
 /// to the whole screen, and closes back into it.
 /// While the app is open, iOS keeps its own Live Activity out of the Dynamic Island, so the
-/// app draws the work there itself: the island widened into a black pill, the lilac swell
-/// moving on its left and the step on its right, as the compact Live Activity has them.
-/// Tap it for the moment. Without a Dynamic Island, a pill under the status bar.
-struct WorkPill: View {
+/// work shows above the tab bar instead, where iOS puts what is going on: the lilac swell
+/// drawn continuously, the step and the moment. Folded beside a shrunken tab bar, the swell
+/// and the step. Tap it for the moment.
+struct WorkAccessory: View {
     let work: AppModel.WorkNow
     let open: () -> Void
+    @Environment(\.tabViewBottomAccessoryPlacement) private var placement
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        GeometryReader { g in
-            let island = g.safeAreaInsets.top > 55   // a notch leaves less room above the content
-            Button(action: open) {
-                HStack(spacing: 0) {
-                    TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { t in
-                        LevelBars(levels: RecordingAttributes.ContentState.swell(5, at: t.date.timeIntervalSinceReferenceDate / 1.5),
-                                  ink: Brand.notice, gap: 1.5, count: 5)
-                    }
-                    .frame(width: 22, height: 15)
-                    Spacer(minLength: island ? 0 : 10)
-                    Text(work.step).font(.caption.weight(.bold)).foregroundStyle(Brand.notice)
-                        .lineLimit(1).minimumScaleFactor(0.6)
-                        .frame(width: island ? 60 : nil, alignment: .trailing)
+        Button(action: open) {
+            HStack(spacing: 10) {
+                TimelineView(.animation(minimumInterval: 1.0 / 30, paused: reduceMotion)) { t in
+                    LevelBars(levels: RecordingAttributes.ContentState.swell(5, at: t.date.timeIntervalSinceReferenceDate / 1.5),
+                              ink: Brand.notice, gap: 1.5, count: 5)
                 }
-                .padding(.horizontal, 14)
-                .frame(width: island ? 270 : nil, height: 37)
-                .background(.black, in: Capsule())
+                .frame(width: 22, height: 15)
+                Text(work.step).font(.subheadline.weight(.semibold)).foregroundStyle(Brand.notice).lineLimit(1)
+                if placement != .inline {
+                    Text(work.title).font(.subheadline).foregroundStyle(Brand.textSecondary).lineLimit(1)
+                }
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
-            // Centred on the island itself: 11 points from the top of the screen, 37 high.
-            .position(x: g.size.width / 2, y: island ? 11 + 18.5 : g.safeAreaInsets.top + 4 + 18.5)
+            .padding(.horizontal, 16)
+            .contentShape(Rectangle())
         }
-        .ignoresSafeArea()
-        .accessibilityElement(children: .combine)
+        .buttonStyle(.plain)
         .accessibilityLabel("\(work.step): \(work.title)")
         .accessibilityHint("Opens the moment.")
     }
