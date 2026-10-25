@@ -763,7 +763,9 @@ final class AppModel: ObservableObject {
         guard let r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
         working.insert(r.id)
         defer { working.remove(r.id) }
-        if activity.lastSavedName == r.name { activity.showWorking(.transcribing, seconds: r.meta.seconds) }
+        beginWork(.transcribing, r)
+        var handedOver = false   // to the reading, which ends the work in the island
+        defer { if !handedOver { endWork(r.id) } }
         let id = localeID ?? r.meta.locale ?? Prefs.transcriptionLocale
         // Who spoke when runs alongside the words; it only needs the audio.
         let url = r.audioURL
@@ -784,6 +786,10 @@ final class AppModel: ObservableObject {
                 m.speakersError = nil
                 if let segments { Self.applySpeakers(segments, to: &m) }
             }) else { return }   // deleted meanwhile
+            if LLM.availability == nil {
+                beginWork(.reading, saved)
+                handedOver = true
+            }
             Task { await self.analyse(saved, quiet: true) }
         } catch {
             speakers?.cancel()
@@ -792,7 +798,35 @@ final class AppModel: ObservableObject {
                                              : "This moment couldn't be transcribed on your iPhone. It's tried again on the next launch."
             }
             link.note("transcription failed for \(r.name): \(error.localizedDescription)")
-            if activity.lastSavedName == r.name { finishWorking(r) }
+        }
+    }
+
+    /// What the app is doing to moments now, the latest last: the Dynamic Island shows it.
+    private var islandWork: [(id: String, step: RecordingActivity.Step, recording: Recording)] = []
+
+    private func beginWork(_ step: RecordingActivity.Step, _ r: Recording) {
+        islandWork.removeAll { $0.id == r.id }
+        islandWork.append((r.id, step, r))
+        showWork()
+    }
+
+    private func showWork() {
+        guard let w = islandWork.last else { return }
+        activity.showWorking(w.step, seconds: w.recording.meta.seconds, about: w.recording.displayTitle,
+                             device: Prefs.islandPresence ? (connectedDevice ?? devices.selected) : nil)
+    }
+
+    /// A moment's work is over: the next one's, if any; Saved for the recording just stopped
+    /// (Read is shown by `analyse`); otherwise the Pocket again.
+    private func endWork(_ id: String) {
+        guard let i = islandWork.firstIndex(where: { $0.id == id }) else { return }
+        let r = islandWork.remove(at: i).recording
+        if !islandWork.isEmpty { showWork(); return }
+        if activity.lastSavedName == r.name {
+            finishWorking(r)
+        } else {
+            activity.workDone(connected: connectedDevice != nil && link.isReady, keepPresence: Prefs.islandPresence)
+            refreshPresence()
         }
     }
 
@@ -807,7 +841,8 @@ final class AppModel: ObservableObject {
     func findSpeakers(_ r: Recording) async {
         working.insert(r.id)
         defer { working.remove(r.id) }
-        if activity.lastSavedName == r.name { activity.showWorking(.voices, seconds: r.meta.seconds) }
+        beginWork(.voices, r)
+        defer { endWork(r.id) }
         let result: Result<[SpeakerSegment], Error>
         do {
             result = .success(try await Diarizer.diarize(try Data(contentsOf: r.audioURL), filename: r.audioURL.lastPathComponent))
@@ -882,15 +917,13 @@ final class AppModel: ObservableObject {
         // the first was still waiting for the server, and read it twice.
         guard beingRead.insert(r.id).inserted else { return }
         defer { beingRead.remove(r.id) }
+        let id = r.id
+        defer { endWork(id) }   // whatever way it ends
         await ServerStatus.shared.check()
         guard var r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
         working.insert(r.id)
         defer { working.remove(r.id) }
-        // The recording the island follows: Reading while the model reads it, and whatever
-        // way this ends without a reading to show (no model, a failure, deleted), Saved.
-        let followed = activity.lastSavedName == r.name
-        if followed, LLM.availability == nil { activity.showWorking(.reading, seconds: r.meta.seconds) }
-        defer { if followed, activity.lastSavedName == r.name { finishWorking(r) } }
+        if LLM.availability == nil { beginWork(.reading, r) }   // the island shows it while the model reads
         // The calendar event it happened in, if Calendar is allowed: the reader is told who was invited.
         if let e = r.meta.event, !e.isReadable { r.meta.event = nil }   // its calendar has been switched off
         if r.meta.calendarChecked == nil, r.meta.sampleID == nil, Briefs.calendarAllowed, let start = r.startedAt {

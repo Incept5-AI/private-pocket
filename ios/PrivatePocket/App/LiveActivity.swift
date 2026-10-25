@@ -48,35 +48,65 @@ final class RecordingActivity {
 
     enum Step: String { case saving = "Saving", transcribing = "Transcribing", voices = "Finding voices", reading = "Reading" }
 
-    /// The recording just stopped is being worked on: what is happening to it, with the
-    /// swell. Not over a recording, which keeps the island.
-    func showWorking(_ step: Step, seconds: Int?) {
-        guard var s = current, !s.isRecording else { return }
+    /// A moment is being worked on: what is happening to it, which one, with the swell.
+    /// Not over a recording, which keeps the island. With no island up, one is started for
+    /// the `device` given (while the app is open, iOS's rule).
+    func showWorking(_ step: Step, seconds: Int?, about: String? = nil, device: DeviceConfig? = nil) {
+        workChanged = Date()
+        guard var s = current else {
+            guard let device else { return }
+            var s = RecordingAttributes.ContentState(phase: .working)
+            s.step = step.rawValue
+            s.savedSeconds = seconds
+            s.about = about
+            push(s, device: device)
+            upForWork = activity != nil
+            startBeats()
+            return
+        }
+        guard !s.isRecording else { return }
         revert?.cancel()
         s.phase = .working
         s.step = step.rawValue
-        if let seconds { s.savedSeconds = seconds }
+        s.savedSeconds = seconds ?? s.savedSeconds
+        s.about = about
         s.read = nil
         update(s)
         startBeats()
+    }
+
+    /// Work on moments other than the one just recorded is over: the Pocket again, or the
+    /// island goes when it is only up for the work.
+    func workDone(connected: Bool, keepPresence: Bool) {
+        guard var s = current, s.phase == .working else { return }
+        stopBeats()
+        guard keepPresence, !upForWork else { end(); return }
+        s.phase = connected ? .ready : .waiting
+        s.step = nil
+        s.about = nil
+        update(s)
     }
 
     var isWorking: Bool { current?.phase == .working }
 
     /// Which beat is running, so a beat that ends never clears the one that replaced it.
     private var beatRun = 0
+    /// When the work last moved on, for the quarter-hour limit.
+    private var workChanged = Date()
+    /// The island was started for the work alone (the Pocket away), so it goes with it.
+    private var upForWork = false
 
     private func startBeats() {
         guard beats == nil else { return }
         beatRun += 1
-        let run = beatRun, began = Date()
+        let run = beatRun
         beats = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1.5))
                 guard let self, !Task.isCancelled, var s = self.current, s.phase == .working else { break }
-                // Nothing takes a quarter of an hour; if it seems to, the island stops saying so.
-                if Date().timeIntervalSince(began) > 900 {
-                    self.showStopped(savedSeconds: s.savedSeconds, keepPresence: Prefs.islandPresence, force: true)
+                // No step takes a quarter of an hour; if one seems to, the island stops saying so.
+                if Date().timeIntervalSince(self.workChanged) > 900 {
+                    self.workDone(connected: s.battery != nil, keepPresence: Prefs.islandPresence)
                     return
                 }
                 s.beat = ((s.beat ?? 0) + 1) % 1_000
@@ -107,6 +137,7 @@ final class RecordingActivity {
 
     /// Connected and idle. Starts the activity if there is none (foreground only).
     func showReady(device: DeviceConfig, battery: Int?, hoursFree: String?, paired: Bool = true) {
+        upForWork = false   // connected: the island is the Pocket's again
         var s = current ?? .init(phase: .ready)
         guard !s.isRecording else { return }
         if s.phase == .working {   // the app is still at work on what it recorded: that stays
@@ -140,6 +171,7 @@ final class RecordingActivity {
     func showRecording(device: DeviceConfig, startedAt: Date, paired: Bool, context: String? = nil) {
         revert?.cancel()
         stopBeats()
+        upForWork = false
         var s = current ?? .init(phase: .recording)
         s.phase = .recording
         s.startedAt = startedAt
@@ -187,6 +219,7 @@ final class RecordingActivity {
         }
         stopBeats()
         s.step = nil
+        s.about = nil
         s.phase = savedSeconds == nil ? .stopped : .saved
         s.savedSeconds = savedSeconds
         s.startedAt = nil
@@ -220,6 +253,7 @@ final class RecordingActivity {
         lastSavedName = nil   // read: a later reading of it keeps out of the island
         s.phase = .saved
         s.step = nil
+        s.about = nil
         s.read = text
         update(s)
         revert?.cancel()
@@ -240,6 +274,7 @@ final class RecordingActivity {
     func end() {
         revert?.cancel()
         stopBeats()
+        upForWork = false
         guard let a = activity else { return }
         activity = nil
         Task { await a.end(nil, dismissalPolicy: .immediate) }

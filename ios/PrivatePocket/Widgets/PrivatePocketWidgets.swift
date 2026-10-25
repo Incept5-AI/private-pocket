@@ -147,7 +147,9 @@ struct IslandHeadline: View {
             if let c = state.context { return c }
             if !state.streaming { return "On the card" }
             return state.gap ? "Stream interrupted" : "Streaming to this iPhone"
-        case .working, .saved:
+        case .working:
+            return state.about ?? state.savedSeconds.map { "On this iPhone · \(PocketFacts.length($0))" } ?? "On this iPhone"
+        case .saved:
             return state.savedSeconds.map { "On this iPhone · \(PocketFacts.length($0))" } ?? "On this iPhone"
         case .ready:
             return state.hoursFree.map { "Ready · \($0) free" } ?? "Ready"

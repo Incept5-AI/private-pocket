@@ -41,6 +41,8 @@ struct RecordingAttributes: ActivityAttributes {
         var step: String?
         /// Counts up while it works, one an update, so the swell moves along the bars.
         var beat: Int?
+        /// The moment being worked on, by its title.
+        var about: String?
 
         /// The waveform as the views draw it, 0…1.
         var wave: [Float] { (levels ?? []).map { Float($0) / 15 } }
@@ -95,7 +97,7 @@ struct RecordingAttributes: ActivityAttributes {
                 case "Reading": "Reading it for what matters"
                 default: "Saving to this iPhone"
                 }
-                return savedSeconds.map { "\(PocketFacts.length($0)) · \(what)" } ?? what
+                return [about, savedSeconds.map { PocketFacts.length($0) }, what].compactMap { $0 }.joined(separator: " · ")
             case .saved:
                 return read ?? savedSeconds.map { "Saved on this iPhone · \(PocketFacts.length($0))" } ?? "Saved on this iPhone"
             case .stopped:
