@@ -35,8 +35,9 @@ struct RecordingStateProvider: ControlValueProvider {
 /// The Pocket in the Dynamic Island and on the Lock Screen. While it records: a live
 /// waveform of the last few seconds, the timer, what Record was pressed into, the words as
 /// they come, what the reader has caught or a quiet thread named in the room, and Stop.
-/// Saved: the length, then what the moment was. Connected and idle: the card with its
-/// real light, the battery, and Record. Out of range: the card on its own.
+/// After it stops, while the app saves, transcribes and reads it: a lilac swell moving along
+/// the bars. Saved: the length, then what the moment was. Connected and idle: the card with
+/// its real light, the battery, and Record. Out of range: the card on its own.
 struct PocketLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: RecordingAttributes.self) { context in
@@ -69,7 +70,7 @@ struct PocketLiveActivity: Widget {
             } minimal: {
                 MinimalView(state: s)
             }
-            .keylineTint(s.isRecording ? Brand.record : Lamp.ready)
+            .keylineTint(s.isRecording ? Brand.record : s.phase == .working ? Brand.notice : Lamp.ready)
         }
     }
 }
@@ -79,13 +80,27 @@ extension RecordingAttributes.ContentState {
     var lamp: Color? {
         switch phase {
         case .recording: Lamp.recording
-        case .ready, .saved, .stopped: Lamp.ready
+        case .ready, .working, .saved, .stopped: Lamp.ready
         case .waiting: nil
         }
     }
 
     /// The waveform has something to show.
     var hasWave: Bool { isRecording && streaming && !gap && !(levels ?? []).isEmpty }
+}
+
+/// The app at work on the recording just stopped: the swell, eased from one update to the
+/// next so it travels rather than jumps.
+struct WorkingBars: View {
+    let state: RecordingAttributes.ContentState
+    var ink: Color = Brand.notice
+    var gap: CGFloat = 2.5
+    let count: Int
+
+    var body: some View {
+        LevelBars(levels: state.swell(count), ink: ink, gap: gap, count: count)
+            .animation(.easeInOut(duration: 1.4), value: state.beat)
+    }
 }
 
 /// The card itself, small, with its light: the left of the expanded island.
@@ -118,6 +133,7 @@ struct IslandHeadline: View {
     private var title: String {
         switch state.phase {
         case .recording: "Recording"
+        case .working: state.headline
         case .saved: state.read == nil ? "Saved" : "Read"
         case .ready: pocket
         case .waiting: "Out of range"
@@ -131,7 +147,7 @@ struct IslandHeadline: View {
             if let c = state.context { return c }
             if !state.streaming { return "On the card" }
             return state.gap ? "Stream interrupted" : "Streaming to this iPhone"
-        case .saved:
+        case .working, .saved:
             return state.savedSeconds.map { "On this iPhone · \(PocketFacts.length($0))" } ?? "On this iPhone"
         case .ready:
             return state.hoursFree.map { "Ready · \($0) free" } ?? "Ready"
@@ -193,6 +209,9 @@ struct IslandBottom: View {
                         .buttonStyle(.plain)
                     }
                 }
+            case .working:
+                WorkingBars(state: state, count: 30).frame(height: 30)
+                Text(state.status).font(.footnote).foregroundStyle(.white.opacity(0.75)).lineLimit(2)
             case .saved:
                 Text(state.read ?? "Saved. It's read in a moment.")
                     .font(.footnote).foregroundStyle(.white.opacity(0.85)).lineLimit(3)
@@ -248,6 +267,8 @@ struct CompactLeading: View {
                     .frame(width: 22, height: 16)
             } else if state.isRecording {
                 Image(systemName: "record.circle.fill").foregroundStyle(Brand.record)
+            } else if state.phase == .working {
+                WorkingBars(state: state, gap: 1.5, count: 5).frame(width: 22, height: 16)
             } else if state.phase == .saved {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Brand.act)
             } else {
@@ -267,6 +288,8 @@ struct MinimalView: View {
                 .frame(width: 12, height: 12)
         } else if state.isRecording {
             Image(systemName: "record.circle.fill").foregroundStyle(Brand.record)
+        } else if state.phase == .working {
+            WorkingBars(state: state, gap: 1.5, count: 3).frame(width: 12, height: 12)
         } else {
             LightDot(state: state.light).frame(width: 10, height: 10)
         }
@@ -287,7 +310,7 @@ struct TrailingFigure: View {
             } else {
                 Text("…")
             }
-        case .saved:
+        case .working, .saved:
             Text(state.savedSeconds.map { Duration.seconds($0).formatted(.time(pattern: .minuteSecond)) } ?? "–")
         case .ready, .waiting, .stopped:
             if let b = state.battery {
@@ -332,6 +355,8 @@ struct LockScreenView: View {
                 }
                 if s.hasWave {
                     LevelBars(levels: s.wave, ink: ink, gap: 2.5, count: 30).frame(height: 26)
+                } else if s.phase == .working {
+                    WorkingBars(state: s, ink: ink, count: 30).frame(height: 26)
                 }
                 Text(s.status).font(.footnote).opacity(0.85).lineLimit(2)
                 if s.isRecording {
@@ -376,6 +401,7 @@ struct LockScreenView: View {
         let name = context.attributes.pocketName
         switch s.phase {
         case .recording: return "Recording · \(name)"
+        case .working: return "\(s.headline) · \(name)"
         case .saved: return s.read == nil ? "Saved · \(name)" : "Read · \(name)"
         case .ready: return "Ready · \(name)"
         case .waiting: return "Out of range · \(name)"

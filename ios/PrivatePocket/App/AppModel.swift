@@ -229,7 +229,7 @@ final class AppModel: ObservableObject {
     /// the user turns it off or disconnects. Recording is handled by `startActivity`.
     func refreshPresence() {
         guard Prefs.islandPresence, let d = connectedDevice, link.isReady else {
-            if !Prefs.islandPresence, !activity.isRecording { activity.end() }
+            if !Prefs.islandPresence, !activity.isRecording, !activity.isWorking { activity.end() }
             return
         }
         activity.showReady(device: d, battery: link.status.battery,
@@ -443,7 +443,10 @@ final class AppModel: ObservableObject {
     private func saveStopped(_ name: String, device d: DeviceConfig, inferred: Bool) async {
         guard !saving.contains(name) else { return }   // already being saved, by the other path
         let ending = stoppedStreams.removeValue(forKey: name)
-        if link.status.recordingSince == nil { activity.showSaving() }
+        if link.status.recordingSince == nil {
+            activity.lastSavedName = name   // the island follows it through transcription and reading
+            activity.showSaving()
+        }
         saving.insert(name)
         await link.run("Saving") { try await self.completeRecording(name: name, device: d, ending: ending, inferred: inferred) }
         saving.remove(name)
@@ -760,6 +763,7 @@ final class AppModel: ObservableObject {
         guard let r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
         working.insert(r.id)
         defer { working.remove(r.id) }
+        if activity.lastSavedName == r.name { activity.showWorking(.transcribing, seconds: r.meta.seconds) }
         let id = localeID ?? r.meta.locale ?? Prefs.transcriptionLocale
         // Who spoke when runs alongside the words; it only needs the audio.
         let url = r.audioURL
@@ -788,13 +792,22 @@ final class AppModel: ObservableObject {
                                              : "This moment couldn't be transcribed on your iPhone. It's tried again on the next launch."
             }
             link.note("transcription failed for \(r.name): \(error.localizedDescription)")
+            if activity.lastSavedName == r.name { finishWorking(r) }
         }
+    }
+
+    /// The island stops showing work on a recording that will not be read now: Saved, then
+    /// the Pocket again.
+    private func finishWorking(_ r: Recording) {
+        guard activity.isWorking else { return }
+        activity.showStopped(savedSeconds: r.meta.seconds, keepPresence: Prefs.islandPresence && connectedDevice != nil, force: true)
     }
 
     /// Diarises again and re-matches the stored word times.
     func findSpeakers(_ r: Recording) async {
         working.insert(r.id)
         defer { working.remove(r.id) }
+        if activity.lastSavedName == r.name { activity.showWorking(.voices, seconds: r.meta.seconds) }
         let result: Result<[SpeakerSegment], Error>
         do {
             result = .success(try await Diarizer.diarize(try Data(contentsOf: r.audioURL), filename: r.audioURL.lastPathComponent))
@@ -873,6 +886,11 @@ final class AppModel: ObservableObject {
         guard var r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
         working.insert(r.id)
         defer { working.remove(r.id) }
+        // The recording the island follows: Reading while the model reads it, and whatever
+        // way this ends without a reading to show (no model, a failure, deleted), Saved.
+        let followed = activity.lastSavedName == r.name
+        if followed, LLM.availability == nil { activity.showWorking(.reading, seconds: r.meta.seconds) }
+        defer { if followed, activity.lastSavedName == r.name { finishWorking(r) } }
         // The calendar event it happened in, if Calendar is allowed: the reader is told who was invited.
         if let e = r.meta.event, !e.isReadable { r.meta.event = nil }   // its calendar has been switched off
         if r.meta.calendarChecked == nil, r.meta.sampleID == nil, Briefs.calendarAllowed, let start = r.startedAt {

@@ -11,7 +11,7 @@ import Foundation
 // with the timer when the side button is pressed, even with the phone locked.
 
 struct RecordingAttributes: ActivityAttributes {
-    enum Phase: String, Codable, Hashable { case ready, waiting, recording, saved, stopped }
+    enum Phase: String, Codable, Hashable { case ready, waiting, recording, working, saved, stopped }
 
     struct ContentState: Codable, Hashable {
         var phase: Phase
@@ -36,15 +36,31 @@ struct RecordingAttributes: ActivityAttributes {
         var caught: String?
         /// A quiet thread named in the room: "Northlight · last spoken 16 Apr".
         var recall: String?
+        /// What the app is doing with the recording just stopped: "Saving", "Transcribing",
+        /// "Finding voices", "Reading".
+        var step: String?
+        /// Counts up while it works, one an update, so the swell moves along the bars.
+        var beat: Int?
 
         /// The waveform as the views draw it, 0…1.
         var wave: [Float] { (levels ?? []).map { Float($0) / 15 } }
 
         var isRecording: Bool { phase == .recording }
 
+        /// While it works: a swell travelling along the bars, a step each update, which the
+        /// island animates between. 0…1, like the waveform.
+        func swell(_ n: Int) -> [Float] {
+            let length = max(5, Double(n) * 0.45)
+            let b = Double(beat ?? 0)
+            return (0..<n).map { i in
+                let c = 0.5 + 0.5 * cos(2 * .pi * (Double(i) / length) - b * 0.9)
+                return Float(0.2 + 0.7 * c * c)
+            }
+        }
+
         var light: LightState {
             switch phase {
-            case .ready, .saved, .stopped: .on
+            case .ready, .working, .saved, .stopped: .on
             case .waiting: .off
             case .recording: .recording
             }
@@ -55,6 +71,7 @@ struct RecordingAttributes: ActivityAttributes {
             case .ready: "Ready"
             case .waiting: "Out of range"
             case .recording: "Recording"
+            case .working: step ?? "Saving"
             case .saved: "Saved"
             case .stopped: "Stopped"
             }
@@ -71,6 +88,14 @@ struct RecordingAttributes: ActivityAttributes {
                 if !streaming { return "Started before the phone connected. It is fetched when it stops." }
                 if gap { return "Stream interrupted. The Pocket keeps recording." }
                 return line.isEmpty ? "Streaming to this iPhone" : line
+            case .working:
+                let what = switch step ?? "" {
+                case "Transcribing": "Writing down what was said"
+                case "Finding voices": "Telling the voices apart"
+                case "Reading": "Reading it for what matters"
+                default: "Saving to this iPhone"
+                }
+                return savedSeconds.map { "\(PocketFacts.length($0)) · \(what)" } ?? what
             case .saved:
                 return read ?? savedSeconds.map { "Saved on this iPhone · \(PocketFacts.length($0))" } ?? "Saved on this iPhone"
             case .stopped:
