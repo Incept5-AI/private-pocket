@@ -27,9 +27,15 @@ final class ServerStatus: ObservableObject {
         }
     }
 
-    /// Asks the server for its model list, with a short timeout. Any HTTP answer below
-    /// 500 counts, since a key may be missing; no answer at all does not.
+    /// The check under way, which a second caller waits for rather than going on without an
+    /// answer (that read a moment on the server, or the phone, before the server had said).
+    private var inFlight: Task<Void, Never>?
+
+    /// Asks the server for its model list. Any HTTP answer below 500 counts, since a key may
+    /// be missing; no answer at all does not. Ten seconds: Tailscale on the phone takes a
+    /// few to wake, and four called a server away that was only waking it.
     func check(force: Bool = false) async {
+        if let t = inFlight { await t.value; return }
         let url = Prefs.llmURL.trimmingCharacters(in: .whitespaces)
         guard let base = URL(string: url), base.host() != nil else {
             reachable = nil
@@ -37,13 +43,21 @@ final class ServerStatus: ObservableObject {
             return
         }
         if !force, let t = checkedAt, Date().timeIntervalSince(t) < 30 { return }
-        guard !checking else { return }
+        let t = Task { await ask(base) }
+        inFlight = t
+        await t.value
+        inFlight = nil
+    }
+
+    private func ask(_ base: URL) async {
         checking = true
         defer { checking = false }
-        var req = URLRequest(url: base.appending(path: "models"), timeoutInterval: 4)
+        var req = URLRequest(url: base.appending(path: "models"), timeoutInterval: 10)
         let key = LLM.key
         if !key.isEmpty { req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization") }
         let t0 = Date()
+        let before = reachable
+        var why = ""
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
@@ -53,8 +67,10 @@ final class ServerStatus: ObservableObject {
         } catch {
             reachable = false
             latencyMs = nil
+            why = " (\(error.localizedDescription))"
         }
         checkedAt = Date()
+        if reachable != before { DiskLog.append("server: " + (reachable == true ? "answering" : "not answering" + why)) }
     }
 }
 

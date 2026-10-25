@@ -159,7 +159,8 @@ struct MomentView: View {
             .task(id: r.audioURL) {
                 player.load(r.audioURL)
                 await model.syncPlaced(r)
-                if let i = r.meta.insight, i.readByModel, (i.version ?? 1) < MomentInsight.readerVersion, r.meta.transcript != nil, !model.working.contains(r.id) {
+                if let i = r.meta.insight, i.readByModel, (i.version ?? 1) < MomentInsight.readerVersion, r.meta.transcript != nil, !model.working.contains(r.id),
+                   model.canReadAgain {
                     Task { await model.analyse(r, quiet: true) }   // read by an older reader: read again
                 }
                 let url = r.audioURL

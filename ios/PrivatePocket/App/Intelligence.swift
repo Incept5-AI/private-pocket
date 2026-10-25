@@ -442,8 +442,11 @@ enum Analyst {
         let context = ((r.meta.context?.hint).map { $0.isEmpty ? "" : $0 + " " } ?? "") + (r.meta.event.map { $0.hint + " " } ?? "")
         let you = r.meta.sampleID == nil ? You.hint(speakers: Speakers.count(r.meta.turns ?? []), wearer: wearer) : ""   // you are not in the samples
         let hint = (r.isCall ? "The recorder's switch was on call, so this is a phone call. " : "") + (you.isEmpty ? "" : you + " ") + context
+        let parts = Array(Summariser.split(text, max: c.chunkChars).prefix(6))
+        let line = "reading \(r.name) with \(c.remote ? c.model : "the iPhone's model"), \(parts.count) part\(parts.count == 1 ? "" : "s")"
+        await MainActor.run { DiskLog.append(line) }
         var drafts: [Draft] = []
-        for chunk in Summariser.split(text, max: c.chunkChars).prefix(6) {
+        for chunk in parts {
             drafts.append(try await draft(c, prompt: "\(hint)Transcript:\n\n\(chunk)"))
         }
         var notes: [String] = []
@@ -547,18 +550,24 @@ enum Analyst {
         let invited = r.invitees
         out.people = unique((drafts.flatMap { $0.people ?? [] } + out.people).filter(isPerson).map { Invitation.spelling($0, invited) }, cap: 10)
 
+        // A best guess needs the whole conversation: read in parts, each part saw a few minutes
+        // of it, and only a name it shows (an introduction, someone answering to it) counts.
+        let whole = drafts.count == 1
         var proposed: [ProposedName] = []
+        var nameless = 0
         for d in drafts {
             notes.append("given " + d.speakersForm)
             for s in d.speakers ?? [] {
                 let name = Invitation.spelling(clean(s.name), invited)
                 guard !name.isEmpty, !isLabel(name), let i = speakerIndex(clean(s.label)) else {
-                    notes.append(name.isEmpty ? "one without a name" : isLabel(name) ? "one named as a label" : "one without a label")
+                    if name.isEmpty { nameless += 1 } else { notes.append(isLabel(name) ? "one named as a label" : "one without a label") }
                     continue
                 }
+                guard whole || s.sure == true else { notes.append("Speaker \(i + 1) dropped: a guess from part of it"); continue }
                 proposed.append(ProposedName(label: i, name: name, evidence: clean(s.evidence).isEmpty ? nil : clean(s.evidence), sure: s.sure ?? false))
             }
         }
+        if nameless > 0 { notes.append("\(nameless) without a name") }
         let checked = checkedSpeakers(proposed, turns: r.meta.turns ?? [], wearer: wearer, youSpeak: r.meta.sampleID == nil, notes: &notes)
         out.inferredSpeakers = checked.names.isEmpty ? nil : checked.names
         out.guessedSpeakers = checked.guessed.isEmpty ? nil : checked.guessed

@@ -945,6 +945,8 @@ final class AppModel: ObservableObject {
         defer { endWork(id) }   // whatever way it ends
         await ServerStatus.shared.check()
         guard var r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
+        // Read again only because the reader is newer: with your server away, that waits for it.
+        if quiet, let i = r.meta.insight, i.readByModel, (i.version ?? 1) < MomentInsight.readerVersion, !canReadAgain { return }
         working.insert(r.id)
         defer { working.remove(r.id) }
         if LLM.availability == nil { beginWork(.reading, r) }   // the island shows it while the model reads
@@ -961,6 +963,7 @@ final class AppModel: ObservableObject {
             do {
                 reading = try await Analyst.analyse(r, config: LLM.config, wearer: wearer)
             } catch {
+                link.note("reading \(r.name) failed, the last reading kept: \(error.localizedDescription)")
                 if !quiet {
                     aiError = Prefs.llmRemoteNow ? "Your server didn't answer, so this moment hasn't been read yet. It's read again the next time the app opens."
                                                  : "This moment couldn't be read on your iPhone yet. It's read again the next time the app opens."
@@ -1075,11 +1078,18 @@ final class AppModel: ObservableObject {
 
     /// Moments read by an older reader, read again one at a time, quietly.
     func rereadOutdated(_ rs: [Recording]) async {
+        await ServerStatus.shared.check()
+        guard canReadAgain else { return }
         for r in rs where r.meta.transcript != nil && !working.contains(r.id)
             && r.meta.insight?.readByModel == true && (r.meta.insight?.version ?? 1) < MomentInsight.readerVersion {
             await analyse(r, quiet: true)
         }
     }
+
+    /// A newer reader reads moments again only with the model chosen for reading: with your
+    /// server chosen but not answering, the phone's model (which reads a long conversation a
+    /// few minutes at a time) would replace a better reading, so it waits for the server.
+    var canReadAgain: Bool { LLM.availability == nil && (!Prefs.llmRemote || Prefs.llmRemoteNow) }
 
     func analyseMissing(_ rs: [Recording]) async {
         for r in rs where r.meta.transcript != nil && !working.contains(r.id) { await analyse(r, quiet: true) }
