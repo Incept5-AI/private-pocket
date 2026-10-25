@@ -122,9 +122,9 @@ struct CalendarEventRef: Codable, Hashable {
         var s = "This was recorded during the calendar event \"\(title)\""
         s += others.isEmpty ? "." : ", to which \(others.joined(separator: ", ")) \(others.count == 1 ? "was" : "were") invited besides the user."
         if !others.isEmpty {
-            s += " They are the likely speakers besides the user. When the conversation itself shows which Speaker label is which of them"
-            s += " (another speaker addresses them by name, they introduce themselves, or it is otherwise plain), give that name under speakers, spelled as in the invitation;"
-            s += " never name a speaker from the invitation alone, and never give an invitee's name to the user's voice."
+            s += " They and the user are the likely speakers. Name each Speaker label the conversation lets you tell"
+            s += " (another speaker addresses them by name and they answer, they introduce themselves, or what they say of their own work fits one of them),"
+            s += " spelled as in the invitation; never name a speaker from the invitation alone, and never give an invitee's name to the user's voice."
         }
         s += " Use the event only where the conversation matches it."
         return s
@@ -222,8 +222,13 @@ enum You {
         var voice = "The user's voice is almost always one of the Speaker labels"
         if let w = wearer { voice += "; Speaker \(w + 1)'s voice is much the loudest, as the wearer's is, so Speaker \(w + 1) is very likely the user" }
         s.append(voice + ".")
-        s.append(all.first.map { "Give the user's label the name \($0) when the conversation shows which label is theirs, and never give the user's voice anyone else's name." }
-                 ?? "Never give the user's voice anyone else's name; leave their label unnamed.")
+        if let n = all.first {
+            let first = n.split(separator: " ").first.map(String.init) ?? n
+            s.append("The user's label is the one others address as \(first) (speech to text may mishear it as a similar name), or the one left once the others are named;"
+                     + " give it the name \(n), and never give the user's voice anyone else's name.")
+        } else {
+            s.append("Never give the user's voice anyone else's name; leave their label unnamed.")
+        }
         return s.joined(separator: " ")
     }
 }

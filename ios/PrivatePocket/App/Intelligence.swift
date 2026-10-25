@@ -112,7 +112,7 @@ struct MomentInsight: Codable, Hashable {
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 9
+    static let readerVersion = 11
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -248,7 +248,7 @@ struct InsightDraft {
     var keyLines: [String]
     @Guide(description: "Names of the people who took part or were talked about; never labels like Speaker 1")
     var people: [String]
-    @Guide(description: "For each Speaker label whose name the conversation reveals, the label and the name; empty if none")
+    @Guide(description: "For each Speaker label the conversation lets you name, the label, the name and the words that show it; empty if none")
     var speakers: [DraftSpeaker]
     @Guide(description: "Decisions made, each one short sentence; empty if none")
     var decisions: [String]
@@ -270,6 +270,8 @@ private struct Draft: Decodable {
     var keyLines: [String]?
     var people: [String]?
     var speakers: [Speaker]?
+    /// How the speakers came back, for the log: "a list of 6", "a map of 6", "none".
+    var speakersForm = "none"
     var decisions: [String]?
     var questions: [String]?
     var figures: [String]?
@@ -321,8 +323,17 @@ private struct Draft: Decodable {
         people = list(o["people"])
         if let a = o["speakers"] as? [Any] {
             speakers = a.compactMap { e in (e as? [String: Any]).map { Speaker(label: text($0["label"]), name: text($0["name"]), evidence: text($0["evidence"])) } }
+            speakersForm = "a list of \(a.count)"
         } else if let d = o["speakers"] as? [String: Any] {
-            speakers = d.map { Speaker(label: $0.key, name: text($0.value), evidence: nil) }
+            // Keyed by label, with a name or an object as the value; or the other way round.
+            speakers = d.map { key, value in
+                if let v = value as? [String: Any] { return Speaker(label: key, name: text(v["name"]), evidence: text(v["evidence"])) }
+                if let v = text(value), Analyst.speakerIndex(key) == nil, Analyst.speakerIndex(v) != nil { return Speaker(label: v, name: key, evidence: nil) }
+                return Speaker(label: key, name: text(value), evidence: nil)
+            }
+            speakersForm = "a map of \(d.count)"
+        } else if o["speakers"] != nil {
+            speakersForm = "something else"
         }
         decisions = list(o["decisions"])
         questions = list(o["questions"])
@@ -337,6 +348,7 @@ private struct Draft: Decodable {
         keyLines = d.keyLines
         people = d.people
         speakers = d.speakers.map { Speaker(label: $0.label, name: $0.name, evidence: $0.evidence) }
+        speakersForm = "a list of \(d.speakers.count)"
         decisions = d.decisions
         questions = d.questions
         figures = d.figures
@@ -352,7 +364,8 @@ enum Analyst {
     You read the transcript of one recorded conversation, phone call or voice note, and give back what a good assistant would after sitting in the room. \
     Use only what is in the text; never invent names, dates or tasks. Write in the transcript's language, except the kind. \
     The user is the person who made the recording: address them as "you". \
-    Speaker labels like Speaker 1 are not names and are never people; if the conversation reveals a label's name, give it under speakers with the words that show it. \
+    Speaker labels like Speaker 1 are not names and are never people. Under speakers, name every label the conversation lets you tell, with the words that show it: \
+    someone addressed by name usually answers next, people introduce themselves or are introduced, and what a voice says of its own work can fit one person only. \
     A name said to someone belongs to the one spoken to, not the one speaking: when Speaker 1 says "Thanks, Ravi", Speaker 1 is not Ravi. \
     Write each action as a short imperative without naming who does it; things other people said they would do are promises, not actions. \
     Title each date the way it should appear in a calendar: what it is and with whom or where, specific to this conversation, with the date and time kept out of the title and given under when. \
@@ -475,9 +488,13 @@ enum Analyst {
 
         var proposed: [ProposedName] = []
         for d in drafts {
+            notes.append("given " + d.speakersForm)
             for s in d.speakers ?? [] {
                 let name = clean(s.name)
-                guard !name.isEmpty, !isLabel(name), let i = speakerIndex(clean(s.label)) else { continue }
+                guard !name.isEmpty, !isLabel(name), let i = speakerIndex(clean(s.label)) else {
+                    notes.append(name.isEmpty ? "one without a name" : isLabel(name) ? "one named as a label" : "one without a label")
+                    continue
+                }
                 proposed.append(ProposedName(label: i, name: name, evidence: clean(s.evidence).isEmpty ? nil : clean(s.evidence)))
             }
         }
