@@ -945,8 +945,11 @@ final class AppModel: ObservableObject {
         defer { endWork(id) }   // whatever way it ends
         await ServerStatus.shared.check()
         guard var r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
-        // Read again only because the reader is newer: with your server away, that waits for it.
-        if quiet, let i = r.meta.insight, i.readByModel, (i.version ?? 1) < MomentInsight.readerVersion, !canReadAgain { return }
+        // Read again only because the reader is newer: with your server away, that waits for it,
+        // and it is tried once a session, so a reading that fails is not asked for at every turn.
+        if quiet, let i = r.meta.insight, i.readByModel, (i.version ?? 1) < MomentInsight.readerVersion {
+            guard canReadAgain, rereadThisSession.insert(r.id).inserted else { return }
+        }
         working.insert(r.id)
         defer { working.remove(r.id) }
         if LLM.availability == nil { beginWork(.reading, r) }   // the island shows it while the model reads
@@ -1331,6 +1334,8 @@ final class AppModel: ObservableObject {
     private var sweptThisSession: Set<String> = []
     /// Moments being read now.
     private var beingRead: Set<String> = []
+    /// Moments read again for a newer reader this session.
+    private var rereadThisSession: Set<String> = []
     /// Moments whose failed reading was tried again this session.
     private var readThisSession: Set<String> = []
 

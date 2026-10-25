@@ -187,7 +187,18 @@ enum Diarizer {
                     ?? (a.first as? [Any]).map { " of [\($0.count)]" } ?? ""
                 return "\(k)[\(a.count)]\(inner)"
             case let d as [String: Any]:
-                return "\(k){" + d.keys.sorted().prefix(8).joined(separator: ",") + (d.count > 8 ? ",…" : "") + "}"
+                // What one entry holds: its fields, and how long any list in it is.
+                let inner = d.values.first.map { v -> String in
+                    switch v {
+                    case let e as [String: Any]:
+                        return " of {" + e.keys.sorted().map { f in (e[f] as? [Any]).map { "\(f)[\($0.count)]" } ?? f }.joined(separator: ",") + "}"
+                    case let a as [Any]: return " of [\(a.count)]"
+                    case is NSNumber: return " of a number"
+                    case is String: return " of text"
+                    default: return ""
+                    }
+                } ?? ""
+                return "\(k){" + d.keys.sorted().prefix(8).joined(separator: ",") + (d.count > 8 ? ",…" : "") + "}" + inner
             default:
                 return k
             }

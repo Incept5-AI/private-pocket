@@ -114,7 +114,7 @@ struct MomentInsight: Codable, Hashable {
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 12
+    static let readerVersion = 13
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -493,8 +493,12 @@ enum Analyst {
             "\"figures\" (an array of strings: amounts that matter, money, quantities or counts, each as the amount and what it is for, " +
             "like '£3,000 for the offsite' or '30 people at the workshop', never a date, a day of the month or a clock time)."
         let reply = try await LLM.complete(c, instructions: json, prompt: prompt, temperature: 0)   // the same transcript reads the same way twice
-        guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close,
-              let object = try JSONSerialization.jsonObject(with: Data(reply[open...close].utf8)) as? [String: Any] else { throw LLMError.empty }
+        guard let open = reply.firstIndex(of: "{"), let close = reply.lastIndex(of: "}"), open < close else { throw LLMError.empty }
+        let body = String(reply[open...close])
+        func parse(_ s: String) throws -> [String: Any]? { try JSONSerialization.jsonObject(with: Data(s.utf8)) as? [String: Any] }
+        // A model's JSON sometimes ends a list or an object with a comma: once more without.
+        guard let object = try (try? parse(body)) ?? parse(body.replacingOccurrences(of: #",\s*([}\]])"#, with: "$1", options: .regularExpression))
+        else { throw LLMError.empty }
         return Draft(json: object)
     }
 
@@ -629,10 +633,12 @@ enum Analyst {
             if let w = wearer, p.label == w, !yours { notes.append("\(who) dropped: the wearer is you"); continue }
             if let q = p.evidence, !evidenceHolds(p.name, quote: q, label: p.label, turns: turns) { notes.append("\(who) dropped: says the name itself"); continue }
             named[p.label] = yours ? (You.name ?? p.name) : p.name
-            if p.sure { sure.insert(p.label) }
+            // Sure only with the words to show it: every name came back sure, none of its words in the transcript.
+            let backed = p.evidence.map { !voicesSaying($0, in: turns).isEmpty } ?? false
+            if p.sure && backed { sure.insert(p.label) }
             let said = p.evidence.map { voicesSaying($0, in: turns).sorted().map { "Speaker \($0 + 1)" } } ?? []
             let words = p.evidence == nil ? "no words given" : said.isEmpty ? "words not found" : "words said by " + said.joined(separator: ", ")
-            notes.append("\(who) kept\(yours ? " as you" : "")\(p.sure ? "" : " as a guess"), \(words)")
+            notes.append("\(who) kept\(yours ? " as you" : "")\(sure.contains(p.label) ? "" : " as a guess"), \(words)")
         }
         var labels: [String: [Int]] = [:]
         for (l, n) in named { labels[n.lowercased(), default: []].append(l) }
@@ -651,9 +657,14 @@ enum Analyst {
                 named.keys.filter { !sure.contains($0) }.sorted().map(String.init))
     }
 
-    /// The voices whose turns hold these words.
+    /// The voices whose turns hold these words, with any "[12:04] Speaker 3:" the reader
+    /// copied in front of them taken off.
     static func voicesSaying(_ quote: String, in turns: [Turn]) -> Set<Int> {
-        let q = " " + plain(quote) + " "
+        var words = quote
+        while let r = words.range(of: #"^\s*(\[[0-9:]+\]|speaker\s+\d+\s*:)\s*"#, options: [.regularExpression, .caseInsensitive]) {
+            words.removeSubrange(r)
+        }
+        let q = " " + plain(words) + " "
         guard q.count > 6 else { return [] }
         return Set(turns.filter { (" " + plain($0.text) + " ").contains(q) }.map(\.speaker))
     }
