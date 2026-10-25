@@ -26,11 +26,14 @@ struct MomentView: View {
 
     private var recording: Recording? { library.recordings.first { $0.id == id } }
 
-    /// The people invited to the moment's calendar event who are not yet a speaker's name.
+    /// Names to offer for a speaker: who was invited (you left out), then who the moment
+    /// names, none a speaker has already.
     private func invitees(_ r: Recording) -> [String] {
-        let used = Set((r.meta.speakerNames ?? [:]).values.map { $0.lowercased() })
-        guard let e = r.meta.event, e.isReadable else { return [] }
-        return Array(e.others.filter { !used.contains($0.lowercased()) }.prefix(4))
+        var used = Set((r.meta.speakerNames ?? [:]).values.map { $0.lowercased() })
+        let invited = r.meta.event.flatMap { $0.isReadable ? $0.others : nil } ?? []
+        var out: [String] = []
+        for n in invited + r.people where !You.matches(n) && used.insert(n.lowercased()).inserted { out.append(n) }
+        return Array(out.prefix(6))
     }
 
     /// Your name, offered first when naming a speaker, unless another speaker already has it.
@@ -137,7 +140,9 @@ struct MomentView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 if let e = r.meta.event, e.isReadable, !e.others.isEmpty {
-                    Text("Invited to \(e.title.isEmpty ? "the event" : e.title): pick a name, or type one.")
+                    Text("Invited to \(e.title.isEmpty ? "the event" : e.title), or named in it: pick a name, or type one.")
+                } else if !r.people.isEmpty {
+                    Text("Named in this moment: pick a name, or type one.")
                 } else {
                     Text("Used wherever this moment names them.")
                 }
@@ -248,17 +253,20 @@ struct MomentHeader: View {
     let rename: () -> Void
     let renameSpeaker: (Int) -> Void
 
-    /// Speakers by number with their names (or "Speaker N"), then anyone else named.
+    /// The voices by number with their names (or "Speaker N"); with one voice, the people
+    /// named, so a person is never shown twice.
     private var faces: [(index: Int?, name: String)] {
         let r = recording
-        var out: [(Int?, String)] = []
-        if let t = r.meta.turns, Speakers.count(t) > 1 {
-            for i in Set(t.map(\.speaker)).sorted() { out.append((i, Speakers.name(i, r.meta.speakerNames))) }
-        }
-        for p in r.meta.insight?.people ?? [] where !out.contains(where: { $0.1.caseInsensitiveCompare(p) == .orderedSame }) {
-            out.append((nil, p))
-        }
-        return out
+        guard let t = r.meta.turns, Speakers.count(t) > 1 else { return r.people.map { (nil, $0) } }
+        return Set(t.map(\.speaker)).sorted().map { ($0, Speakers.name($0, r.meta.speakerNames)) }
+    }
+
+    /// Everyone named in the moment who is not a voice's name, under the voices.
+    private var alsoNamed: [String] {
+        let r = recording
+        guard let t = r.meta.turns, Speakers.count(t) > 1 else { return [] }
+        let voices = Set((r.meta.speakerNames ?? [:]).values.map { Invitation.fold($0) })
+        return r.people.filter { !voices.contains(Invitation.fold($0)) }
     }
 
     var body: some View {
@@ -323,6 +331,12 @@ struct MomentHeader: View {
                 }
                 .padding(.top, 10)
                 .sideScrollZone()
+            }
+            if !alsoNamed.isEmpty {
+                Text((faces.contains { $0.index != nil && (recording.meta.speakerNames?[String($0.index!)] ?? "").isEmpty }
+                      ? "Named in it: " : "Also named: ") + alsoNamed.joined(separator: ", "))
+                    .font(.footnote).foregroundStyle(Brand.muted).lineLimit(2)
+                    .padding(.top, 4)
             }
         }
     }

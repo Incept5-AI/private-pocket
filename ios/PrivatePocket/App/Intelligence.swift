@@ -157,17 +157,22 @@ extension Recording {
         return s
     }
 
-    /// Who was there, by name: the reading's people, else the names given to speakers.
+    /// Who was there, by name: the reading's people, else the names given to speakers, each
+    /// spelled as the calendar invitation spells it, once.
     var people: [String] {
         let read = meta.insight?.people ?? []
         let raw = read.isEmpty ? (meta.speakerNames ?? [:]).values.filter { !$0.isEmpty }.sorted() : read
+        let invited = invitees
         var seen = Set<String>()
         var out: [String] = []
         for n in raw + [meta.context?.person].compactMap({ $0 }) {
-            if let c = PeopleNames.canonical(n), seen.insert(c.lowercased()).inserted { out.append(c) }
+            if let c = PeopleNames.canonical(Invitation.spelling(n, invited)), seen.insert(c.lowercased()).inserted { out.append(c) }
         }
         return out
     }
+
+    /// Who the moment's calendar event invited, while its calendar is read.
+    var invitees: [String] { meta.event.flatMap { $0.isReadable ? $0.attendees : nil } ?? [] }
 
     /// Who, and where: the second line of a card.
     var subline: String? {
@@ -193,6 +198,47 @@ struct KindChip: View {
         .foregroundStyle(kind.colour)
         .padding(.horizontal, 10).padding(.vertical, 5)
         .background(kind.colour.opacity(0.14), in: Capsule())
+    }
+}
+
+/// Names as the invitation spells them: the reading and speech to text hear "Maya" for Maya
+/// Chen and "Katarina" for Katerina, and the same person turns up twice.
+enum Invitation {
+    /// The invited name a name stands for: the same name however accented or cased, the full
+    /// name for a first name only one invitee has, or a longer first name spelled within two
+    /// letters of one invitee's. Otherwise the name as it was.
+    static func spelling(_ name: String, _ invited: [String]) -> String {
+        let n = fold(name)
+        guard !n.isEmpty, !invited.isEmpty else { return name }
+        if let same = invited.first(where: { fold($0) == n }) { return same }
+        guard !n.contains(" ") else { return name }
+        func first(_ s: String) -> String { fold(s).split(separator: " ").first.map(String.init) ?? "" }
+        let byFirst = invited.filter { first($0) == n }
+        if byFirst.count == 1 { return byFirst[0] }
+        guard byFirst.isEmpty, n.count >= 5 else { return name }
+        let close = invited.filter { let f = first($0); return f.count >= 5 && distance(f, n) <= 2 }
+        return close.count == 1 ? close[0] : name
+    }
+
+    static func fold(_ s: String) -> String {
+        s.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Letters to change, add or take away to turn one word into the other.
+    static func distance(_ a: String, _ b: String) -> Int {
+        let a = Array(a), b = Array(b)
+        guard !a.isEmpty else { return b.count }
+        var row = Array(0...b.count)
+        for i in 1...a.count {
+            var previous = row[0]
+            row[0] = i
+            for j in stride(from: 1, through: b.count, by: 1) {
+                let kept = row[j]
+                row[j] = min(row[j] + 1, row[j - 1] + 1, previous + (a[i - 1] == b[j - 1] ? 0 : 1))
+                previous = kept
+            }
+        }
+        return row[b.count]
     }
 }
 
@@ -484,13 +530,14 @@ enum Analyst {
         out.decisions = unique(drafts.flatMap { $0.decisions ?? [] }, cap: 6)
         out.questions = unique(drafts.flatMap { $0.questions ?? [] }, cap: 5)
         out.figures = unique(drafts.flatMap { $0.figures ?? [] }, cap: 8)
-        out.people = unique((drafts.flatMap { $0.people ?? [] } + out.people).filter(isPerson), cap: 10)
+        let invited = r.invitees
+        out.people = unique((drafts.flatMap { $0.people ?? [] } + out.people).filter(isPerson).map { Invitation.spelling($0, invited) }, cap: 10)
 
         var proposed: [ProposedName] = []
         for d in drafts {
             notes.append("given " + d.speakersForm)
             for s in d.speakers ?? [] {
-                let name = clean(s.name)
+                let name = Invitation.spelling(clean(s.name), invited)
                 guard !name.isEmpty, !isLabel(name), let i = speakerIndex(clean(s.label)) else {
                     notes.append(name.isEmpty ? "one without a name" : isLabel(name) ? "one named as a label" : "one without a label")
                     continue
