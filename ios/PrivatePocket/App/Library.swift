@@ -43,6 +43,15 @@ extension Recording {
         return meta.transcript
     }
 
+    /// What a new reading is given: the names you gave, and the last reading's guesses left
+    /// as labels, so it can name those speakers again rather than take its guesses as fact.
+    var transcriptForReading: String? {
+        guard let t = meta.turns, Speakers.count(t) > 1 else { return meta.transcript }
+        let guessed = meta.insight?.inferredSpeakers ?? [:]
+        let mine = Set(meta.speakersNamedByHand ?? [])
+        return Speakers.text(t, names: (meta.speakerNames ?? [:]).filter { mine.contains($0.key) || guessed[$0.key] != $0.value })
+    }
+
     /// How a recording is named to the language model: title, date, time, place.
     var sourceLabel: String {
         var parts = [meta.title ?? meta.place?.name ?? "Recording"]

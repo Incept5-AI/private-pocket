@@ -865,6 +865,10 @@ final class AppModel: ObservableObject {
     /// speakers and the dates in the text still give the kind, the people and what is
     /// coming up.
     func analyse(_ r: Recording, quiet: Bool = false) async {
+        // One reading of a moment at a time: the sweep and an open moment both asked while
+        // the first was still waiting for the server, and read it twice.
+        guard beingRead.insert(r.id).inserted else { return }
+        defer { beingRead.remove(r.id) }
         await ServerStatus.shared.check()
         guard var r = library.recordings.first(where: { $0.id == r.id }) else { return }   // the moment as it is now
         working.insert(r.id)
@@ -1240,6 +1244,8 @@ final class AppModel: ObservableObject {
     }
 
     private var sweptThisSession: Set<String> = []
+    /// Moments being read now.
+    private var beingRead: Set<String> = []
     /// Moments whose failed reading was tried again this session.
     private var readThisSession: Set<String> = []
 

@@ -165,6 +165,7 @@ enum Diarizer {
                     lastError = LLMError.http(status, String(decoding: data.prefix(200), as: UTF8.self))
                     continue   // 404 / 5xx: this box has no diarizer, try the next
                 }
+                await MainActor.run { DiskLog.append("diarize reply: " + shape(data)) }
                 struct Reply: Decodable { let segments: [SpeakerSegment] }
                 return try JSONDecoder().decode(Reply.self, from: data).segments
             } catch let e as URLError {
@@ -172,6 +173,25 @@ enum Diarizer {
             }
         }
         throw lastError is URLError ? DiarizeError.unreachable : lastError
+    }
+
+    /// What a reply holds, for the log: its keys and how many of each, and the keys of a
+    /// segment, never the values. Says whether the server sends anything beyond segments,
+    /// such as a voice print per speaker.
+    static func shape(_ data: Data) -> String {
+        guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "not an object" }
+        return o.keys.sorted().map { k -> String in
+            switch o[k] {
+            case let a as [Any]:
+                let inner = (a.first as? [String: Any]).map { " of {" + $0.keys.sorted().joined(separator: ",") + "}" }
+                    ?? (a.first as? [Any]).map { " of [\($0.count)]" } ?? ""
+                return "\(k)[\(a.count)]\(inner)"
+            case let d as [String: Any]:
+                return "\(k){" + d.keys.sorted().prefix(8).joined(separator: ",") + (d.count > 8 ? ",…" : "") + "}"
+            default:
+                return k
+            }
+        }.joined(separator: " ")
     }
 }
 

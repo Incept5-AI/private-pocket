@@ -112,7 +112,7 @@ struct MomentInsight: Codable, Hashable {
     var figures: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
-    static let readerVersion = 8
+    static let readerVersion = 9
 
     var momentKind: MomentKind { MomentKind(rawValue: kind) ?? .other }
     var readByModel: Bool { source == "model" }
@@ -364,7 +364,7 @@ enum Analyst {
     /// The whole transcript, in parts if it is long, merged into one reading. `wearer` is the
     /// voice far the loudest (`Speakers.wearer`), very likely the user's.
     static func analyse(_ r: Recording, config c: LLMConfig, wearer: Int? = nil) async throws -> MomentInsight {
-        guard let text = r.transcriptForModel?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+        guard let text = r.transcriptForReading?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
             throw AIError.emptyTranscript
         }
         let context = ((r.meta.context?.hint).map { $0.isEmpty ? "" : $0 + " " } ?? "") + (r.meta.event.map { $0.hint + " " } ?? "")
@@ -374,7 +374,13 @@ enum Analyst {
         for chunk in Summariser.split(text, max: c.chunkChars).prefix(6) {
             drafts.append(try await draft(c, prompt: "\(hint)Transcript:\n\n\(chunk)"))
         }
-        return merge(drafts, for: r, wearer: wearer)
+        var notes: [String] = []
+        let reading = merge(drafts, for: r, wearer: wearer, notes: &notes)
+        if Speakers.count(r.meta.turns ?? []) > 1 {
+            let line = "speakers \(r.name): " + (notes.isEmpty ? "none named" : notes.joined(separator: "; "))
+            await MainActor.run { DiskLog.append(line) }
+        }
+        return reading
     }
 
     /// The reader on a conversation still being spoken: the items and decisions so far,
@@ -418,7 +424,7 @@ enum Analyst {
 
     /// The kind by majority, the first title, the brief from the first part (and the
     /// end of the last), the lists joined without repeats, everything anchored.
-    private static func merge(_ drafts: [Draft], for r: Recording, wearer: Int?) -> MomentInsight {
+    private static func merge(_ drafts: [Draft], for r: Recording, wearer: Int?, notes: inout [String]) -> MomentInsight {
         let words = r.meta.words ?? []
         func anchor(_ q: String?) -> Double? { q.flatMap { Anchor.find($0, in: words) } }
         func clean(_ s: String?) -> String { (s ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -475,7 +481,7 @@ enum Analyst {
                 proposed.append(ProposedName(label: i, name: name, evidence: clean(s.evidence).isEmpty ? nil : clean(s.evidence)))
             }
         }
-        let inferred = checkedSpeakers(proposed, turns: r.meta.turns ?? [], wearer: wearer, youSpeak: r.meta.sampleID == nil)
+        let inferred = checkedSpeakers(proposed, turns: r.meta.turns ?? [], wearer: wearer, youSpeak: r.meta.sampleID == nil, notes: &notes)
         out.inferredSpeakers = inferred.isEmpty ? nil : inferred
         out.source = "model"
         out.version = MomentInsight.readerVersion
@@ -514,20 +520,46 @@ enum Analyst {
     /// all but the samples): both named as others means one is wrong, so neither is kept. A
     /// label keeps its first name, and a name given to two labels is given to neither.
     static func checkedSpeakers(_ proposed: [ProposedName], turns: [Turn], wearer: Int?, youSpeak: Bool = true) -> [String: String] {
+        var notes: [String] = []
+        return checkedSpeakers(proposed, turns: turns, wearer: wearer, youSpeak: youSpeak, notes: &notes)
+    }
+
+    /// The same, with what became of each name for the log ("Speaker 3 dropped: says the
+    /// name itself"): labels and reasons, never the names.
+    static func checkedSpeakers(_ proposed: [ProposedName], turns: [Turn], wearer: Int?, youSpeak: Bool, notes: inout [String]) -> [String: String] {
         let voices = Speakers.count(turns)
         guard voices > 1 else { return [:] }
         var named: [Int: String] = [:]
-        for p in proposed where named[p.label] == nil && p.label < voices {
+        for p in proposed {
+            let who = "Speaker \(p.label + 1)"
+            guard p.label < voices else { notes.append("\(who) dropped: no such voice"); continue }
+            guard named[p.label] == nil else { notes.append("\(who) dropped: named already"); continue }
             let yours = You.matches(p.name)
-            if let w = wearer, p.label == w, !yours { continue }
-            if let q = p.evidence, !evidenceHolds(p.name, quote: q, label: p.label, turns: turns) { continue }
+            if let w = wearer, p.label == w, !yours { notes.append("\(who) dropped: the wearer is you"); continue }
+            if let q = p.evidence, !evidenceHolds(p.name, quote: q, label: p.label, turns: turns) { notes.append("\(who) dropped: says the name itself"); continue }
             named[p.label] = yours ? (You.name ?? p.name) : p.name
+            let said = p.evidence.map { voicesSaying($0, in: turns).sorted().map { "Speaker \($0 + 1)" } } ?? []
+            let words = p.evidence == nil ? "no words given" : said.isEmpty ? "words not found" : "words said by " + said.joined(separator: ", ")
+            notes.append("\(who) kept\(yours ? " as you" : ""), \(words)")
         }
         var labels: [String: [Int]] = [:]
         for (l, n) in named { labels[n.lowercased(), default: []].append(l) }
-        for ls in labels.values where ls.count > 1 { for l in ls { named[l] = nil } }
-        if youSpeak, voices == 2, named.count == 2, You.name != nil, !named.values.contains(where: You.matches) { named = [:] }
+        for ls in labels.values where ls.count > 1 {
+            for l in ls { named[l] = nil }
+            notes.append(ls.sorted().map { "Speaker \($0 + 1)" }.joined(separator: " and ") + " dropped: the same name")
+        }
+        if youSpeak, voices == 2, named.count == 2, You.name != nil, !named.values.contains(where: You.matches) {
+            named = [:]
+            notes.append("both dropped: two voices, neither you")
+        }
         return Dictionary(uniqueKeysWithValues: named.map { (String($0.key), $0.value) })
+    }
+
+    /// The voices whose turns hold these words.
+    static func voicesSaying(_ quote: String, in turns: [Turn]) -> Set<Int> {
+        let q = " " + plain(quote) + " "
+        guard q.count > 6 else { return [] }
+        return Set(turns.filter { (" " + plain($0.text) + " ").contains(q) }.map(\.speaker))
     }
 
     /// Whether the words given for a name hold against who said them: false only when the
@@ -535,9 +567,7 @@ enum Analyst {
     /// it, the name is not in the words, or the words cannot be found in one voice.
     static func evidenceHolds(_ name: String, quote: String, label: Int, turns: [Turn]) -> Bool {
         let q = " " + plain(quote) + " "
-        guard q.count > 6 else { return true }
-        let said = Set(turns.filter { (" " + plain($0.text) + " ").contains(q) }.map(\.speaker))
-        guard said == [label], let first = plain(name).split(separator: " ").first.map(String.init),
+        guard voicesSaying(quote, in: turns) == [label], let first = plain(name).split(separator: " ").first.map(String.init),
               q.contains(" \(first) ") else { return true }
         let intro = ["i m", "im", "i am", "this is", "my name is", "it s", "its", "call me"].contains { q.contains(" \($0) \(first) ") }
         return intro || ["here", "speaking"].contains { q.contains(" \(first) \($0) ") }
