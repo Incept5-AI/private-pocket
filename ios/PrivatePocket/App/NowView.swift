@@ -1,3 +1,4 @@
+import EventKit
 import SwiftUI
 
 /// Now: the right thing for the hour, then what is coming, then the tape. Setting up or
@@ -37,7 +38,8 @@ struct NowView: View {
     @State private var picked: Set<String> = []
     @State private var confirmMany = false
     @StateObject private var replay = Replay()
-    @Environment(\.openURL) private var openURL
+    /// A meeting from Coming up, open in a sheet.
+    @State private var shownEvent: ShownEvent?
 
     private var recording: Bool { link.status.recordingSince != nil }
 
@@ -94,6 +96,11 @@ struct NowView: View {
                 .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
                 .sheet(isPresented: $showPocket) { PocketView() }
                 .fullScreenCover(item: $brief) { BriefView(brief: $0) }
+                .sheet(item: $shownEvent, onDismiss: refreshAhead) { s in
+                    EventSheet(event: s.event) { shownEvent = nil }
+                        .ignoresSafeArea()
+                        .presentationDragIndicator(.visible)
+                }
                 .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
                 .confirmationDialog("Delete this moment?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                                     titleVisibility: .visible, presenting: deleting) { r in
@@ -201,7 +208,7 @@ struct NowView: View {
             AheadList(rows: ahead) { a in
                 switch a.opens {
                 case .brief(let b): brief = b
-                case .calendar(let at): if let u = URL(string: "calshow:\(at.timeIntervalSinceReferenceDate)") { openURL(u) }
+                case .event(let e): shownEvent = ShownEvent(event: e)
                 case .moment(let id): path.append(id)
                 }
             }
@@ -707,7 +714,7 @@ private enum NowCard: Identifiable {
 
 /// What is coming, quietly: no colour field and nothing to tick, the time and what it is,
 /// with the time column of the tape below it. Four rows, then a line for the rest. A meeting
-/// opens its brief or Calendar; a thing said opens its moment.
+/// opens its brief, or the event in a sheet (`EventSheet`); a thing said opens its moment.
 struct AheadList: View {
     let rows: [Ahead]
     let open: (Ahead) -> Void

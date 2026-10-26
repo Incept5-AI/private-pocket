@@ -1,4 +1,5 @@
 import EventKit
+import EventKitUI
 import SwiftUI
 import UserNotifications
 
@@ -101,7 +102,7 @@ enum Briefs {
 /// and promises said in moments, from now to the end of tomorrow. Nothing in it asks to be
 /// done: what is late or owed is Needs you, and a meeting within the hour has its brief block.
 struct Ahead: Identifiable {
-    enum Opens { case brief(Brief), calendar(Date), moment(String) }
+    enum Opens { case brief(Brief), event(EKEvent), moment(String) }
     let id: String
     let at: Date
     /// False for a date said without a time ("by Friday"): the day is all it has.
@@ -130,7 +131,7 @@ struct Ahead: Identifiable {
             let title = (e.title ?? "").trimmingCharacters(in: .whitespaces)
             return Ahead(id: "event|\(e.eventIdentifier ?? title)|\(Int(e.startDate.timeIntervalSince1970))", at: e.startDate, timed: true,
                          title: title.isEmpty ? "A meeting" : title, detail: detail,
-                         opens: brief.map { .brief($0) } ?? .calendar(e.startDate))
+                         opens: brief.map { .brief($0) } ?? .event(e))
         }
     }
 
@@ -165,6 +166,49 @@ struct Ahead: Identifiable {
     static func saysTime(_ when: String) -> Bool {
         when.range(of: #"\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\b\d{1,2}:\d{2}\b|\bat \d{1,2}\b|\b(noon|midday|midnight|o'clock)\b|\b(half|quarter) (past|to)\b"#,
                    options: [.regularExpression, .caseInsensitive]) != nil
+    }
+}
+
+/// A meeting from Coming up, shown in the app rather than by leaving for Calendar: the
+/// system's own event view in a sheet, where it can be read and answered.
+struct ShownEvent: Identifiable {
+    let id = UUID()
+    let event: EKEvent
+}
+
+struct EventSheet: UIViewControllerRepresentable {
+    let event: EKEvent
+    let done: () -> Void
+
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let view = EKEventViewController()
+        view.event = event
+        view.allowsEditing = false
+        view.allowsCalendarPreview = true
+        view.delegate = context.coordinator
+        let nav = UINavigationController(rootViewController: view)
+        nav.delegate = context.coordinator
+        nav.view.tintColor = UIColor(Brand.act)
+        return nav
+    }
+
+    func updateUIViewController(_ nav: UINavigationController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(done: done) }
+
+    final class Coordinator: NSObject, EKEventViewDelegate, UINavigationControllerDelegate {
+        let done: () -> Void
+        init(done: @escaping () -> Void) { self.done = done }
+
+        func eventViewController(_ controller: EKEventViewController, didCompleteWith action: EKEventViewAction) { done() }
+
+        // The event view gives itself Done only when it thinks it was presented; inside a
+        // SwiftUI sheet it may not, so Done is added when it shows with no button at all.
+        func navigationController(_ nav: UINavigationController, didShow shown: UIViewController, animated: Bool) {
+            let item = shown.navigationItem
+            guard shown is EKEventViewController, item.leftBarButtonItems?.isEmpty ?? true, item.rightBarButtonItems?.isEmpty ?? true else { return }
+            item.rightBarButtonItem = UIBarButtonItem(systemItem: .done, primaryAction: UIAction { [done] _ in done() })
+        }
     }
 }
 
