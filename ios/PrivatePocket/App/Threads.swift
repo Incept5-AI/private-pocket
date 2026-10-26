@@ -106,9 +106,13 @@ struct RecordContext: Codable, Hashable {
     var person: String?
     var moment: String?
     var momentTitle: String?
+    /// A calendar meeting, recorded from its page: the moment is that meeting's, whatever
+    /// the clock says (`AppModel.analyse` takes it as the moment's event).
+    var meeting: CalendarEventRef?
 
-    /// For the record bar: "Into Northlight", "With Maya", "Follow-up".
+    /// For the record bar: "Into Northlight", "With Maya", "In Weekly sync", "Follow-up".
     var label: String {
+        if let m = meeting { return m.title.isEmpty ? "In a meeting" : "In \(m.title)" }
         if let n = threadName { return "Into \(n)" }
         if let p = person { return "With \(p)" }
         return "Follow-up"

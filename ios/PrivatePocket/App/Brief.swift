@@ -102,7 +102,7 @@ enum Briefs {
 /// and promises said in moments, from now to the end of tomorrow. Nothing in it asks to be
 /// done: what is late or owed is Needs you, and a meeting within the hour has its brief block.
 struct Ahead: Identifiable {
-    enum Opens { case brief(Brief), event(EKEvent), moment(String) }
+    enum Opens { case meeting(EKEvent), moment(String) }
     let id: String
     let at: Date
     /// False for a date said without a time ("by Friday"): the day is all it has.
@@ -118,7 +118,7 @@ struct Ahead: Identifiable {
     }
 
     /// The calendar's meetings still to come or under way, all-day ones, cancelled ones and
-    /// ones you declined left out, each with its brief when it has one.
+    /// ones you declined left out, each saying what is open when it has a brief.
     static func meetings(briefs: [Brief], now: Date = Date()) -> [Ahead] {
         Planner.events(from: now, to: horizon).compactMap { e in
             guard !e.isAllDay, e.status != .canceled, e.endDate > now,
@@ -131,7 +131,7 @@ struct Ahead: Identifiable {
             let title = (e.title ?? "").trimmingCharacters(in: .whitespaces)
             return Ahead(id: "event|\(e.eventIdentifier ?? title)|\(Int(e.startDate.timeIntervalSince1970))", at: e.startDate, timed: true,
                          title: title.isEmpty ? "A meeting" : title, detail: detail,
-                         opens: brief.map { .brief($0) } ?? .event(e))
+                         opens: .meeting(e))
         }
     }
 
@@ -169,13 +169,8 @@ struct Ahead: Identifiable {
     }
 }
 
-/// A meeting from Coming up, shown in the app rather than by leaving for Calendar: the
-/// system's own event view in a sheet, where it can be read and answered.
-struct ShownEvent: Identifiable {
-    let id = UUID()
-    let event: EKEvent
-}
-
+/// A meeting's own details, from its page, without leaving for Calendar: the system's event
+/// view in a sheet, where it can be read and answered.
 struct EventSheet: UIViewControllerRepresentable {
     let event: EKEvent
     let done: () -> Void
@@ -257,6 +252,11 @@ extension Briefs {
         }
         func overlap(_ e: EKEvent) -> Double { max(0, min(e.endDate, end).timeIntervalSince(max(e.startDate, start))) }
         guard let e = candidates.max(by: { overlap($0) < overlap($1) }) else { return nil }
+        return ref(e)
+    }
+
+    /// An event as a moment keeps it: invitees without you, rooms, resources or anyone who declined.
+    static func ref(_ e: EKEvent) -> CalendarEventRef {
         var names: [String] = []
         for p in (e.attendees ?? []) + [e.organizer].compactMap({ $0 })
         where !p.isCurrentUser && p.participantStatus != .declined && ![.room, .resource, .group].contains(p.participantType) {
@@ -395,75 +395,6 @@ enum Notify {
             content.interruptionLevel = .timeSensitive
             centre.add(UNNotificationRequest(identifier: "card-" + UUID().uuidString, content: content,
                                              trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)))
-        }
-    }
-}
-
-/// The brief, as its own screen: the name large on teal, the things open, and the last call.
-struct BriefView: View {
-    @Environment(\.dismiss) private var dismiss
-    let brief: Brief
-
-    var body: some View {
-        let b = brief
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    Text((b.minutesAway == 0 ? "Now" : "In \(b.minutesAway) minutes") + " · " + (b.event.title ?? "a meeting"))
-                        .font(.caption.weight(.bold)).tracking(1).textCase(.uppercase).opacity(0.7)
-                    Text(b.person.name + ".").font(.system(size: 64, weight: .bold)).tracking(-2).lineLimit(2).minimumScaleFactor(0.6)
-                    Text(b.count == 0 ? "Nothing open between you." : "\(b.count) thing\(b.count == 1 ? "" : "s") open." + (b.last?.startedAt.map { " You last spoke \(Findings.dayName($0))." } ?? ""))
-                        .font(.title3.weight(.bold)).lineSpacing(2)
-                    Rectangle().fill(Brand.onAct.opacity(0.25)).frame(height: 2)
-                    VStack(alignment: .leading, spacing: 18) {
-                        var n = 0
-                        ForEach(b.theirs) { t in
-                            let _ = { n += 1 }()
-                            row(n, "\(b.person.name) said they'd \(t.text.lowercased()).", t.when.map { "Promise · \($0)" } ?? "Promise, still open")
-                        }
-                        ForEach(Array(b.yours.enumerated()), id: \.offset) { i, pair in
-                            row(b.theirs.count + i + 1, "You owe: \(pair.1.text.lowercased()).", pair.0.startedAt.map { "Your to-do, from \(Findings.dayName($0))" } ?? "Your to-do")
-                        }
-                        if let f = b.figure {
-                            row(b.theirs.count + b.yours.count + 1, "Last figure: \(f).", b.last?.startedAt.map { "Said \(Findings.dayName($0))" } ?? "")
-                        }
-                    }
-                    if let last = b.last {
-                        NavigationLink(value: last.id) {
-                            HStack(spacing: 10) {
-                                Image(systemName: "play.fill").foregroundStyle(Brand.record)
-                                Text("Hear the last" + (last.meta.seconds.map { " · \(PocketFacts.length($0))" } ?? "")).font(.subheadline.weight(.bold))
-                            }
-                            .padding(.horizontal, 18).padding(.vertical, 13)
-                            .background(Brand.onAct, in: Capsule()).foregroundStyle(Brand.act)
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 8)
-                    }
-                }
-                .padding(24).padding(.top, 8)
-            }
-            .background(Brand.act.ignoresSafeArea())
-            .foregroundStyle(Brand.onAct)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }.font(.subheadline.weight(.bold)).tint(Brand.onAct)
-                }
-            }
-            .toolbarBackground(.hidden, for: .navigationBar)
-            .navigationDestination(for: String.self) { id in RecordingDetail(id: id) }
-            .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
-        }
-    }
-
-    private func row(_ n: Int, _ text: String, _ sub: String) -> some View {
-        HStack(alignment: .top, spacing: 14) {
-            Text("\(n)").font(.callout.weight(.bold)).frame(width: 36, height: 36)
-                .background(Brand.onAct, in: Circle()).foregroundStyle(Brand.act)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(text).font(.body.weight(.semibold)).lineSpacing(1)
-                if !sub.isEmpty { Text(sub).font(.footnote).opacity(0.75) }
-            }
         }
     }
 }

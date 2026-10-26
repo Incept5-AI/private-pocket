@@ -128,6 +128,12 @@ final class AppModel: ObservableObject {
             self.locator.recordingStarted(name)
             if let d = self.connectedDevice { self.live.begin(name: name, device: d.id) }
             if let ctx = self.pendingContext { self.recordContexts[name] = ctx; self.pendingContext = nil }
+            else if self.recordContexts[name] == nil, self.active, let ctx = self.pageContext, let m = ctx.meeting,
+                    Date() > m.start.addingTimeInterval(-30 * 60), Date() < m.end {
+                // The card's own button, pressed with a meeting's page open around its time:
+                // the page is ready to record, so this is that meeting.
+                self.recordContexts[name] = ctx
+            }
             self.recordingContext = self.recordContexts[name]
             self.liveThread = nil
             self.startActivity(name: name)
@@ -970,8 +976,9 @@ final class AppModel: ObservableObject {
         if LLM.availability == nil { beginWork(.reading, r) }   // the island shows it while the model reads
         // The calendar event it happened in, if Calendar is allowed: the reader is told who was invited.
         if let e = r.meta.event, !e.isReadable { r.meta.event = nil }   // its calendar has been switched off
-        if r.meta.calendarChecked == nil, r.meta.sampleID == nil, Briefs.calendarAllowed, let start = r.startedAt {
-            r.meta.event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
+        if r.meta.calendarChecked == nil, r.meta.sampleID == nil, let start = r.startedAt, r.meta.context?.meeting != nil || Briefs.calendarAllowed {
+            // Recorded from a meeting's page: that meeting, not whichever the clock finds.
+            r.meta.event = r.meta.context?.meeting ?? Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
             r.meta.calendarChecked = Date()
         }
         if Prefs.calendarName.isEmpty { You.learn() }   // who you are, so your voice is not given someone else's name
@@ -1383,7 +1390,7 @@ final class AppModel: ObservableObject {
             var again = 0
             for r in library.recordings where r.meta.calendarChecked == nil && r.meta.sampleID == nil && r.meta.transcript != nil && !working.contains(r.id) {
                 guard let start = r.startedAt else { continue }
-                let event = Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
+                let event = r.meta.context?.meeting ?? Briefs.event(during: start, seconds: r.meta.seconds ?? 0)
                 guard let saved = library.mutate(r.id, { $0.event = event; $0.calendarChecked = Date() }) else { continue }
                 if event != nil, again < 10, LLM.availability == nil {
                     again += 1

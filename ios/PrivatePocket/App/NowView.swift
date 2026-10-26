@@ -24,7 +24,6 @@ struct NowView: View {
     @State private var dismissed: Set<String> = Prefs.dismissedFindings
     @State private var hidden: Set<String> = Prefs.hiddenBlocks
     @State private var toast: String?
-    @State private var brief: Brief?
     /// The briefs to the end of tomorrow; the one within the hour is a block, the rest wait in Coming up.
     @State private var briefs: [Brief] = []
     /// The calendar's meetings to the end of tomorrow, for Coming up.
@@ -38,8 +37,6 @@ struct NowView: View {
     @State private var picked: Set<String> = []
     @State private var confirmMany = false
     @StateObject private var replay = Replay()
-    /// A meeting from Coming up, open in a sheet.
-    @State private var shownEvent: ShownEvent?
 
     private var recording: Bool { link.status.recordingSince != nil }
 
@@ -95,11 +92,9 @@ struct NowView: View {
                 .navigationDestination(for: MomentsFilter.self) { f in FilteredMoments(filter: f) }
                 .navigationDestination(for: ThreadLink.self) { ThreadView(id: $0.id) }
                 .sheet(isPresented: $showPocket) { PocketView() }
-                .fullScreenCover(item: $brief) { BriefView(brief: $0) }
-                .sheet(item: $shownEvent, onDismiss: refreshAhead) { s in
-                    EventSheet(event: s.event) { shownEvent = nil }
-                        .ignoresSafeArea()
-                        .presentationDragIndicator(.visible)
+                .navigationDestination(for: MeetingLink.self) { MeetingView(event: $0.event) }
+                .navigationDestination(for: PersonLink.self) { l in
+                    if let p = Digest.people(library.recordings, limit: 200).first(where: { $0.name == l.name }) { PersonView(person: p) }
                 }
                 .sheet(isPresented: $showSettings) { SettingsView(onDone: { showSettings = false }) }
                 .confirmationDialog("Delete this moment?", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
@@ -201,14 +196,13 @@ struct NowView: View {
         }
         let soonBrief = cards.compactMap { if case .brief(let b) = $0 { b } else { nil } }.first
         let ahead = (meetings.filter { m in
-            if case .brief(let b) = m.opens, b.id == soonBrief?.id, b.start == soonBrief?.start { return false }
-            return true
+            guard let b = soonBrief, case .meeting(let e) = m.opens else { return true }
+            return !(e.eventIdentifier == b.event.eventIdentifier && e.startDate == b.start)
         } + Ahead.said(all, meetings: meetings)).sorted { $0.at < $1.at }
         if !ahead.isEmpty {
             AheadList(rows: ahead) { a in
                 switch a.opens {
-                case .brief(let b): brief = b
-                case .event(let e): shownEvent = ShownEvent(event: e)
+                case .meeting(let e): path.append(MeetingLink(event: e))
                 case .moment(let id): path.append(id)
                 }
             }
@@ -250,8 +244,8 @@ struct NowView: View {
             NowBlock(tint: Brand.act, ink: Brand.onAct,
                      tag: "At \(b.start.formatted(date: .omitted, time: .shortened)) · \(b.person.name)" + (b.minutesAway > 0 ? " · in \(b.minutesAway) min" : ""),
                      title: b.count == 0 ? "Nothing open with \(b.person.name)." : "\(b.count) thing\(b.count == 1 ? "" : "s") open with \(b.person.name).",
-                     line: Briefs.line(b), action: "Read the brief") { brief = b }
-                .cardGestures(primary: "Read the brief", act: { brief = b }, dismiss: { hide(card.id) })
+                     line: Briefs.line(b), action: "Get ready") { path.append(MeetingLink(event: b.event)) }
+                .cardGestures(primary: "Get ready", act: { path.append(MeetingLink(event: b.event)) }, dismiss: { hide(card.id) })
         case .askCalendar:
             VStack(alignment: .leading, spacing: 8) {
                 Text("BRIEFS BEFORE MEETINGS").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
@@ -714,7 +708,7 @@ private enum NowCard: Identifiable {
 
 /// What is coming, quietly: no colour field and nothing to tick, the time and what it is,
 /// with the time column of the tape below it. Four rows, then a line for the rest. A meeting
-/// opens its brief, or the event in a sheet (`EventSheet`); a thing said opens its moment.
+/// opens its page, ready to record (`MeetingView`); a thing said opens its moment.
 struct AheadList: View {
     let rows: [Ahead]
     let open: (Ahead) -> Void
