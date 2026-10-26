@@ -148,10 +148,11 @@ struct RecordingTakeover: View {
                 Text("Listening…").font(.title3.weight(.semibold)).opacity(0.8)
             }
             if let h = model.liveThread { ThreadHintBox(hint: h, large: true) }
-            if !model.liveItems.isEmpty {
+            let caught = model.liveShown(4)
+            if !caught.items.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {
-                    ForEach(model.liveItems) { item in
-                        let confirmed = model.liveConfirmed.contains(item.id), gone = model.liveDismissed.contains(item.id)
+                    ForEach(caught.items) { item in
+                        let confirmed = model.liveConfirmed.contains(item.id)
                         HStack(spacing: 12) {
                             Text(item.isAction ? "TO DO" : item.isDate ? "DATE" : "PROMISE").font(.caption.weight(.bold)).tracking(0.8)
                                 .foregroundStyle(Brand.record).frame(width: 66, alignment: .leading)
@@ -173,11 +174,15 @@ struct RecordingTakeover: View {
                         }
                         .padding(12)
                         .background(ink, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                        .opacity(gone ? 0.45 : 1)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
+                    }
+                    if caught.earlier > 0 {
+                        Text("\(caught.earlier) earlier" + (caught.earlierKept > 0 ? ", \(caught.earlierKept) kept" : "") + " · all read again at the stop")
+                            .font(.footnote.weight(.semibold)).opacity(0.7)
                     }
                 }
                 .animation(.spring(duration: 0.4), value: model.liveItems.count)
+                .animation(.spring(duration: 0.4), value: model.liveDismissed)
             }
             ForEach(model.liveDecisions.prefix(4), id: \.self) { d in
                 HStack(alignment: .firstTextBaseline, spacing: 12) {

@@ -265,7 +265,12 @@ enum Prefs {
     /// Blocks on Now put away with a swipe, as "<kind>|<day or id>"; day keys expire by themselves.
     @MainActor static var hiddenBlocks: Set<String> {
         get { Set(UserDefaults.standard.stringArray(forKey: "hiddenBlocks") ?? []) }
-        set { UserDefaults.standard.set(Array(newValue.sorted().suffix(200)), forKey: "hiddenBlocks") }
+        // Kept in the order they were put away, so the oldest go first past two hundred.
+        set {
+            let before = UserDefaults.standard.stringArray(forKey: "hiddenBlocks") ?? []
+            let kept = before.filter(newValue.contains)
+            UserDefaults.standard.set(Array((kept + newValue.subtracting(kept).sorted()).suffix(200)), forKey: "hiddenBlocks")
+        }
     }
 
     /// Calendars switched off in Settings, by identifier: briefs and speaker names do not read

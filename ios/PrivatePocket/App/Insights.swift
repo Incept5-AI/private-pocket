@@ -10,7 +10,7 @@ struct Digest {
     struct Need: Identifiable {
         let recording: Recording
         let item: NextItem
-        /// "Overdue", "Soon", "To chase", "Open a week".
+        /// "Overdue", "To chase", "Open a week".
         let why: String
         var id: String { recording.id + "/" + item.id }
     }
@@ -126,24 +126,25 @@ struct Digest {
                       yours: yours, theirs: theirs, callCount: calls, meetingCount: meetings)
     }
 
-    /// Open items across every moment, not just the span: what needs you now.
+    /// Open items across every moment, not just the span: what is late or owed now. All of
+    /// them, so the count is true; what is merely coming is Coming up (`Ahead`), and what has
+    /// lapsed (`Ageing.lapse`) is its thread's, not Now's.
     static func needs(_ all: [Recording]) -> [Need] {
         let now = Date()
         var out: [Need] = []
         for r in all {
             for item in r.meta.insight?.items ?? [] where !item.isDismissed && !item.isDone {
+                guard Ageing.lapse(item, said: r.startedAt, now: now) == nil else { continue }
                 if item.isAction {
                     if let d = item.date, d < now { out.append(Need(recording: r, item: item, why: "Overdue")) }
                     else if item.date == nil, let s = r.startedAt, now.timeIntervalSince(s) > 7 * 86_400 { out.append(Need(recording: r, item: item, why: "Open a week")) }
                 } else if item.isPromise {
                     if let d = item.date, d < now { out.append(Need(recording: r, item: item, why: "To chase")) }
-                } else if item.isDate, let d = item.date, d > now, d < now.addingTimeInterval(48 * 3600) {
-                    out.append(Need(recording: r, item: item, why: "Soon"))
                 }
             }
         }
-        let order = ["Overdue": 0, "Soon": 1, "To chase": 2, "Open a week": 3]
-        return Array(out.sorted { (order[$0.why] ?? 9, $0.item.date ?? .distantFuture) < (order[$1.why] ?? 9, $1.item.date ?? .distantFuture) }.prefix(8))
+        let order = ["Overdue": 0, "To chase": 1, "Open a week": 2]
+        return out.sorted { (order[$0.why] ?? 9, $0.item.date ?? .distantFuture) < (order[$1.why] ?? 9, $1.item.date ?? .distantFuture) }
     }
 
     private static let stop: Set<String> = [

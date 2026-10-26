@@ -74,6 +74,8 @@ final class AppModel: ObservableObject {
     /// Said to the card: "Pocket, …" in the live transcript, answered from the recordings.
     struct CardAnswer: Identifiable {
         let id = UUID()
+        /// When it was asked: Now shows an answer for two hours.
+        let at = Date()
         let question: String
         var answer: String
     }
@@ -530,10 +532,13 @@ final class AppModel: ObservableObject {
                 guard Prefs.liveTranscript, LLM.availability == nil, text.count >= self.liveReadLength + 160 else { continue }
                 self.liveReadLength = text.count
                 guard let read = try? await Analyst.liveRead(text: text, config: LLM.config) else { continue }
+                // Each pass reads the last few minutes again and words the same thing anew: one
+                // said again, in other words, is the one already caught (its tick kept).
                 var merged = self.liveItems
                 for item in read.items {
                     let key = item.text.lowercased().trimmingCharacters(in: .punctuationCharacters)
-                    if !merged.contains(where: { $0.text.lowercased().trimmingCharacters(in: .punctuationCharacters) == key }) { merged.append(item) }
+                    if !merged.contains(where: { $0.text.lowercased().trimmingCharacters(in: .punctuationCharacters) == key
+                        || ($0.kind == item.kind && Ageing.similar($0.text, item.text)) }) { merged.append(item) }
                 }
                 self.liveItems = merged
                 self.liveDecisions = read.decisions
@@ -635,6 +640,16 @@ final class AppModel: ObservableObject {
         for t in threads.live(all) where t.moments.contains(where: { $0.id == id }) {
             await threads.catchUp(t)
         }
+    }
+
+    /// The catches to show while it records: the newest `limit` not crossed out, and how many
+    /// earlier ones are folded away, and of those how many were ticked. All of them still go
+    /// to the reading at the stop.
+    func liveShown(_ limit: Int) -> (items: [NextItem], earlier: Int, earlierKept: Int) {
+        let open = liveItems.filter { !liveDismissed.contains($0.id) }
+        let shown = Array(open.suffix(limit))
+        let rest = open.dropLast(shown.count)
+        return (shown, rest.count, rest.filter { liveConfirmed.contains($0.id) }.count)
     }
 
     func confirmLive(_ item: NextItem) { liveConfirmed.insert(item.id); liveDismissed.remove(item.id) }

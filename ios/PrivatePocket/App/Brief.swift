@@ -97,6 +97,77 @@ enum Briefs {
     }
 }
 
+/// What is ahead, quietly, under Now's blocks: the calendar's meetings and the dates, to-dos
+/// and promises said in moments, from now to the end of tomorrow. Nothing in it asks to be
+/// done: what is late or owed is Needs you, and a meeting within the hour has its brief block.
+struct Ahead: Identifiable {
+    enum Opens { case brief(Brief), calendar(Date), moment(String) }
+    let id: String
+    let at: Date
+    /// False for a date said without a time ("by Friday"): the day is all it has.
+    let timed: Bool
+    let title: String
+    let detail: String?
+    let opens: Opens
+
+    /// The end of tomorrow: how far Coming up looks.
+    static var horizon: Date {
+        let cal = Calendar.current
+        return cal.date(byAdding: .day, value: 2, to: cal.startOfDay(for: Date())) ?? Date().addingTimeInterval(36 * 3600)
+    }
+
+    /// The calendar's meetings still to come or under way, all-day ones, cancelled ones and
+    /// ones you declined left out, each with its brief when it has one.
+    static func meetings(briefs: [Brief], now: Date = Date()) -> [Ahead] {
+        Planner.events(from: now, to: horizon).compactMap { e in
+            guard !e.isAllDay, e.status != .canceled, e.endDate > now,
+                  e.attendees?.first(where: \.isCurrentUser)?.participantStatus != .declined else { return nil }
+            let brief = briefs.first { $0.event.eventIdentifier == e.eventIdentifier && $0.start == e.startDate }
+            let others = (e.attendees ?? []).filter { !$0.isCurrentUser && $0.participantStatus != .declined && ![.room, .resource, .group].contains($0.participantType) }
+                .compactMap(\.name).map { $0.split(separator: " ").first.map(String.init) ?? $0 }
+            let detail = brief.map { "Brief · \($0.count == 0 ? "nothing open" : "\($0.count) open") with \($0.person.name)" }
+                ?? (others.isEmpty ? e.location : "with " + others.prefix(3).joined(separator: ", ") + (others.count > 3 ? " +\(others.count - 3)" : ""))
+            let title = (e.title ?? "").trimmingCharacters(in: .whitespaces)
+            return Ahead(id: "event|\(e.eventIdentifier ?? title)|\(Int(e.startDate.timeIntervalSince1970))", at: e.startDate, timed: true,
+                         title: title.isEmpty ? "A meeting" : title, detail: detail,
+                         opens: brief.map { .brief($0) } ?? .calendar(e.startDate))
+        }
+    }
+
+    /// Dates, to-dos and promises said in moments that fall from now to the end of tomorrow.
+    /// A date already in Calendar is left to the calendar's own row, as is one a meeting that
+    /// day is plainly about; one taken out of Calendar stays out.
+    static func said(_ all: [Recording], meetings: [Ahead], now: Date = Date()) -> [Ahead] {
+        let end = horizon, cal = Calendar.current
+        var out: [Ahead] = []
+        for r in all {
+            for item in r.meta.insight?.items ?? [] where !item.isDone && !item.isDismissed {
+                guard let d = item.date, d > now, d < end else { continue }
+                let kind: String
+                if item.isDate {
+                    guard item.eventID == nil, item.unplaced != true,
+                          !meetings.contains(where: { cal.isDate($0.at, inSameDayAs: d) && Ageing.similar($0.title, item.text) }) else { continue }
+                    kind = "Date"
+                } else if item.isAction {
+                    kind = "To do"
+                } else if item.isPromise {
+                    kind = item.who.map { "\($0) said they would" } ?? "Promised"
+                } else { continue }
+                out.append(Ahead(id: "item|\(r.id)|\(item.id)", at: d, timed: saysTime(item.when ?? ""), title: item.text,
+                                 detail: kind + " · " + r.displayTitle, opens: .moment(r.id)))
+            }
+        }
+        return out
+    }
+
+    /// Whether the words gave a time: "at 3", "2:30", "4pm", "noon". "Friday" or "tomorrow
+    /// morning" did not, though the date read from them carries one.
+    static func saysTime(_ when: String) -> Bool {
+        when.range(of: #"\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\b\d{1,2}:\d{2}\b|\bat \d{1,2}\b|\b(noon|midday|midnight|o'clock)\b|\b(half|quarter) (past|to)\b"#,
+                   options: [.regularExpression, .caseInsensitive]) != nil
+    }
+}
+
 /// The calendar event a recording happened in: its title, when, and who was invited
 /// (you, rooms, resources and anyone who declined left out). Kept with the moment.
 struct CalendarEventRef: Codable, Hashable {

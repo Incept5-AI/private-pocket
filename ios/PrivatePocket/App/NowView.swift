@@ -1,8 +1,10 @@
 import SwiftUI
 
-/// Now: the right thing for the hour, then the tape. Setting up or pairing when that is
-/// what matters; what was just read; what needs you; what the app noticed; the day at
-/// six; yesterday, set, in the morning. Under it, the tape of everything said.
+/// Now: the right thing for the hour, then what is coming, then the tape. Setting up or
+/// pairing when that is what matters, and the recording; then at most three blocks, ranked
+/// (`nowCards`): what was just read, what needs you, the day at six or yesterday, set, in
+/// the morning, what the app noticed. Under them, quietly, the meetings and dates to the end
+/// of tomorrow (`AheadList`), and the tape of everything said.
 struct NowView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var library: Library
@@ -22,8 +24,12 @@ struct NowView: View {
     @State private var hidden: Set<String> = Prefs.hiddenBlocks
     @State private var toast: String?
     @State private var brief: Brief?
-    /// The next meeting's brief, read from the calendar once a minute rather than on every redraw.
-    @State private var upcoming: Brief?
+    /// The briefs to the end of tomorrow; the one within the hour is a block, the rest wait in Coming up.
+    @State private var briefs: [Brief] = []
+    /// The calendar's meetings to the end of tomorrow, for Coming up.
+    @State private var meetings: [Ahead] = []
+    /// The blocks past the first three, unfolded.
+    @State private var allBlocks = false
     @State private var briefsAsked = Prefs.askedBriefs
     @State private var deleting: Recording?
     /// Choosing moments to delete together: entered from a moment's menu.
@@ -31,6 +37,7 @@ struct NowView: View {
     @State private var picked: Set<String> = []
     @State private var confirmMany = false
     @StateObject private var replay = Replay()
+    @Environment(\.openURL) private var openURL
 
     private var recording: Bool { link.status.recordingSince != nil }
 
@@ -104,7 +111,7 @@ struct NowView: View {
                 }
                 .task(id: all.count) {
                     while !Task.isCancelled {
-                        upcoming = Briefs.calendarAllowed ? Briefs.upcoming(library.recordings).first : nil
+                        refreshAhead()
                         try? await Task.sleep(for: .seconds(60))
                     }
                 }
@@ -156,10 +163,14 @@ struct NowView: View {
         Prefs.hiddenBlocks = hidden
     }
 
+    /// What may stand above the tape, besides the Pocket's own state: three, in the order
+    /// they matter, and the rest folded to one line that names them.
+    static let blockLimit = 3
+
+    /// The Pocket's state (set up, pairing, recording) always shows and is not counted. Then
+    /// the blocks that tell or ask something, ranked, at most three; then what is coming,
+    /// quietly; then the tape.
     @ViewBuilder private func blocks(_ all: [Recording]) -> some View {
-        let hour = Calendar.current.component(.hour, from: Date())
-        let cal = Calendar.current
-        let today = Self.localDay()
         if devices.devices.isEmpty {
             NowBlock(tint: Brand.paper, ink: Brand.onPaper, tag: "Your Pocket", title: "Press once. Hear everything.",
                      line: "Have your Pocket nearby and switched on. No account, no cloud.",
@@ -174,17 +185,67 @@ struct NowView: View {
         if recording || !model.saving.isEmpty {
             liveBlock.cardGestures(primary: "Open", act: { withAnimation(.spring(duration: 0.6)) { model.takeover = true } }, dismiss: nil)
         }
-        if let a = model.cardAnswers.last, !hidden.contains("card|" + a.id.uuidString) {
-            NowBlock(tint: Brand.record, ink: Brand.onRecord, tag: "Said to the card", title: a.answer, line: "“Pocket, \(a.question)”")
-                .cardGestures(primary: nil, act: nil, dismiss: { hide("card|" + a.id.uuidString) })
+        let cards = nowCards(all)
+        ForEach(allBlocks ? cards : Array(cards.prefix(Self.blockLimit))) { card in
+            cardView(card, all: all)
         }
-        if !recording, Briefs.calendarAllowed, let b = upcoming, !hidden.contains("brief|" + b.id) {
+        if cards.count > Self.blockLimit {
+            foldRow(Array(cards.dropFirst(Self.blockLimit)))
+        }
+        let soonBrief = cards.compactMap { if case .brief(let b) = $0 { b } else { nil } }.first
+        let ahead = (meetings.filter { m in
+            if case .brief(let b) = m.opens, b.id == soonBrief?.id, b.start == soonBrief?.start { return false }
+            return true
+        } + Ahead.said(all, meetings: meetings)).sorted { $0.at < $1.at }
+        if !ahead.isEmpty {
+            AheadList(rows: ahead) { a in
+                switch a.opens {
+                case .brief(let b): brief = b
+                case .calendar(let at): if let u = URL(string: "calshow:\(at.timeIntervalSinceReferenceDate)") { openURL(u) }
+                case .moment(let id): path.append(id)
+                }
+            }
+        }
+    }
+
+    /// The blocks that tell or ask something, in the order they matter. An answer you asked
+    /// the card for, while fresh; the meeting within the hour; the moment just read; what is
+    /// late or owed; the day's summary (yesterday's in the morning, today's from six); a
+    /// thread back after a quiet; the calendar ask; what the app noticed. Whatever was put
+    /// away is left out.
+    private func nowCards(_ all: [Recording]) -> [NowCard] {
+        let hour = Calendar.current.component(.hour, from: Date())
+        let cal = Calendar.current
+        let today = Self.localDay()
+        var out: [NowCard] = []
+        if let a = model.cardAnswers.last, Date().timeIntervalSince(a.at) < 2 * 3600 { out.append(.answer(a)) }
+        if !recording, let b = briefs.first(where: { $0.start.timeIntervalSinceNow < 3600 }) { out.append(.brief(b)) }
+        if let r = justRead(all) { out.append(.read(r)) }
+        let needs = Digest.needs(all)
+        if !needs.isEmpty { out.append(.needs(needs, day: today)) }
+        if hour < 12, let y = yesterday(all, cal: cal) { out.append(.yesterday(y.moments, headline: y.headline, line: y.line, day: today)) }
+        if hour >= 17, let t = todayLine(all, cal: cal) { out.append(.evening(t.title, line: t.line, action: t.action, id: t.id, day: today)) }
+        if !recording, let t = threads.live(all).filter(\.isBack).max(by: { ($0.last ?? .distantPast) < ($1.last ?? .distantPast) }),
+           let latest = t.moments.last {
+            out.append(.back(t, latest: latest.id))
+        }
+        if !recording, !Briefs.calendarAllowed, !briefsAsked, !all.isEmpty { out.append(.askCalendar) }
+        if let f = topFinding(all) { out.append(.finding(f)) }
+        return out.filter { !hidden.contains($0.id) }
+    }
+
+    @ViewBuilder private func cardView(_ card: NowCard, all: [Recording]) -> some View {
+        switch card {
+        case .answer(let a):
+            NowBlock(tint: Brand.record, ink: Brand.onRecord, tag: "Said to the card", title: a.answer, line: "“Pocket, \(a.question)”")
+                .cardGestures(primary: nil, act: nil, dismiss: { hide(card.id) })
+        case .brief(let b):
             NowBlock(tint: Brand.act, ink: Brand.onAct,
                      tag: "At \(b.start.formatted(date: .omitted, time: .shortened)) · \(b.person.name)" + (b.minutesAway > 0 ? " · in \(b.minutesAway) min" : ""),
                      title: b.count == 0 ? "Nothing open with \(b.person.name)." : "\(b.count) thing\(b.count == 1 ? "" : "s") open with \(b.person.name).",
                      line: Briefs.line(b), action: "Read the brief") { brief = b }
-                .cardGestures(primary: "Read the brief", act: { brief = b }, dismiss: { hide("brief|" + b.id) })
-        } else if !recording, !Briefs.calendarAllowed, !briefsAsked, !all.isEmpty {
+                .cardGestures(primary: "Read the brief", act: { brief = b }, dismiss: { hide(card.id) })
+        case .askCalendar:
             VStack(alignment: .leading, spacing: 8) {
                 Text("BRIEFS BEFORE MEETINGS").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
                 Text("Ten minutes before a meeting with someone you've recorded, see what's open between you. And name who spoke from who was invited.").font(.callout.weight(.semibold)).foregroundStyle(Brand.onPaper)
@@ -193,36 +254,24 @@ struct NowView: View {
             .padding(18).frame(maxWidth: .infinity, alignment: .leading)
             .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .onTapGesture {
-                Task {
-                    if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all); upcoming = Briefs.upcoming(all).first }
-                    Prefs.askedBriefs = true; briefsAsked = true
-                }
-            }
-            .cardGestures(primary: "Allow Calendar", act: {
-                Task {
-                    if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all); upcoming = Briefs.upcoming(all).first }
-                    Prefs.askedBriefs = true; briefsAsked = true
-                }
-            }, dismiss: { Prefs.askedBriefs = true; withAnimation { briefsAsked = true } })
-        }
-        let back = threads.live(all).filter(\.isBack).max { ($0.last ?? .distantPast) < ($1.last ?? .distantPast) }
-        if !recording, let t = back, let latest = t.moments.last, !hidden.contains("return|" + t.id + "|" + latest.id) {
+            .onTapGesture { allowCalendar(all) }
+            .cardGestures(primary: "Allow Calendar", act: { allowCalendar(all) },
+                          dismiss: { Prefs.askedBriefs = true; withAnimation { briefsAsked = true } })
+        case .back(let t, _):
             ReturnBlock(thread: t) { path.append(ThreadLink(id: t.id)) }
-                .cardGestures(primary: "Open the thread", act: { path.append(ThreadLink(id: t.id)) }, dismiss: { hide("return|" + t.id + "|" + latest.id) })
-        }
-        if let r = justRead(all), !hidden.contains("read|" + r.id) {
+                .cardGestures(primary: "Open the thread", act: { path.append(ThreadLink(id: t.id)) }, dismiss: { hide(card.id) })
+        case .read(let r):
             NowBlock(tint: r.kind.isLife ? Brand.life : Brand.work, ink: r.kind.isLife ? Brand.onLife : Brand.onWork,
                      tag: "Just read · \(r.kind.label)", title: r.quote,
                      line: readLine(r), action: "Open it") { path.append(r.id) }
-                .cardGestures(primary: "Open it", act: { path.append(r.id) }, dismiss: { hide("read|" + r.id) })
-        }
-        if hour < 12, let y = yesterday(all, cal: cal), !hidden.contains("yesterday|" + today) {
-            let lines = Replay.lines(from: y.moments)
+                .cardGestures(primary: "Open it", act: { path.append(r.id) }, dismiss: { hide(card.id) })
+        case .yesterday(let moments, let headline, let line, _):
+            let lines = Replay.lines(from: moments)
+            let tape = { path.append(MomentsFilter(title: "Yesterday", ids: moments.map(\.id))) }
             VStack(alignment: .leading, spacing: 8) {
-                Text("YESTERDAY, SET · \(y.moments.count) CONVERSATION\(y.moments.count == 1 ? "" : "S")").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
-                Text(y.headline).font(.title3.weight(.bold)).foregroundStyle(Brand.onPaper).fixedSize(horizontal: false, vertical: true)
-                Text(y.line).font(.subheadline).foregroundStyle(Brand.onPaper.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
+                Text("YESTERDAY, SET · \(moments.count) CONVERSATION\(moments.count == 1 ? "" : "S")").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.paperMuted)
+                Text(headline).font(.title3.weight(.bold)).foregroundStyle(Brand.onPaper).fixedSize(horizontal: false, vertical: true)
+                Text(line).font(.subheadline).foregroundStyle(Brand.onPaper.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
                 if !lines.isEmpty {
                     HStack(spacing: 8) {
                         Image(systemName: replay.playing ? "stop.fill" : "play.fill").foregroundStyle(Brand.record)
@@ -237,25 +286,21 @@ struct NowView: View {
             .background(Brand.paper, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .onTapGesture {
-                if lines.isEmpty { path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id))) }
+                if lines.isEmpty { tape() }
                 else if replay.playing { replay.stop() } else { replay.play(lines) }
             }
             .cardGestures(primary: lines.isEmpty ? "Yesterday's tape" : "Listen back",
-                          act: { if lines.isEmpty { path.append(MomentsFilter(title: "Yesterday", ids: y.moments.map(\.id))) } else if !replay.playing { replay.play(lines) } },
-                          dismiss: { replay.stop(); hide("yesterday|" + today) })
-        }
-        if hour >= 17, let t = todayLine(all, cal: cal), !hidden.contains("evening|" + today) {
-            NowBlock(tint: Brand.work, ink: Brand.onWork, tag: "Six o'clock", title: t.title, line: t.line, action: t.action) {
-                if let id = t.id { path.append(id) }
+                          act: { if lines.isEmpty { tape() } else if !replay.playing { replay.play(lines) } },
+                          dismiss: { replay.stop(); hide(card.id) })
+        case .evening(let title, let line, let action, let id, _):
+            NowBlock(tint: Brand.work, ink: Brand.onWork, tag: "Six o'clock", title: title, line: line, action: action) {
+                if let id { path.append(id) }
             }
-            .cardGestures(primary: t.id == nil ? nil : t.action, act: t.id.map { id in { path.append(id) } }, dismiss: { hide("evening|" + today) })
-        }
-        let needs = Digest.needs(all)
-        if !needs.isEmpty, !hidden.contains("needs|" + today) {
-            NeedsBlock(needs: needs) { path.append($0) }
-                .cardGestures(primary: "Open the first", act: { if let n = needs.first { path.append(n.recording.id) } }, dismiss: { hide("needs|" + today) })
-        }
-        if let f = topFinding(all) {
+            .cardGestures(primary: id == nil ? nil : action, act: id.map { id in { path.append(id) } }, dismiss: { hide(card.id) })
+        case .needs(let needs, _):
+            NeedsBlock(needs: needs, open: { path.append($0) }, openAll: { openNeeds(needs) })
+                .cardGestures(primary: "Open the first", act: { if let n = needs.first { path.append(n.recording.id) } }, dismiss: { hide(card.id) })
+        case .finding(let f):
             let notRight = {
                 // Read and written against what is stored: You keeps its own copy, and neither undoes the other.
                 var stored = Prefs.dismissedFindings
@@ -266,6 +311,43 @@ struct NowView: View {
             FindingBlock(finding: f, perform: { perform($0) }, notRight: notRight)
                 .cardGestures(primary: f.choices.first?.label, act: f.choices.first.map { c in { perform(c.action) } }, dismiss: notRight)
         }
+    }
+
+    /// The blocks past the first three, as one quiet line naming them; a tap shows them all.
+    private func foldRow(_ rest: [NowCard]) -> some View {
+        Button { withAnimation(.spring(duration: 0.35)) { allBlocks.toggle() } } label: {
+            HStack(spacing: 8) {
+                Text(allBlocks ? "Show fewer" : "\(rest.count) more · " + rest.map(\.name).joined(separator: ", "))
+                    .font(.footnote.weight(.semibold)).foregroundStyle(Brand.muted).lineLimit(1)
+                Spacer(minLength: 8)
+                Image(systemName: allBlocks ? "chevron.up" : "chevron.down").font(.caption.weight(.bold)).foregroundStyle(Brand.dim)
+            }
+            .padding(.horizontal, 18).padding(.vertical, 4)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint(allBlocks ? "Folds the blocks past the first three" : "Shows every block")
+    }
+
+    private func allowCalendar(_ all: [Recording]) {
+        Task {
+            if await Planner.allowEvents() { await Briefs.allowNotifications(); Briefs.schedule(all); refreshAhead() }
+            Prefs.askedBriefs = true; briefsAsked = true
+        }
+    }
+
+    /// The briefs and the meetings to the end of tomorrow, read from the calendar once a
+    /// minute rather than on every redraw.
+    private func refreshAhead() {
+        let hours = max(1, Ahead.horizon.timeIntervalSinceNow / 3600)
+        briefs = Briefs.calendarAllowed ? Briefs.upcoming(library.recordings, hours: hours) : []
+        meetings = Ahead.meetings(briefs: briefs)
+    }
+
+    /// Every moment with something late or owed, most pressing first.
+    private func openNeeds(_ needs: [Digest.Need]) {
+        var seen = Set<String>()
+        path.append(MomentsFilter(title: "Needs you", ids: needs.map(\.recording.id).filter { seen.insert($0).inserted }))
     }
 
     private var liveBlock: some View {
@@ -284,10 +366,11 @@ struct NowView: View {
             if let h = model.liveThread {
                 ThreadHintBox(hint: h).onTapGesture { path.append(ThreadLink(id: h.id)) }
             }
-            if !model.liveItems.isEmpty || !model.liveDecisions.isEmpty {
+            let caught = model.liveShown(3)
+            if !caught.items.isEmpty || !model.liveDecisions.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(model.liveItems) { item in
-                        let confirmed = model.liveConfirmed.contains(item.id), gone = model.liveDismissed.contains(item.id)
+                    ForEach(caught.items) { item in
+                        let confirmed = model.liveConfirmed.contains(item.id)
                         HStack(spacing: 10) {
                             Text(item.isAction ? "TO DO" : item.isDate ? "DATE" : "PROMISE").font(.caption2.weight(.bold)).tracking(0.6).foregroundStyle(Brand.record).frame(width: 56, alignment: .leading)
                             Text((item.isPromise ? (item.who.map { "\($0): " } ?? "") : "") + item.text).font(.subheadline.weight(.semibold)).foregroundStyle(Color(hex: 0xFFF7E8)).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
@@ -296,7 +379,9 @@ struct NowView: View {
                         }
                         .padding(10)
                         .background(Brand.onRecord, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .opacity(gone ? 0.45 : 1)
+                    }
+                    if caught.earlier > 0 {
+                        Text("\(caught.earlier) earlier" + (caught.earlierKept > 0 ? ", \(caught.earlierKept) kept" : "")).font(.caption.weight(.bold)).opacity(0.7)
                     }
                     ForEach(model.liveDecisions.prefix(3), id: \.self) { d in
                         HStack(spacing: 10) {
@@ -578,6 +663,99 @@ struct NowView: View {
     }
 }
 
+/// A block on Now that tells or asks something. Its id is the key it is put away under.
+private enum NowCard: Identifiable {
+    case answer(AppModel.CardAnswer)
+    case brief(Brief)
+    case read(Recording)
+    case needs([Digest.Need], day: String)
+    case yesterday([Recording], headline: String, line: String, day: String)
+    case evening(String, line: String, action: String, id: String?, day: String)
+    case back(LiveThread, latest: String)
+    case askCalendar
+    case finding(Finding)
+
+    var id: String {
+        switch self {
+        case .answer(let a): "card|" + a.id.uuidString
+        case .brief(let b): "brief|" + b.id
+        case .read(let r): "read|" + r.id
+        case .needs(_, let day): "needs|" + day
+        case .yesterday(_, _, _, let day): "yesterday|" + day
+        case .evening(_, _, _, _, let day): "evening|" + day
+        case .back(let t, let latest): "return|" + t.id + "|" + latest
+        case .askCalendar: "ask-calendar"
+        case .finding(let f): "week|" + f.id
+        }
+    }
+
+    /// Its name in the folded line.
+    var name: String {
+        switch self {
+        case .answer: "The card's answer"
+        case .brief(let b): "Brief for " + b.person.name
+        case .read: "Just read"
+        case .needs(let n, _): "Needs you (\(n.count))"
+        case .yesterday: "Yesterday"
+        case .evening: "Six o'clock"
+        case .back(let t, _): t.name + " is back"
+        case .askCalendar: "Briefs"
+        case .finding(let f): f.tag
+        }
+    }
+}
+
+/// What is coming, quietly: no colour field and nothing to tick, the time and what it is,
+/// with the time column of the tape below it. Four rows, then a line for the rest. A meeting
+/// opens its brief or Calendar; a thing said opens its moment.
+struct AheadList: View {
+    let rows: [Ahead]
+    let open: (Ahead) -> Void
+    @State private var all = false
+
+    var body: some View {
+        let cal = Calendar.current
+        let shown = all ? rows : Array(rows.prefix(4))
+        VStack(alignment: .leading, spacing: 2) {
+            Text("COMING UP").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.dim).padding(.bottom, 4)
+            ForEach(Array(shown.enumerated()), id: \.element.id) { i, a in
+                if !cal.isDateInToday(a.at), i == 0 || cal.isDateInToday(shown[i - 1].at) {
+                    Text("TOMORROW").font(.caption2.weight(.bold)).tracking(0.7).foregroundStyle(Brand.dim).padding(.top, 6).padding(.bottom, 2)
+                }
+                Button { open(a) } label: { row(a) }.buttonStyle(.plain)
+            }
+            if rows.count > 4 {
+                Button { withAnimation(.easeInOut(duration: 0.25)) { all.toggle() } } label: {
+                    Text(all ? "Show fewer" : "\(rows.count - 4) more to the end of tomorrow")
+                        .font(.caption.weight(.semibold)).foregroundStyle(Brand.muted)
+                        .padding(.leading, 58).padding(.top, 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 6)
+    }
+
+    private func row(_ a: Ahead) -> some View {
+        let now = a.at <= Date()
+        return HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(now ? "now" : a.timed ? a.at.formatted(date: .omitted, time: .shortened) : "–")
+                .font(.caption.weight(.semibold).monospacedDigit()).foregroundStyle(Brand.dim)
+                .frame(width: 48, alignment: .leading)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(a.title).font(.subheadline.weight(.medium)).foregroundStyle(Brand.textSecondary).lineLimit(1)
+                if let d = a.detail, !d.isEmpty { Text(d).font(.caption).foregroundStyle(Brand.dim).lineLimit(1) }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+}
+
 /// A block on Now: a colour field, a tag, a line that matters, and the one thing to do.
 struct NowBlock: View {
     let tint: Color
@@ -607,10 +785,12 @@ struct NowBlock: View {
     }
 }
 
-/// What needs you now, as a teal block: the first three, each opening its moment.
+/// What is late or owed, as a teal block: the true count, the first three, each opening
+/// its moment, and the rest as one line that opens them all.
 struct NeedsBlock: View {
     let needs: [Digest.Need]
     let open: (String) -> Void
+    let openAll: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -625,6 +805,15 @@ struct NeedsBlock: View {
                         Text(n.why.uppercased()).font(.caption2.weight(.bold)).frame(width: 60, alignment: .leading).padding(.top, 3).opacity(0.75)
                         Text(n.item.text).font(.callout.weight(.semibold)).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
                     }
+                }
+                .buttonStyle(.plain)
+            }
+            if needs.count > 3 {
+                Button(action: openAll) {
+                    Text("\(needs.count - 3) more").font(.footnote.weight(.bold)).opacity(0.75)
+                        .padding(.leading, 70)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
