@@ -128,7 +128,7 @@ struct RecordingDetail: View {
             }
             .disabled(r.meta.transcript == nil)
         } footer: {
-            Text("For example: what did Siobhan want, or which restaurant was it?")
+            Text("For example: what did Daniel want, or which restaurant was it?")
         }
     }
 

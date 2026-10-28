@@ -68,7 +68,10 @@ enum LLM {
 
     static func complete(_ c: LLMConfig, instructions: String, prompt: String) async throws -> String {
         guard c.remote else {
-            let session = LanguageModelSession(model: .default, instructions: instructions)
+            // The default guardrails refuse ordinary business talk (a sentence about a payments
+            // app was refused); summaries and translations only transform what the user recorded.
+            let session = LanguageModelSession(model: SystemLanguageModel(guardrails: .permissiveContentTransformations),
+                                               instructions: instructions)
             return try await session.respond(to: prompt).content
         }
         guard let base = URL(string: c.url.trimmingCharacters(in: .whitespaces)) else { throw LLMError.badURL }

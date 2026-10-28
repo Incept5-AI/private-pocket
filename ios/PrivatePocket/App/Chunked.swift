@@ -164,6 +164,23 @@ enum Cleanup {
         return (f == "*" && l == "*" && t.count > 1) || (f == "[" && l == "]") || (f == "(" && l == ")") || t.allSatisfy { $0 == "♪" }
     }
 
+    /// What Whisper says over silence or music in a short piece, in English and Dutch.
+    /// Only a whole phrase that is one of these is dropped.
+    static let stockPhrases: Set<String> = [
+        "thank you", "thanks", "thank you very much", "thanks for watching", "thank you for watching",
+        "please subscribe", "subscribe", "like and subscribe", "bye", "bye bye", "goodbye", "see you next time",
+        "you", "music", "applause", "silence", "foreign",
+        "bedankt voor het kijken", "bedankt", "dank je wel", "dankjewel", "ondertiteld door", "ondertiteling",
+        "tot de volgende keer", "abonneer", "muziek",
+    ]
+
+    static func isStockPhrase(_ text: String) -> Bool {
+        let t = text.lowercased().components(separatedBy: CharacterSet.letters.union(.whitespaces).inverted).joined()
+            .split(separator: " ").joined(separator: " ")
+        return stockPhrases.contains(t) || t.hasPrefix("ondertiteld door") || t.hasPrefix("ondertiteling")
+            || t.contains("amara org")
+    }
+
     /// Drops caption words and any run of 1 to 12 words repeated back to back more than twice.
     static func words(_ input: [TimedWord]) -> [TimedWord] {
         let w = input.filter { !isNoise($0.word) }

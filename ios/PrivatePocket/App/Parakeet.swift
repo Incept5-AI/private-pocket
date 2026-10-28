@@ -36,6 +36,22 @@ actor OnDeviceSpeech {
         return TimedTranscript(text: result.text.trimmingCharacters(in: .whitespacesAndNewlines), words: words)
     }
 
+    /// One phrase (16 kHz mono), e.g. from the Translate tab.
+    func transcribe(samples: [Float], localeID: String, status: @escaping @Sendable (String) -> Void = { _ in }) async throws -> String {
+        let asr = try await loadASR(status)
+        var state = TdtDecoderState.make(decoderLayers: await asr.decoderLayerCount)
+        let code = Locale(identifier: localeID).language.languageCode?.identifier
+        // Parakeet wants at least a second; pad a shorter phrase with silence.
+        let padded = samples.count >= 16_000 ? samples : samples + [Float](repeating: 0, count: 16_000 - samples.count)
+        return try await asr.transcribe(padded, decoderState: &state, language: code.flatMap(Language.init(rawValue:)))
+            .text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Downloads and loads the speech model now (before going offline).
+    func prepare(status: @escaping @Sendable (String) -> Void) async throws {
+        _ = try await loadASR(status)
+    }
+
     /// Who spoke when. Speaker ids are local to this recording, as with the server.
     func diarize(_ url: URL, status: @escaping @Sendable (String) -> Void) async throws -> [SpeakerSegment] {
         let d = try await loadDiarizer(status)

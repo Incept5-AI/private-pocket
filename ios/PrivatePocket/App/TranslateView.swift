@@ -48,6 +48,12 @@ struct TranslateView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Toggle("Read translations aloud", isOn: $speak)
+                        Button {
+                            apply()
+                            Task { await t.prepareOffline() }
+                        } label: {
+                            Label("Get ready for offline use", systemImage: "arrow.down.circle")
+                        }
                         if !t.lines.isEmpty {
                             ShareLink(item: t.transcript) { Label("Share conversation", systemImage: "square.and.arrow.up") }
                             Button("Clear", role: .destructive) { t.clear() }
@@ -59,6 +65,7 @@ struct TranslateView: View {
             // languages the first time.
             .translationTask(config) { session in
                 for await (id, text) in t.appleQueue {
+                    if text.isEmpty { try? await session.prepareTranslation(); continue }
                     do {
                         let r = try await session.translate(text)
                         t.translated(id, .success(r.targetText))
@@ -103,7 +110,7 @@ struct TranslateView: View {
                     .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             }
             Text(mode == .device
-                 ? "Apple's speech recognition and translation. Offline once the languages are downloaded; nothing leaves the phone."
+                 ? "\(OnDeviceSpeech.supports(from) ? "Parakeet" : "Apple's speech recognition") and Apple Translation. Offline once downloaded (⋯ → Get ready for offline use); nothing leaves the phone."
                  : serverReason ?? "Each phrase goes to \(Prefs.sttModel) and \(LLM.config.remote ? LLM.config.model : "the on-device model") after a pause. More natural translations; needs a connection.")
                 .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
         }

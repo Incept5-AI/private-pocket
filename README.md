@@ -72,13 +72,22 @@ notice. Until then, Private Pocket keeps your recordings on your own phone.
   saved and transcribed as you speak, with no download afterwards.
 - **Sync over Bluetooth.** Download any recordings the phone doesn't have yet, at about
   40–60 KB/s (an hour of audio in about five minutes). No cable, Wi-Fi or account needed.
-- **Transcribe.** Choose Apple's on-device speech recognition (`SpeechAnalyzer`) in the
-  language you pick, or any OpenAI-compatible Whisper server, which can detect the language itself.
-- **Speakers.** Optionally sends audio to a diarisation server to label who spoke when.
-  You can name the speakers ("Speaker 2" → "Daniel").
-- **Summarise and ask.** Summaries and questions across one recording or a date range
-  ("who was mentioned?", "which restaurant was it?"). These use Apple Intelligence
-  (`FoundationModels`) on the phone, or any OpenAI-compatible model server.
+- **Transcribe.** On the phone with NVIDIA's Parakeet (25 European languages, detected
+  by itself, on the Neural Engine) or Apple's `SpeechAnalyzer`, or on any OpenAI-compatible
+  Whisper server. Server recordings are sent in pieces cut at pauses: sent whole, Whisper
+  falls into repetition loops on long meetings.
+- **Speakers.** Who spoke when, worked out on the phone or by a diarisation server, shown
+  as colour-coded turns with each speaker's share of the talking. Tap a time to listen
+  from there; name the speakers ("Speaker 2" → "Daniel").
+- **Conversation analysis.** An overview, who is who (and how the model knows), key points
+  with times, decisions, action items, open questions and the dynamics. The names it finds
+  can be applied with a tap, and it notices when one person was split into two speakers.
+  Plus questions across one recording or a date range ("who was mentioned?"). These use
+  Apple Intelligence (`FoundationModels`) on the phone, or any OpenAI-compatible model server.
+- **Translate.** Listen with the iPhone or through the Pocket, and read what is said
+  (say in Dutch) in your language, phrase by phrase. On the phone (Parakeet and Apple
+  Translation, offline once downloaded) or through your servers (Whisper and a language
+  model, better with idiom). It follows people switching to English.
 - **Organised.** Recordings are named by where and when they were made (from the phone's
   location; the Pocket has no GPS), are searchable, and record which Pocket made them.
   Several Pockets are supported.
@@ -92,9 +101,12 @@ notice. Until then, Private Pocket keeps your recordings on your own phone.
 | Everything "On this iPhone" (default with no server configured) | stays on the phone | stays on the phone | no |
 | Speech to text on a server | to **your** server | — | no |
 | Language model on a server | — | to **your** server | no |
-| Speakers on | to **your** diarisation server | — | no |
+| Speakers found by a server | to **your** diarisation server | — | no |
+| Translate, server mode | each phrase to **your** server | to **your** server | no |
 
-Place names use Apple's geocoder (coordinates only), and can be turned off.
+Place names use Apple's geocoder (coordinates only), and can be turned off. The on-device
+speech and speaker models are downloaded once from Hugging Face (about 490 MB); no audio is
+sent with that.
 
 ## Requirements
 
@@ -170,8 +182,13 @@ this possible.
 - **The Qwen team** (Alibaba, China): open-weight models such as Qwen3.6, used in the
   examples here, work very well as a self-hosted model for summaries and questions.
 - **Whisper** (OpenAI) and **whisper.cpp** for self-hosted speech to text, Apple's
-  `SpeechAnalyzer` and `FoundationModels` for the on-device versions,
-  [bleak](https://github.com/hbldh/bleak) for the Mac tools, and
+  `SpeechAnalyzer`, `FoundationModels` and Translation for the on-device versions.
+- **NVIDIA** for Parakeet TDT v3, **pyannote** and **WeSpeaker** for the speaker models,
+  and **[FluidAudio](https://github.com/FluidInference/FluidAudio)** (FluidInference),
+  which runs them on the Neural Engine.
+- **DeepSeek**: V4.1 Flash was the best of the self-hosted models tried at conversation
+  analysis.
+- [bleak](https://github.com/hbldh/bleak) for the Mac tools, and
   [XcodeGen](https://github.com/yonaskolb/XcodeGen).
 
 ## License
