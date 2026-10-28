@@ -19,7 +19,10 @@ final class LiveSession: ObservableObject {
     }
 
     @Published private(set) var name: String?
-    @Published private(set) var bytes = 0
+    /// Bytes streamed so far: not published, as it changes with every Bluetooth packet.
+    private(set) var bytes = 0
+    /// Whole seconds streamed so far, published once a second.
+    @Published private(set) var seconds = 0
     @Published private(set) var finalText = ""
     @Published private(set) var volatileText = ""
     /// Where the live transcript comes from, or why there is none.
@@ -49,6 +52,7 @@ final class LiveSession: ObservableObject {
         self.name = name
         deviceID = device
         bytes = 0
+        seconds = 0
         finalText = ""
         volatileText = ""
         gap = false
@@ -70,21 +74,36 @@ final class LiveSession: ObservableObject {
         let p = MP3Packetizer()
         parser = p
         localeID = Self.liveLocale()
+        // A transcriber still finishing an earlier recording never writes over this one's words.
+        let session = name
         if Prefs.sttRemote {
             let r = RemoteLiveTranscriber(localeID: localeID ?? Languages.auto)
-            r.onText = { [weak self] t in self?.finalText = t }
-            r.onError = { [weak self] e in self?.engineNote = "Live transcript paused: \(e)" }
+            r.onText = { [weak self] t in
+                if let self, self.name == session || self.name == nil { self.finalText = t }
+            }
+            r.onError = { [weak self] e in
+                if let self, self.name == session { self.engineNote = "Live transcript paused: \(e)" }
+            }
             remote = r
             engineNote = "Live transcript: \(Prefs.sttModel) on the server, every \(Int(RemoteLiveTranscriber.chunkSeconds)) s"
             p.onPackets = { [weak r] data, descs, fmt in r?.add(data, packets: descs, format: fmt) }
         } else {
             let l = LocalLiveTranscriber()
-            l.onText = { [weak self] f, v in self?.finalText = f; self?.volatileText = v }
+            l.onText = { [weak self] f, v in
+                if let self, self.name == session || self.name == nil { self.finalText = f; self.volatileText = v }
+            }
             local = l
             let id = localeID ?? Locale.current.identifier(.bcp47)
             engineNote = "Live transcript on this iPhone (\(Languages.name(id)))"
             Task {
-                do { try await l.start(localeID: id) } catch { self.engineNote = "No live transcript: \(error.localizedDescription)" }
+                do { try await l.start(localeID: id) } catch {
+                    // Not started (the language not on the phone, say): it stops collecting audio
+                    // for a recogniser that will never take it.
+                    l.abandon()
+                    guard self.name == session else { return }
+                    if self.local === l { self.local = nil }
+                    self.engineNote = "No live transcript: \(error.localizedDescription)"
+                }
             }
             p.onPackets = { [weak l] data, descs, fmt in l?.add(data, packets: descs, format: fmt) }
         }
@@ -92,8 +111,18 @@ final class LiveSession: ObservableObject {
 
     func append(_ d: Data) {
         guard isActive else { return }
-        file?.write(d)
+        if let f = file {
+            do { try f.write(contentsOf: d) } catch {
+                // The phone would not take it (full, say): the stream is no longer whole, so the
+                // Pocket's own file is downloaded at the stop.
+                try? f.close()
+                file = nil
+                gap = true
+            }
+        }
         bytes += d.count
+        let s = Int(Double(bytes) / 4_000)   // ~4 KB per second at the Pocket's 32 kbps
+        if s != seconds { seconds = s }
         parser?.parse(d)
         // ~4 KB per second at the Pocket's 32 kbps.
         if Prefs.diarize, !diarizing, bytes - lastDiarizedBytes >= Int(Self.diarizeEvery * 4_000) { refreshSpeakers() }
@@ -275,9 +304,24 @@ final class LocalLiveTranscriber {
         pending = []
     }
 
+    private var abandoned = false
+
+    /// While the recogniser starts (it may fetch its model first) about a minute is kept;
+    /// older audio goes.
     func add(_ data: Data, packets: [AudioStreamPacketDescription], format: AudioStreamBasicDescription) {
-        guard let pcm = decode(data, packets: packets, format: format) else { return }
-        if input == nil { pending.append(pcm) } else { feed(pcm) }
+        guard !abandoned, let pcm = decode(data, packets: packets, format: format) else { return }
+        if input == nil {
+            pending.append(pcm)
+            if pending.count > 1_000 { pending.removeFirst(pending.count - 1_000) }
+        } else {
+            feed(pcm)
+        }
+    }
+
+    /// It never started: nothing more is kept for it.
+    func abandon() {
+        abandoned = true
+        pending = []
     }
 
     func finish() async -> String {
@@ -363,10 +407,15 @@ final class RemoteLiveTranscriber {
     private var worker: Task<Void, Never>?
     private var text = ""
     private var cancelled = false
+    private var failures = 0
+    /// Three slices in a row failed: the server is away, and the rest of this recording is
+    /// left to the transcription after the stop.
+    private var paused = false
 
     init(localeID: String) { self.localeID = localeID }
 
     func add(_ data: Data, packets: [AudioStreamPacketDescription], format: AudioStreamBasicDescription) {
+        guard !paused, !cancelled else { return }
         for p in packets {
             buffer.append(data.subdata(in: Int(p.mStartOffset)..<Int(p.mStartOffset) + Int(p.mDataByteSize)))
         }
@@ -375,11 +424,18 @@ final class RemoteLiveTranscriber {
         if bufferedSeconds >= Self.chunkSeconds { flush() }
     }
 
+    /// The last slice usually takes a second or two. A server gone quiet is not waited on for
+    /// more than twenty, and what was heard is kept; the transcription after the stop has the rest.
     func finish() async -> String {
         flush()
+        let deadline = Date().addingTimeInterval(20)
         while worker != nil || !queue.isEmpty {
+            if Date() > deadline || cancelled || paused {
+                cancel()
+                break
+            }
             if worker == nil { work() }
-            await worker?.value
+            try? await Task.sleep(for: .milliseconds(200))
         }
         return text
     }
@@ -404,13 +460,25 @@ final class RemoteLiveTranscriber {
         let chunk = queue.removeFirst()
         worker = Task { [weak self, localeID] in
             do {
-                let t = try await RemoteSTT.transcribe(chunk.data, filename: "live.mp3", type: "audio/mpeg", localeID: localeID)
+                // A fifteen-second slice that takes a minute is not coming.
+                let t = try await RemoteSTT.transcribe(chunk.data, filename: "live.mp3", type: "audio/mpeg", localeID: localeID,
+                                                       timeout: 60)
                 guard let self else { return }
+                self.failures = 0
                 if !t.text.isEmpty { self.text += self.text.isEmpty ? t.text : " " + t.text }
                 self.words += t.words.map { TimedWord(word: $0.word, start: $0.start + chunk.offset, end: $0.end + chunk.offset) }
                 self.onText?(self.text)
             } catch {
-                self?.onError?(error.localizedDescription)
+                guard let self else { return }
+                self.failures += 1
+                if self.failures >= 3 {
+                    self.paused = true
+                    self.queue = []
+                    self.buffer = Data()
+                    self.onError?("the server didn't answer, so the whole recording is transcribed after it stops")
+                } else {
+                    self.onError?(error.localizedDescription)
+                }
             }
             guard let self else { return }
             self.worker = nil

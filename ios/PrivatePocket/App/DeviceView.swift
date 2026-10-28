@@ -135,7 +135,7 @@ struct DeviceView: View {
                     Image(systemName: "dot.radiowaves.left.and.right").foregroundStyle(live.gap ? .orange : .green)
                         .symbolEffect(.variableColor.iterative, isActive: !live.gap)
                     Text(live.gap ? "Stream interrupted, the Pocket's file will be downloaded"
-                                  : "Streaming · \(Int(Double(live.bytes) / 4_000)) s received")
+                                  : "Streaming · \(live.seconds) s received")
                         .font(.footnote)
                 }
                 if !live.turns.isEmpty, Speakers.count(live.turns) > 1 {
