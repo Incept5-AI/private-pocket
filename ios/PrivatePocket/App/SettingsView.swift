@@ -3,7 +3,11 @@ import Speech
 import SwiftUI
 
 struct SettingsView: View {
+    @EnvironmentObject var model: AppModel
     @EnvironmentObject var devices: DeviceStore
+    @State private var exportURL: URL?
+    @State private var exporting = false
+    @State private var exportFailed = false
     @EnvironmentObject var locator: Locator
     @State private var adding = false
     @State private var locale = Prefs.transcriptionLocale
@@ -94,6 +98,27 @@ struct SettingsView: View {
                     Button("Reset to default") { instructions = Prefs.defaultSummaryInstructions }
                 } header: { Text("Summary instructions") } footer: {
                     Text(Summariser.availability ?? "Sent with each transcript to \(LLM.whereLabel)")
+                }
+
+                Section {
+                    if let url = exportURL {
+                        ShareLink(item: url) { Label("Share the export", systemImage: "square.and.arrow.up") }
+                    } else {
+                        Button {
+                            Task {
+                                exporting = true
+                                exportURL = try? await model.exportAll()
+                                exportFailed = exportURL == nil
+                                exporting = false
+                            }
+                        } label: {
+                            HStack { Label("Export everything", systemImage: "archivebox"); if exporting { Spacer(); ProgressView() } }
+                        }
+                        .disabled(exporting)
+                    }
+                } header: { Text("Recordings") } footer: {
+                    Text(exportFailed ? "The export couldn't be made. Try again in a moment."
+                                      : "Every recording with its transcript and summary, as one zip, to keep somewhere else or move to another phone.")
                 }
 
                 Section("Privacy") {

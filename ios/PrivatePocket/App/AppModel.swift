@@ -438,6 +438,24 @@ final class AppModel: ObservableObject {
         library.mutate(r.id) { $0.place = nil }
     }
 
+    /// Everything under Recordings as one zip, for the share sheet: a copy to keep
+    /// somewhere else, or to move to another phone.
+    func exportAll() async throws -> URL {
+        let root = library.root
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("Private Pocket recordings.zip")
+        try? FileManager.default.removeItem(at: out)
+        return try await Task.detached(priority: .userInitiated) {
+            var copyError: Error?
+            var coordError: NSError?
+            // `.forUploading` hands over a zip of the folder.
+            NSFileCoordinator().coordinate(readingItemAt: root, options: .forUploading, error: &coordError) { url in
+                do { try FileManager.default.copyItem(at: url, to: out) } catch { copyError = error }
+            }
+            if let e = coordError ?? copyError { throw e }
+            return out
+        }.value
+    }
+
     // MARK: - USB
 
     /// Copies drive files that are missing on the phone into the library.

@@ -28,6 +28,8 @@ cd ble && set -a && . ./.env && set +a && uv run pocket.py BAT FW SPACE 'LIST_DI
 uv run pocket.py --wait 10 --out x.mp3 STA STO      # --out saves audio received on …a1
 ```
 
+**Reading the app's log from the Mac:** the protocol log is also written to `Documents/pocket-log.txt` (`DiskLog`, shareable from the device screen's Protocol log). Pull it with `xcrun devicectl device copy from --device <udid> --domain-type appDataContainer --domain-identifier com.incept5.private-pocket --source Documents/pocket-log.txt --destination pocket-log.txt`.
+
 There are no tests and no linter. To exercise app logic without the phone, copy the relevant `App/*.swift` files into a scratch directory with a `main.swift` and run it with `swiftc`, feeding it a TTS MP3 at 16 kHz/32 kbps mono (`ffmpeg … -ar 16000 -ac 1 -b:a 32k`). Background noise transcribes as nothing, so it is useless as test input.
 
 - **Adding a Swift file:** run `xcodegen generate` first. The `.xcodeproj` is generated from `project.yml` and gitignored.

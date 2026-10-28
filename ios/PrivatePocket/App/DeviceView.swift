@@ -200,6 +200,7 @@ struct DeviceView: View {
                     .disabled(!isConnected || busy)
             }
             DisclosureGroup("Protocol log") {
+                ShareLink(item: DiskLog.url) { Label("Share the full log", systemImage: "square.and.arrow.up") }
                 ForEach(Array(link.log.suffix(80).reversed().enumerated()), id: \.offset) { _, line in
                     Text(line).font(.caption.monospaced())
                 }

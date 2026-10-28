@@ -415,6 +415,7 @@ final class PocketLink: NSObject, ObservableObject {
 
     func note(_ s: String) {
         log.append("\(Date().formatted(date: .omitted, time: .standard))  \(s)")
+        DiskLog.append(s)
         if log.count > 300 { log.removeFirst(log.count - 300) }
     }
 }
