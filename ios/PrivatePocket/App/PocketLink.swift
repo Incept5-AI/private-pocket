@@ -62,7 +62,9 @@ enum PocketError: LocalizedError {
 
 @MainActor
 final class PocketLink: NSObject, ObservableObject {
-    enum Phase: Equatable { case idle, scanning, connecting, ready, busy(String) }
+    /// `waiting`: a pending connection iOS completes whenever the Pocket advertises,
+    /// with no timeout, also while the app is in the background.
+    enum Phase: Equatable { case idle, waiting, scanning, connecting, ready, busy(String) }
 
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var status = DeviceStatus()
@@ -89,6 +91,12 @@ final class PocketLink: NSObject, ObservableObject {
     private var notifyingAudio = false
     private var discoveryMode = false
     private var wantedName: String?
+    /// Background standby (see `standby`): the pending connection in flight, and the
+    /// device to arm it for once Bluetooth is powered on.
+    private var standingBy = false
+    private var standbyDevice: DeviceConfig?
+    /// Called when a standby connection is up and the handshake has run.
+    var onConnected: (() -> Void)?
     /// Try a fresh key on the next connection made without one (see `handshake`): at
     /// start, and after any link loss the Pocket caused on its own, which is what it
     /// does when put into pairing mode. A try outside pairing mode just costs a
@@ -139,7 +147,11 @@ final class PocketLink: NSObject, ObservableObject {
 
     override init() {
         super.init()
-        central = CBCentralManager(delegate: self, queue: .main)
+        // The restore identifier lets iOS relaunch the app for Bluetooth events after it
+        // was terminated in the background, handing back the pending or connected
+        // peripheral in `willRestoreState`.
+        central = CBCentralManager(delegate: self, queue: .main,
+                                   options: [CBCentralManagerOptionRestoreIdentifierKey: "PocketLink"])
     }
 
     var isReady: Bool { if case .ready = phase { true } else { if case .busy = phase { true } else { false } } }
@@ -219,6 +231,27 @@ final class PocketLink: NSObject, ObservableObject {
         return String((0..<16).map { _ in chars.randomElement()! })
     }
 
+    /// Background standby: asks iOS to connect to the known peripheral whenever it
+    /// advertises, with no timeout. Nothing happens for a device never connected
+    /// before (no peripheral id yet); that first connection is made in the foreground.
+    /// When the connection completes, the handshake runs and `onConnected` fires.
+    func standby(_ d: DeviceConfig) {
+        if connectedDeviceID == d.id, isReady { return }
+        disconnect()
+        standbyDevice = d
+        guard central.state == .poweredOn else { return }   // armed from centralManagerDidUpdateState
+        guard let pid = d.peripheralID, let p = central.retrievePeripherals(withIdentifiers: [pid]).first else {
+            note("cannot wait for \(d.name) in the background: never connected yet")
+            return
+        }
+        device = d
+        lines = []
+        standingBy = true
+        phase = .waiting
+        note("waiting for \(d.name)")
+        attach(p)
+    }
+
     /// Scan, connect and subscribe, without sending any key.
     private func establish(_ d: DeviceConfig) async throws {
         disconnect()
@@ -266,6 +299,8 @@ final class PocketLink: NSObject, ObservableObject {
         attempt += 1
         stopScanning()
         wantedName = nil
+        standingBy = false
+        standbyDevice = nil
         if cancel, let p = peripheral { cancelConnection(p) }
         peripheral = nil
         commandChar = nil
@@ -289,8 +324,34 @@ final class PocketLink: NSObject, ObservableObject {
         wantedName = nil
         peripheral = p
         p.delegate = self
-        phase = .connecting
-        central.connect(p)
+        if !standingBy { phase = .connecting }
+        if p.state == .connected {
+            connected(p)          // handed back already connected by state restoration
+        } else {
+            central.connect(p)
+        }
+    }
+
+    private func connected(_ p: CBPeripheral) {
+        stopScanning()
+        wantedName = nil
+        note("connected to \(p.name ?? "Pocket")")
+        if let d = device, d.peripheralID != p.identifier { onPeripheralLearned?(d.id, p.identifier) }
+        p.discoverServices([PocketUUID.service, PocketUUID.batteryService])
+    }
+
+    /// A standby connection is fully subscribed: finish it the way `connect` would.
+    private func checkStandbyReady() {
+        guard standingBy, notifyingReply, notifyingAudio, commandChar != nil, let d = device else { return }
+        standingBy = false
+        standbyDevice = nil
+        phase = .ready
+        connectedDeviceID = d.id
+        bouncingAfterKey = false
+        Task {
+            await run("Connecting", quiet: true) { try await handshake() }
+            if isReady { onConnected?() }
+        }
     }
 
     /// After the link is up. With a key the Pocket has accepted before: send it and
@@ -620,7 +681,23 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
             if central.state == .poweredOn, discoveryMode {
                 central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
             }
-            if central.state != .poweredOn { disconnect() }
+            if central.state == .poweredOn, phase == .idle, let d = standbyDevice { standby(d) }
+            if central.state != .poweredOn {
+                let d = standbyDevice
+                disconnect()
+                standbyDevice = d   // armed again when Bluetooth comes back
+            }
+        }
+    }
+
+    nonisolated func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        MainActor.assumeIsolated {
+            // iOS relaunched the app for a Bluetooth event. The peripheral comes back
+            // connected or with the pending connection still in place; AppModel's
+            // standby picks it up through retrievePeripherals and `attach`.
+            let ps = dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []
+            for p in ps { p.delegate = self }
+            note("restored by iOS with \(ps.count) peripheral(s)\(ps.first.map { ", \($0.state == .connected ? "connected" : "pending")" } ?? "")")
         }
     }
 
@@ -649,11 +726,7 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
         MainActor.assumeIsolated {
             cancelling.remove(p.identifier)   // any cancel before this connection has been answered
-            stopScanning()
-            wantedName = nil
-            note("connected to \(p.name ?? "Pocket")")
-            if let d = device, d.peripheralID != p.identifier { onPeripheralLearned?(d.id, p.identifier) }
-            p.discoverServices([PocketUUID.service, PocketUUID.batteryService])
+            connected(p)
         }
     }
 
@@ -661,7 +734,16 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
         MainActor.assumeIsolated {
             note("connect failed: \(error?.localizedDescription ?? "unknown")")
             guard p == peripheral else { return }
+            let rearm = standingBy ? device : nil
             teardown(cancel: false)
+            // A background wait that failed is armed again a little later: nothing else would.
+            if let d = rearm {
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(5))
+                    guard let self, self.phase == .idle, self.standbyDevice == nil else { return }
+                    self.standby(d)
+                }
+            }
         }
     }
 
@@ -702,6 +784,7 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
                 default: break
                 }
             }
+            checkStandbyReady()
         }
     }
 
@@ -709,6 +792,7 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
         MainActor.assumeIsolated {
             if c.uuid == PocketUUID.reply { notifyingReply = c.isNotifying }
             if c.uuid == PocketUUID.audio { notifyingAudio = c.isNotifying }
+            checkStandbyReady()
         }
     }
 

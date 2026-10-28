@@ -100,7 +100,7 @@ struct DeviceView: View {
             if !isConnected, model.userDisconnected {
                 Text("Disconnected. Recordings will not stream until you connect.")
             } else if !isConnected {
-                Text("Connects by itself while the app is open. The Pocket talks to one phone or app at a time.")
+                Text("Connects by itself, also while the app is in the background, so recordings stream in as they are made. The Pocket talks to one phone or app at a time.")
             }
         }
     }
@@ -206,7 +206,7 @@ struct DeviceView: View {
             }
             .disabled(busy || recording || !model.canCommand)
         } footer: {
-            Text("Fetches every recording the phone does not have yet. Pull down to do the same. Recordings made while connected are saved as they stream.")
+            Text("Recordings made while connected are saved as they stream. Anything made while the phone was away is downloaded by itself when the Pocket connects (Settings → Devices). This does it now; pulling down does the same.")
         }
     }
 
@@ -254,6 +254,7 @@ struct DeviceView: View {
     private var phaseText: String {
         switch link.phase {
         case .idle: "Not connected"
+        case .waiting: "Waiting for the Pocket"
         case .scanning: "Looking for the Pocket…"
         case .connecting: "Connecting…"
         case .ready: model.canCommand ? "Connected" : "Connected, not paired"

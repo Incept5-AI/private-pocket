@@ -40,7 +40,7 @@ struct SettingsView: View {
                         Label("USB drive: free up space", systemImage: "externaldrive")
                     }
                 } header: { Text("Devices") } footer: {
-                    Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected reconnects while the app is open, so recordings stream live. Deleting recordings from a Pocket needs the USB cable.")
+                    Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected keeps the link up, also in the background, so recordings stream in as they are made. Deleting recordings from a Pocket needs the USB cable.")
                 }
 
                 Section {
@@ -378,6 +378,7 @@ struct DeviceEditor: View {
                 }
             }
             Section("Behaviour") {
+                Toggle("Download missed recordings when connected", isOn: $device.syncsAutomatically)
                 Toggle("Set the Pocket's clock on connect", isOn: $device.setClockOnConnect)
                 Toggle("Download after stopping a recording", isOn: $device.downloadAfterStop)
                 Toggle("Transcribe automatically after download", isOn: $device.autoTranscribe)

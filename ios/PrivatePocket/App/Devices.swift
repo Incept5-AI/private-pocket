@@ -17,6 +17,13 @@ struct DeviceConfig: Codable, Identifiable, Hashable {
     var downloadAfterStop = true
     /// Transcribe each recording as soon as it is downloaded.
     var autoTranscribe = false
+    /// Download recordings made while the phone was away as soon as the Pocket connects.
+    /// Optional so device lists saved before this field existed still decode.
+    var autoSync: Bool?
+    var syncsAutomatically: Bool {
+        get { autoSync ?? true }
+        set { autoSync = newValue }
+    }
 
     var sessionKey: String {
         get { Keychain.get("sk.\(id.uuidString)") ?? "" }

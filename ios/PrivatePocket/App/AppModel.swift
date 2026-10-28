@@ -43,6 +43,8 @@ final class AppModel: ObservableObject {
     private var keepAlive: Task<Void, Never>?
     /// Pairing tries since the app came to the foreground (see `keepPairing`).
     private var pairTicks = 0
+    /// Scene is active: reconnect by scanning; otherwise leave a background standby.
+    private var active = false
 
     @Published var working: Set<String> = []   // recording ids being transcribed/summarised
     @Published var aiError: String?
@@ -70,20 +72,37 @@ final class AppModel: ObservableObject {
         }
         link.onLiveAudio = { [weak self] data in self?.live.append(data) }
         link.onLinkLost = { [weak self] in
-            self?.live.markGap()
-            Task { try? await Task.sleep(for: .seconds(2)); await self?.ensureConnected() }
+            guard let self else { return }
+            live.markGap()
+            if active {
+                Task { try? await Task.sleep(for: .seconds(2)); await self.ensureConnected() }
+            } else {
+                standby()   // at once: background runtime after a Bluetooth event is short
+            }
+        }
+        link.onConnected = { [weak self] in
+            guard let self else { return }
+            link.note("connected in the background")
+            Task { await self.autoSync() }
         }
         link.onRecordingStopped = { [weak self] name in self?.recordingStopped(name, heard: true) }
-        link.onPaired = { [weak self] d in self?.devices.update(d) }   // the key lives in the Keychain; this refreshes the views
+        link.onPaired = { [weak self] d in
+            guard let self else { return }
+            devices.update(d)   // the key lives in the Keychain; this refreshes the views
+            Task { await self.autoSync(d) }
+        }
     }
 
     // MARK: - Staying connected
 
-    /// While the app is in the foreground, keep the selected Pocket connected so
-    /// recordings stream live (iOS keeps an existing connection in the background).
+    /// Keep the selected Pocket connected so recordings stream live. In the foreground
+    /// that means scanning every 15 s; in the background a pending connection that iOS
+    /// completes whenever the Pocket is in range (an existing connection just stays up).
     func setActive(_ active: Bool) {
+        self.active = active
         keepAlive?.cancel()
-        guard active else { return }
+        guard active else { standby(); return }
+        if link.phase == .waiting { link.disconnect() }   // scan instead, which also notices new Pockets
         pairTicks = 0
         keepAlive = Task { [weak self] in
             while !Task.isCancelled {
@@ -111,11 +130,35 @@ final class AppModel: ObservableObject {
     /// The selected Pocket answers commands: it has a key the Pocket still accepts.
     var canCommand: Bool { (devices.selected?.isPaired ?? false) && !link.keyRejected }
 
+    private var wantsConnection: DeviceConfig? {
+        guard Prefs.stayConnected, !userDisconnected, !link.isDiscovering else { return nil }
+        return devices.selected
+    }
+
     /// Connected even without a key, so recordings started with the Pocket's button stream.
     func ensureConnected() async {
-        guard Prefs.stayConnected, !userDisconnected, link.phase == .idle, !link.isDiscovering,
-              let d = devices.selected else { return }
+        guard let d = wantsConnection else { return }
+        guard active else { link.standby(d); return }
+        guard link.phase == .idle else { return }
         await link.run("Connecting", quiet: true) { try await link.connect(d) }
+        await autoSync(d)
+    }
+
+    func standby() {
+        guard let d = wantsConnection else { return }
+        link.standby(d)
+    }
+
+    private var autoSyncing = false
+
+    /// Download whatever the phone is missing, quietly, once the Pocket is connected and
+    /// not recording. Runs after every connection, foreground or background.
+    func autoSync(_ device: DeviceConfig? = nil) async {
+        guard let d = device ?? devices.selected, d.isPaired, !link.keyRejected, d.syncsAutomatically, !autoSyncing,
+              link.isReady, link.connectedDeviceID == d.id, link.status.recordingSince == nil else { return }
+        autoSyncing = true
+        defer { autoSyncing = false }
+        await sync(quiet: true)
     }
 
     /// With the Pocket in pairing mode (side button held 5 s, blinking blue), give it a new key.
@@ -124,6 +167,7 @@ final class AppModel: ObservableObject {
         userDisconnected = false
         await link.run("Pairing") { try await link.pair(d) }
         devices.update(d)   // the key lives in the Keychain; this refreshes the views
+        await autoSync(d)
     }
 
     func userConnect() async {
@@ -146,6 +190,7 @@ final class AppModel: ObservableObject {
     func connectSelected() async {
         guard let d = devices.selected else { return }
         await link.run("Connecting") { try await link.connect(d) }
+        await autoSync(d)
     }
 
     /// A sync is running: one at a time, so two never share the download channel.
@@ -154,12 +199,15 @@ final class AppModel: ObservableObject {
     private var recheckedPartial: Set<String> = []
 
     /// Download every recording on the device that is not on the phone yet, and was not deleted here.
-    func sync() async {
+    func sync(quiet: Bool = false) async {
         guard let d = devices.selected, !syncing else { return }
-        guard canCommand else { link.lastError = "Pair the Pocket to download recordings from it."; return }
+        guard canCommand else {
+            if !quiet { link.lastError = "Pair the Pocket to download recordings from it." }
+            return
+        }
         syncing = true
         defer { syncing = false }
-        await link.run("Syncing") {
+        await link.run("Syncing", quiet: quiet) {
             try await link.connect(d)
             let remote = try await link.listFiles()
             // What is not here yet, and what was kept from an incomplete stream (checked once a
