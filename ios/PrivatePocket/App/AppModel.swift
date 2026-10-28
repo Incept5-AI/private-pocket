@@ -117,15 +117,25 @@ final class AppModel: ObservableObject {
         await link.run("Connecting") { try await link.connect(d) }
     }
 
-    /// Download every recording on the device that is not on the phone yet.
+    /// A sync is running: one at a time, so two never share the download channel.
+    private var syncing = false
+
+    /// Download every recording on the device that is not on the phone yet, and was not deleted here.
     func sync() async {
-        guard let d = devices.selected else { return }
+        guard let d = devices.selected, !syncing else { return }
+        syncing = true
+        defer { syncing = false }
         await link.run("Syncing") {
             try await link.connect(d)
             let remote = try await link.listFiles()
-            let missing = remote.filter { !library.has(device: d.id, day: $0.day, name: $0.name) }
+            let missing = remote.filter {
+                !library.has(device: d.id, day: $0.day, name: $0.name) && !library.wasDeleted(device: d.id, day: $0.day, name: $0.name)
+            }
             for f in missing {
+                // A recording starting takes the audio channel: the rest waits for the next sync.
+                guard link.status.recordingSince == nil else { break }
                 let data = try await link.download(f)
+                guard !data.isEmpty, link.status.recordingSince == nil else { break }
                 let place = await locator.place(for: f.name, seconds: f.seconds)
                 let r = try library.save(device: d.id, day: f.day, name: f.name, audio: data, seconds: f.seconds, place: place,
                                          pocket: pocketID(d))
@@ -229,23 +239,25 @@ final class AppModel: ObservableObject {
         working.insert(r.id)
         defer { working.remove(r.id) }
         do {
-            var r = r
             let id = localeID ?? r.meta.locale ?? Prefs.transcriptionLocale
             // Who spoke when runs alongside the words; it only needs the audio.
             let url = r.audioURL
             let speakers: Task<[SpeakerSegment], Error>? = Prefs.diarize
                 ? Task { try await Diarizer.diarize(try Data(contentsOf: url), filename: url.lastPathComponent) } : nil
             let t = try await Transcriber.transcribe(url, localeID: id)
-            r.meta.transcript = t.text
-            r.meta.words = t.words.isEmpty ? nil : t.words
-            // With auto-detect, record the language that came back so summaries match it.
-            r.meta.locale = id == Languages.auto ? NLLanguageRecognizer.dominantLanguage(for: t.text)?.rawValue : id
-            r.meta.liveTranscript = nil
-            r.meta.transcribedAt = Date()
-            r.meta.turns = nil
-            r.meta.speakersError = nil
-            if let speakers { applySpeakers(await speakers.result, to: &r) }
-            library.update(r)
+            let segments = await speakers?.result
+            // Only what transcription owns is written, onto the recording as it is now.
+            library.mutate(r.id) { m in
+                m.transcript = t.text
+                m.words = t.words.isEmpty ? nil : t.words
+                // With auto-detect, record the language that came back so summaries match it.
+                m.locale = id == Languages.auto ? NLLanguageRecognizer.dominantLanguage(for: t.text)?.rawValue : id
+                m.liveTranscript = nil
+                m.transcribedAt = Date()
+                m.turns = nil
+                m.speakersError = nil
+                if let segments { Self.applySpeakers(segments, to: &m) }
+            }
         } catch {
             aiError = "Transcription failed: \(error.localizedDescription)"
         }
@@ -255,34 +267,33 @@ final class AppModel: ObservableObject {
     func findSpeakers(_ r: Recording) async {
         working.insert(r.id)
         defer { working.remove(r.id) }
-        var r = r
+        let result: Result<[SpeakerSegment], Error>
         do {
-            let segments = try await Diarizer.diarize(try Data(contentsOf: r.audioURL), filename: r.audioURL.lastPathComponent)
-            applySpeakers(.success(segments), to: &r)
+            result = .success(try await Diarizer.diarize(try Data(contentsOf: r.audioURL), filename: r.audioURL.lastPathComponent))
         } catch {
-            applySpeakers(.failure(error), to: &r)
+            result = .failure(error)
         }
-        library.update(r)
+        library.mutate(r.id) { Self.applySpeakers(result, to: &$0) }
     }
 
-    private func applySpeakers(_ result: Result<[SpeakerSegment], Error>, to r: inout Recording) {
+    private static func applySpeakers(_ result: Result<[SpeakerSegment], Error>, to m: inout RecordingMeta) {
         switch result {
         case .success(let segments):
-            let turns = Speakers.align(r.meta.words ?? [], segments)
-            r.meta.turns = turns.isEmpty ? nil : turns
-            r.meta.speakersError = turns.isEmpty && !(r.meta.words ?? []).isEmpty ? "No speech found by the diarizer." : nil
+            let turns = Speakers.align(m.words ?? [], segments)
+            m.turns = turns.isEmpty ? nil : turns
+            m.speakersError = turns.isEmpty && !(m.words ?? []).isEmpty ? "No speech found by the diarizer." : nil
         case .failure(let e):
-            r.meta.speakersError = e.localizedDescription
+            m.speakersError = e.localizedDescription
         }
     }
 
     func renameSpeaker(_ r: Recording, speaker: Int, to name: String) {
-        var r = r
-        var names = r.meta.speakerNames ?? [:]
         let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        names[String(speaker)] = n.isEmpty ? nil : n
-        r.meta.speakerNames = names.isEmpty ? nil : names
-        library.update(r)
+        library.mutate(r.id) { m in
+            var names = m.speakerNames ?? [:]
+            names[String(speaker)] = n.isEmpty ? nil : n
+            m.speakerNames = names.isEmpty ? nil : names
+        }
     }
 
     func summarise(_ r: Recording) async {
@@ -290,11 +301,9 @@ final class AppModel: ObservableObject {
         working.insert(r.id)
         defer { working.remove(r.id) }
         do {
-            var r = r
-            r.meta.summary = try await Summariser.summarise(transcript, instructions: Prefs.summaryInstructions,
-                                                            localeID: r.meta.locale)
-            r.meta.summarisedAt = Date()
-            library.update(r)
+            let summary = try await Summariser.summarise(transcript, instructions: Prefs.summaryInstructions,
+                                                         localeID: r.meta.locale)
+            library.mutate(r.id) { $0.summary = summary; $0.summarisedAt = Date() }
         } catch {
             aiError = "Summary failed: \(error.localizedDescription)"
         }
@@ -327,10 +336,8 @@ final class AppModel: ObservableObject {
 
     /// Sets the title (empty clears it, so the place or time shows instead).
     func rename(_ r: Recording, to title: String) {
-        var r = r
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        r.meta.title = t.isEmpty ? nil : t
-        library.update(r)
+        library.mutate(r.id) { $0.title = t.isEmpty ? nil : t }
     }
 
     /// Tags a recording with where the phone is now, for when it was not captured.
@@ -340,22 +347,19 @@ final class AppModel: ObservableObject {
             return
         }
         place.approximate = false
-        var r = r
-        r.meta.place = place
-        library.update(r)
+        library.mutate(r.id) { $0.place = place }
     }
 
     func clearPlace(_ r: Recording) {
-        var r = r
-        r.meta.place = nil
-        library.update(r)
+        library.mutate(r.id) { $0.place = nil }
     }
 
     // MARK: - USB
 
     /// Copies drive files that are missing on the phone into the library.
     func importFromDrive(_ files: [DriveFile], device: DeviceConfig) {
-        for f in files where !library.has(device: device.id, day: f.day, name: f.name) {
+        for f in files where !library.has(device: device.id, day: f.day, name: f.name)
+                              && !library.wasDeleted(device: device.id, day: f.day, name: f.name) {
             do {
                 try library.save(device: device.id, day: f.day, name: f.name, audio: try drive.read(f), seconds: nil,
                                  pocket: PocketID(device))

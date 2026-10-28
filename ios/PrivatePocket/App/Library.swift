@@ -139,7 +139,29 @@ final class Library: ObservableObject {
         return r
     }()
 
-    init() { reload() }
+    init() {
+        loadDeleted()
+        reload()
+    }
+
+    // MARK: Deleted, and not downloaded again
+
+    /// Recordings deleted here, as `device/day/name` (a recording's id): the Pocket keeps its own
+    /// copy until it is cleared over USB, and a sync must not download what was deleted.
+    private(set) var deleted: Set<String> = []
+    private var deletedURL: URL { root.appendingPathComponent("deleted.json") }
+
+    private func loadDeleted() {
+        if let d = try? Data(contentsOf: deletedURL), let ids = try? JSONDecoder().decode([String].self, from: d) { deleted = Set(ids) }
+    }
+
+    private func saveDeleted() {
+        try? JSONEncoder().encode(Array(deleted).sorted()).write(to: deletedURL, options: .atomic)
+    }
+
+    func wasDeleted(device: UUID, day: String, name: String) -> Bool {
+        deleted.contains("\(device.uuidString)/\(day)/\(name)")
+    }
 
     func folder(device: UUID, day: String) -> URL {
         root.appendingPathComponent(device.uuidString).appendingPathComponent(day)
@@ -159,7 +181,12 @@ final class Library: ObservableObject {
                 }
             }
         }
-        recordings = out.sorted { $0.name > $1.name }
+        recordings = out
+        sortRecordings()
+    }
+
+    private func sortRecordings() {
+        recordings.sort { $0.name > $1.name }
     }
 
     func recordings(for device: UUID) -> [Recording] { recordings.filter { $0.deviceID == device } }
@@ -185,8 +212,13 @@ final class Library: ObservableObject {
         meta.place = place
         meta.pocket = pocket
         try writeMeta(meta, for: url)
-        reload()
-        return Recording(deviceID: device, day: day, name: name, audioURL: url, meta: meta)
+        let rec = Recording(deviceID: device, day: day, name: name, audioURL: url, meta: meta)
+        if deleted.remove(rec.id) != nil { saveDeleted() }
+        // Added in place rather than by reading every sidecar again.
+        recordings.removeAll { $0.id == rec.id }
+        recordings.append(rec)
+        sortRecordings()
+        return rec
     }
 
     /// Stamps recordings saved before `pocket` existed with the device whose folder
@@ -200,23 +232,53 @@ final class Library: ObservableObject {
         }
     }
 
+    /// Writes a whole copy back. Only for a copy taken just now: a job that awaited first
+    /// uses `mutate`, so it cannot write a stale copy over what changed meanwhile.
     func update(_ r: Recording) {
+        guard FileManager.default.fileExists(atPath: r.audioURL.path) else { return }   // deleted meanwhile: no sidecar comes back
         try? writeMeta(r.meta, for: r.audioURL)
         if let i = recordings.firstIndex(where: { $0.id == r.id }) { recordings[i] = r }
     }
 
+    /// Changes one recording as it is now, so a transcription or summary that awaited for
+    /// minutes never writes its old copy over a rename or a speaker named meanwhile. Each job
+    /// changes only the fields it owns. Nothing happens if the recording was deleted, and
+    /// nothing is written if nothing changed.
+    @discardableResult
+    func mutate(_ id: String, _ edit: (inout RecordingMeta) -> Void) -> Recording? {
+        guard let i = recordings.firstIndex(where: { $0.id == id }) else { return nil }
+        var r = recordings[i]
+        guard FileManager.default.fileExists(atPath: r.audioURL.path) else { return nil }
+        let before = r.meta
+        edit(&r.meta)
+        guard r.meta != before else { return r }
+        try? writeMeta(r.meta, for: r.audioURL)
+        recordings[i] = r
+        return r
+    }
+
+    /// Remembered as deleted, so a sync does not download it again from the Pocket.
     func delete(_ r: Recording) {
         try? FileManager.default.removeItem(at: r.audioURL)
         try? FileManager.default.removeItem(at: metaURL(r.audioURL))
-        reload()
+        deleted.insert(r.id)
+        saveDeleted()
+        recordings.removeAll { $0.id == r.id }
     }
 
     private func metaURL(_ audio: URL) -> URL { audio.deletingPathExtension().appendingPathExtension("json") }
 
     private func loadMeta(_ audio: URL) -> RecordingMeta {
-        guard let d = try? Data(contentsOf: metaURL(audio)),
-              let m = try? JSONDecoder().decode(RecordingMeta.self, from: d) else { return RecordingMeta() }
-        return m
+        let url = metaURL(audio)
+        guard let d = try? Data(contentsOf: url) else { return RecordingMeta() }
+        do {
+            return try JSONDecoder().decode(RecordingMeta.self, from: d)
+        } catch {
+            // Kept aside before anything writes over it, so a sidecar that no longer decodes is not lost.
+            let bad = url.appendingPathExtension("bad")
+            if !FileManager.default.fileExists(atPath: bad.path) { try? d.write(to: bad) }
+            return RecordingMeta()
+        }
     }
 
     private func writeMeta(_ m: RecordingMeta, for audio: URL) throws {
