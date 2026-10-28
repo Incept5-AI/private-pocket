@@ -47,6 +47,13 @@ final class AppModel: ObservableObject {
     private var active = false
 
     @Published var working: Set<String> = []   // recording ids being transcribed/summarised
+    @Published var progress: [String: String] = [:]   // what each of those is doing now
+    /// Also given the Pocket's live MP3 while it records (the Translate tab listening through it).
+    var liveListener: ((Data) -> Void)?
+
+    /// The Pocket can be listened to: connected, and either recording or able to start.
+    var pocketCanStream: Bool { link.isReady && (canCommand || link.status.recordingSince != nil) }
+    var pocketRecording: Bool { link.status.recordingSince != nil }
     @Published var aiError: String?
     /// Questions and answers for this session, keyed by scope ("all" or a recording id).
     @Published var conversations: [String: [QA]] = [:]
@@ -70,7 +77,10 @@ final class AppModel: ObservableObject {
             self.locator.recordingStarted(name)
             if let d = self.connectedDevice { self.live.begin(name: name, device: d.id) }
         }
-        link.onLiveAudio = { [weak self] data in self?.live.append(data) }
+        link.onLiveAudio = { [weak self] data in
+            self?.live.append(data)
+            self?.liveListener?(data)
+        }
         link.onLinkLost = { [weak self] in
             guard let self else { return }
             live.markGap()
@@ -401,16 +411,24 @@ final class AppModel: ObservableObject {
 
     /// Transcribes in `localeID`, else the language last used for this recording,
     /// else the default from Settings.
+    /// Reports a step of a job on recording `id` (shown under its working spinner).
+    private func reporter(_ id: String) -> @Sendable (String) -> Void {
+        { [weak self] text in Task { @MainActor in if self?.working.contains(id) == true { self?.progress[id] = text } } }
+    }
+
     func transcribe(_ r: Recording, localeID: String? = nil) async {
         working.insert(r.id)
-        defer { working.remove(r.id) }
+        defer { working.remove(r.id); progress[r.id] = nil }
+        var done = false
         do {
             let id = localeID ?? r.meta.locale ?? Prefs.transcriptionLocale
             // Who spoke when runs alongside the words; it only needs the audio.
             let url = r.audioURL
+            let status = reporter(r.id)
             let speakers: Task<[SpeakerSegment], Error>? = Prefs.diarize
-                ? Task { try await Diarizer.diarize(try Data(contentsOf: url), filename: url.lastPathComponent) } : nil
-            let t = try await Transcriber.transcribe(url, localeID: id)
+                ? Task { try await Diarizer.diarize(url, status: status) } : nil
+            let t = try await Transcriber.transcribe(url, localeID: id, status: status)
+            if speakers != nil { status("Finding speakers…") }
             let segments = await speakers?.result
             // Only what transcription owns is written, onto the recording as it is now.
             library.mutate(r.id) { m in
@@ -424,8 +442,14 @@ final class AppModel: ObservableObject {
                 m.speakersError = nil
                 if let segments { Self.applySpeakers(segments, to: &m) }
             }
+            done = true
         } catch {
             aiError = "Transcription failed: \(error.localizedDescription)"
+        }
+        // The analysis follows the transcript, unless it was turned off or cannot run.
+        if done, Prefs.autoAnalyse, Summariser.availability == nil, let fresh = library.recordings.first(where: { $0.id == r.id }) {
+            working.remove(r.id)
+            await summarise(fresh)
         }
     }
 
@@ -433,9 +457,10 @@ final class AppModel: ObservableObject {
     func findSpeakers(_ r: Recording) async {
         working.insert(r.id)
         defer { working.remove(r.id) }
+        defer { progress[r.id] = nil }
         let result: Result<[SpeakerSegment], Error>
         do {
-            result = .success(try await Diarizer.diarize(try Data(contentsOf: r.audioURL), filename: r.audioURL.lastPathComponent))
+            result = .success(try await Diarizer.diarize(r.audioURL, status: reporter(r.id)))
         } catch {
             result = .failure(error)
         }
@@ -462,14 +487,39 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Uses the names the analysis suggested for speakers that have none.
+    func applySuggestedNames(_ r: Recording, _ names: [Int: String]) {
+        library.mutate(r.id) { m in
+            var all = m.speakerNames ?? [:]
+            for (k, v) in names where all[String(k)] == nil { all[String(k)] = v }
+            m.speakerNames = all.isEmpty ? nil : all
+        }
+    }
+
+    /// One person split into two labels: `from`'s turns become `into`'s.
+    func mergeSpeakers(_ r: Recording, speaker from: Int, into: Int) {
+        library.mutate(r.id) { m in
+            guard let turns = m.turns else { return }
+            m.turns = Speakers.merge(turns, speaker: from, into: into)
+            if var names = m.speakerNames {
+                if names[String(into)] == nil { names[String(into)] = names[String(from)] }
+                names[String(from)] = nil
+                m.speakerNames = names.isEmpty ? nil : names
+            }
+        }
+    }
+
     func summarise(_ r: Recording) async {
         guard let transcript = r.transcriptForModel else { return }
         working.insert(r.id)
-        defer { working.remove(r.id) }
+        defer { working.remove(r.id); progress[r.id] = nil }
+        progress[r.id] = "Analysing with \(LLM.config.remote ? LLM.config.model : "the on-device model")…"
         do {
+            let context = r.meta.turns.flatMap { Speakers.count($0) > 1 ? Analysis.talkLine($0, names: r.meta.speakerNames) : nil }
             let summary = try await Summariser.summarise(transcript, instructions: Prefs.summaryInstructions,
-                                                         localeID: r.meta.locale)
-            library.mutate(r.id) { $0.summary = summary; $0.summarisedAt = Date() }
+                                                         localeID: r.meta.locale, context: context)
+            let by = LLM.config.remote ? LLM.config.model : "on-device"
+            library.mutate(r.id) { $0.summary = summary; $0.summarisedAt = Date(); $0.summaryModel = by }
         } catch {
             aiError = "Summary failed: \(error.localizedDescription)"
         }

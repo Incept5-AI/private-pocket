@@ -20,6 +20,8 @@ struct SettingsView: View {
     @AppStorage("sttRemote") private var sttRemote = LLMConfig.hasDefault
     @State private var stayConnected = Prefs.stayConnected
     @AppStorage("sttModel") private var sttModel = RemoteSTT.defaultModel
+    @AppStorage("localEngine") private var localEngine = LocalEngine.parakeet
+    @AppStorage("autoAnalyse") private var autoAnalyse = true
 
     var body: some View {
         NavigationStack {
@@ -45,7 +47,7 @@ struct SettingsView: View {
 
                 Section {
                     NavigationLink { STTSettingsView() } label: {
-                        LabeledContent("Speech to text", value: sttRemote ? sttModel : "On this iPhone")
+                        LabeledContent("Speech to text", value: sttRemote ? sttModel : localEngine == .parakeet ? "Parakeet on this iPhone" : "On this iPhone")
                     }
                     NavigationLink { LLMSettingsView() } label: {
                         LabeledContent("Language model", value: llmRemote ? llmModel : "On this iPhone")
@@ -58,7 +60,7 @@ struct SettingsView: View {
 
                 Section {
                     Picker("Default", selection: $locale) {
-                        ForEach(((sttRemote ? [Languages.auto] : []) + [locale] + favourites).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } },
+                        ForEach(((Prefs.canDetectLanguage ? [Languages.auto] : []) + [locale] + favourites).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } },
                                 id: \.self) { Text(Languages.name($0)).tag($0) }
                     }
                     .onChange(of: locale) { Prefs.transcriptionLocale = locale }
@@ -68,8 +70,8 @@ struct SettingsView: View {
                         LabeledContent("Languages to offer", value: favourites.map(Languages.name).joined(separator: ", "))
                     }
                 } header: { Text("Transcription language") } footer: {
-                    Text(sttRemote
-                         ? "Whisper on the server can detect the language, or you can name it. Each recording can be transcribed again in another language from its page."
+                    Text(sttRemote || localEngine == .parakeet
+                         ? "\(sttRemote ? "Whisper on the server" : "Parakeet") can detect the language, or you can name it. Each recording can be transcribed again in another language from its page."
                          : "Each recording can be transcribed in any of these; pick the language on the recording. On-device recognition cannot detect the language itself. Each language's model downloads once, then works offline.")
                 }
 
@@ -92,12 +94,15 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Analyse after transcribing", isOn: $autoAnalyse)
                     TextEditor(text: $instructions)
                         .frame(minHeight: 140)
+                        .font(.callout)
                         .onChange(of: instructions) { Prefs.summaryInstructions = instructions }
                     Button("Reset to default") { instructions = Prefs.defaultSummaryInstructions }
-                } header: { Text("Summary instructions") } footer: {
-                    Text(Summariser.availability ?? "Sent with each transcript to \(LLM.whereLabel)")
+                } header: { Text("Analysis") } footer: {
+                    Text((Summariser.availability ?? "Sent with each transcript to \(LLM.whereLabel)") +
+                         " The default asks for an overview, who is who, key points with times, decisions, action items, open questions and the dynamics, and the app offers the speaker names it finds. Of the server models tried, DeepSeek V4.1 Flash did this best.")
                 }
 
                 Section {
@@ -202,8 +207,10 @@ struct STTSettingsView: View {
     @AppStorage("sttURL") private var url = LLMConfig.defaultURL
     @AppStorage("sttModel") private var model = RemoteSTT.defaultModel
     @AppStorage("liveTranscript") private var liveTranscript = true
-    @AppStorage("diarize") private var diarize = !Diarizer.defaultURLs.isEmpty
+    @AppStorage("diarize") private var diarize = true
+    @AppStorage("diarizeOnDevice") private var diarizeOnDevice = true
     @AppStorage("diarizeURLs") private var diarizeURLs = Diarizer.defaultURLs
+    @AppStorage("localEngine") private var engine = LocalEngine.parakeet
     @State private var key = RemoteSTT.key
 
     var body: some View {
@@ -216,8 +223,19 @@ struct STTSettingsView: View {
                 .pickerStyle(.segmented)
             } footer: {
                 Text(remote
-                     ? "Recordings are uploaded to the server below (as MP3) and the text comes back. Whisper detects the language if you let it."
-                     : "Apple's on-device speech recognition. The audio does not leave the phone. You choose the language; each language's model downloads once.")
+                     ? "Recordings are uploaded to the server below in pieces of up to 28 s, cut at pauses, and the text comes back. Sent whole, Whisper repeats itself on long recordings. It detects the language if you let it."
+                     : "The audio does not leave the phone.")
+            }
+            if !remote {
+                Section {
+                    Picker("Engine", selection: $engine) {
+                        ForEach(LocalEngine.allCases) { Text($0.label).tag($0) }
+                    }
+                } footer: {
+                    Text(engine == .parakeet
+                         ? "NVIDIA's Parakeet on the Neural Engine: 25 European languages, detected by itself, and as accurate as Whisper on the server on Pocket recordings. The model (470 MB) downloads the first time. Other languages use Apple's."
+                         : "Apple's speech recognition. You choose the language; each language's model downloads once. Less accurate than Parakeet on meetings.")
+                }
             }
             if remote {
                 Section {
@@ -242,6 +260,12 @@ struct STTSettingsView: View {
             Section {
                 Toggle("Label speakers", isOn: $diarize)
                 if diarize {
+                    Picker("Find them", selection: $diarizeOnDevice) {
+                        Text("On this iPhone").tag(true)
+                        Text("Server").tag(false)
+                    }
+                }
+                if diarize, !diarizeOnDevice {
                     TextField("e.g. http://gpu1:8000/v1, http://gpu2:8000/v1", text: $diarizeURLs, axis: .vertical)
                         .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .font(.callout.monospaced())
@@ -250,7 +274,9 @@ struct STTSettingsView: View {
                     }
                 }
             } header: { Text("Speakers") } footer: {
-                Text("Sends the audio to a diarisation server (…/audio/diarize) to work out who spoke when, with either kind of speech to text. Several servers, comma-separated, are tried in order. During a recording, speakers are refreshed every \(Int(LiveSession.diarizeEvery)) s. Uses the speech-to-text key, or the language model's.")
+                Text(diarizeOnDevice
+                     ? "Works out who spoke when on this iPhone (pyannote and WeSpeaker on the Neural Engine; a 20 MB model downloads the first time), with either kind of speech to text. During a recording, speakers are refreshed every \(Int(LiveSession.diarizeEvery)) s."
+                     : "Sends the audio to a diarisation server (…/audio/diarize) to work out who spoke when, with either kind of speech to text. Several servers, comma-separated, are tried in order. During a recording, speakers are refreshed every \(Int(LiveSession.diarizeEvery)) s. Uses the speech-to-text key, or the language model's.")
             }
         }
         .navigationTitle("Speech to text")

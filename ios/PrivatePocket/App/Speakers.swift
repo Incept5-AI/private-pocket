@@ -102,6 +102,12 @@ enum Diarizer {
 
     @MainActor static var enabled: Bool { Prefs.diarize }
 
+    /// On the phone or on the server, as set in Settings.
+    static func diarize(_ url: URL, status: @escaping @Sendable (String) -> Void = { _ in }) async throws -> [SpeakerSegment] {
+        if await Prefs.diarizeOnDevice { return try await OnDeviceSpeech.shared.diarize(url, status: status) }
+        return try await diarize(try Data(contentsOf: url), filename: url.lastPathComponent)
+    }
+
     static func diarize(_ audio: Data, filename: String = "audio.mp3") async throws -> [SpeakerSegment] {
         let (urls, key) = await MainActor.run {
             (Prefs.diarizeURLs.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) },

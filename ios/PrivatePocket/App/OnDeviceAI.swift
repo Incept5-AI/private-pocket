@@ -3,11 +3,22 @@ import Foundation
 import FoundationModels
 import Speech
 
-/// On-device speech-to-text with SpeechAnalyzer / SpeechTranscriber. The model
-/// assets are downloaded once by the OS; audio never leaves the phone.
+/// Speech to text for a whole recording: the server's Whisper in pieces, Parakeet on the
+/// phone, or Apple's SpeechAnalyzer / SpeechTranscriber (its assets are downloaded once by
+/// the OS). On the phone, audio never leaves it.
 enum Transcriber {
-    static func transcribe(_ url: URL, localeID: String) async throws -> TimedTranscript {
-        if await Prefs.sttRemote { return try await RemoteSTT.transcribe(url, localeID: localeID) }
+    static func transcribe(_ url: URL, localeID: String,
+                           status: @escaping @Sendable (String) -> Void = { _ in }) async throws -> TimedTranscript {
+        if await Prefs.sttRemote {
+            return try await RemoteSTT.transcribe(url, localeID: localeID) { done, total in
+                status("Transcribing on the server: \(done) of \(total)…")
+            }
+        }
+        // Parakeet covers 25 European languages; anything else goes to Apple's.
+        if await Prefs.localEngine == .parakeet, OnDeviceSpeech.supports(localeID) {
+            return try await OnDeviceSpeech.shared.transcribe(url, localeID: localeID, status: status)
+        }
+        status("Transcribing on this iPhone…")
         let transcriber = try await prepare(localeID: localeID, reporting: [])
         let file = try AVAudioFile(forReading: url)
         async let collected = transcriber.results.reduce(into: TimedTranscript(text: "", words: [])) { acc, result in
@@ -52,7 +63,7 @@ enum Transcriber {
 
     /// The OS keeps speech models for a limited number of languages per app. Free
     /// a slot (the language least likely to be wanted again) when they are all taken.
-    private static func reserve(_ locale: Locale) async throws {
+    static func reserve(_ locale: Locale) async throws {
         let reserved = await AssetInventory.reservedLocales
         let tag = { (l: Locale) in l.identifier(.bcp47) }
         guard !reserved.contains(where: { tag($0) == tag(locale) }) else { return }
@@ -72,8 +83,13 @@ enum Languages {
     static let auto = "auto"
 
     static func supported() async -> [String] {
-        await SpeechTranscriber.supportedLocales
-            .map { $0.identifier(.bcp47) }
+        var ids = Set(await SpeechTranscriber.supportedLocales.map { $0.identifier(.bcp47) })
+        if await Prefs.canDetectLanguage {
+            // Parakeet and Whisper take a language, not a region: offer each one once.
+            let have = Set(ids.compactMap { Locale(identifier: $0).language.languageCode?.identifier })
+            ids.formUnion(OnDeviceSpeech.languages.filter { !have.contains($0) })
+        }
+        return ids
             .sorted { name($0).localizedCompare(name($1)) == .orderedAscending }
     }
 
@@ -89,7 +105,8 @@ enum Summariser {
     /// Why summaries and questions cannot run now, or nil if they can.
     @MainActor static var availability: String? { LLM.availability }
 
-    static func summarise(_ transcript: String, instructions: String, localeID: String?) async throws -> String {
+    /// `context` (e.g. each speaker's share of the talking) goes ahead of the transcript.
+    static func summarise(_ transcript: String, instructions: String, localeID: String?, context: String? = nil) async throws -> String {
         let c = await LLM.config
         if let why = await LLM.availability { throw AIError.modelUnavailable(why) }
         var instructions = instructions
@@ -101,19 +118,28 @@ enum Summariser {
         let text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw AIError.emptyTranscript }
 
+        let lead = context.map { "\($0)\n\n" } ?? ""
         let chunks = split(text, max: c.chunkChars)
         if chunks.count == 1 {
-            return try await LLM.complete(c, instructions: instructions, prompt: "Transcript:\n\n\(text)")
+            return try await LLM.complete(c, instructions: instructions, prompt: "\(lead)Transcript:\n\n\(text)")
         }
         var partials: [String] = []
         for (i, chunk) in chunks.enumerated() {
-            partials.append(try await LLM.complete(c,
-                instructions: "Summarise this part of a longer transcript in a few bullet points. Keep any action items, names and decisions. Use only what is in the text.",
-                prompt: "Part \(i + 1) of \(chunks.count):\n\n\(chunk)"))
+            partials.append(try await LLM.complete(c, instructions: Analysis.partInstructions,
+                                                   prompt: "Part \(i + 1) of \(chunks.count):\n\n\(chunk)"))
         }
+        // Notes that still do not fit are shortened (twice at most), then cut.
+        var notes = partials.enumerated().map { "Part \($0.offset + 1):\n\($0.element)" }.joined(separator: "\n\n")
+        for _ in 0..<2 where notes.count > c.chunkChars {
+            var shorter: [String] = []
+            for piece in split(notes, max: c.chunkChars) {
+                shorter.append(try await LLM.complete(c, instructions: Analysis.shortenInstructions, prompt: piece))
+            }
+            notes = shorter.joined(separator: "\n\n")
+        }
+        notes = String(notes.prefix(c.chunkChars))
         return try await LLM.complete(c, instructions: instructions,
-                                      prompt: "These are notes on consecutive parts of one recording. Combine them into a single summary.\n\n" +
-                                          partials.joined(separator: "\n\n"))
+                                      prompt: "\(lead)These are notes on consecutive parts of one recording, in order. Write the analysis from them.\n\n\(notes)")
     }
 
     /// Splits on sentence boundaries where possible.

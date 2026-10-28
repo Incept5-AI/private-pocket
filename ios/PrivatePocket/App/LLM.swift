@@ -20,8 +20,9 @@ struct LLMConfig: Sendable {
     /// A server was configured at build time: use it by default, offer a reset to it.
     static let hasDefault = !DefaultServer.url.isEmpty
 
-    /// The on-device model has a 4k-token window; a server is told its own size.
-    var chunkChars: Int { remote ? max(contextChars, 4_000) : 6_000 }
+    /// The on-device model has an 8k-token window (instructions and the answer included);
+    /// a server is told its own size.
+    var chunkChars: Int { remote ? max(contextChars, 4_000) : 10_000 }
 
     var host: String { URL(string: url)?.host() ?? url }
 }
@@ -138,9 +139,10 @@ enum RemoteSTT {
         return nil
     }
 
-    static func transcribe(_ audio: URL, localeID: String) async throws -> TimedTranscript {
-        try await transcribe(try Data(contentsOf: audio), filename: audio.lastPathComponent,
-                             type: "audio/mpeg", localeID: localeID)
+    /// A whole recording, in pieces (see `ChunkedSTT`).
+    static func transcribe(_ audio: URL, localeID: String,
+                           progress: @escaping @Sendable (Int, Int) -> Void = { _, _ in }) async throws -> TimedTranscript {
+        try await ChunkedSTT.transcribe(audio, localeID: localeID, progress: progress)
     }
 
     /// Sends one second of silence, to check the URL, key and model.
@@ -158,6 +160,12 @@ enum RemoteSTT {
     /// Text plus word times (`verbose_json` with word timestamps), for speakers.
     static func transcribe(_ audio: Data, filename: String, type: String, localeID: String,
                            timeout: TimeInterval = 1_800) async throws -> TimedTranscript {
+        try await request(audio, filename: filename, type: type, localeID: localeID, timeout: timeout).transcript
+    }
+
+    /// One request, with the language Whisper detected (when not told it).
+    static func request(_ audio: Data, filename: String, type: String, localeID: String,
+                        timeout: TimeInterval = 1_800, temperature: Double = 0) async throws -> (transcript: TimedTranscript, language: String?) {
         if let why = await RemoteSTT.availability { throw AIError.modelUnavailable(why) }
         let (base, model, key) = await MainActor.run {
             // An empty key falls back to the language model's key (same server by default).
@@ -174,6 +182,7 @@ enum RemoteSTT {
         field("model", model)
         field("response_format", "verbose_json")
         field("timestamp_granularities[]", "word")
+        field("temperature", String(temperature))
         if localeID != Languages.auto, let code = Locale(identifier: localeID).language.languageCode?.identifier {
             field("language", code)
         }
@@ -195,10 +204,12 @@ enum RemoteSTT {
             struct Word: Decodable { let word: String; let start: Double; let end: Double }
             let text: String
             let words: [Word]?
+            let language: String?
         }
         let r = try JSONDecoder().decode(Reply.self, from: data)
         let text = r.text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " ")
-        return TimedTranscript(text: text.trimmingCharacters(in: .whitespacesAndNewlines),
-                          words: (r.words ?? []).map { TimedWord(word: $0.word.trimmingCharacters(in: .whitespaces), start: $0.start, end: $0.end) })
+        let t = TimedTranscript(text: text.trimmingCharacters(in: .whitespacesAndNewlines),
+                                words: (r.words ?? []).map { TimedWord(word: $0.word.trimmingCharacters(in: .whitespaces), start: $0.start, end: $0.end) })
+        return (t, r.language.flatMap { $0.isEmpty ? nil : $0 })
     }
 }

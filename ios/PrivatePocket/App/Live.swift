@@ -138,7 +138,7 @@ final class LiveSession: ObservableObject {
         Task {
             defer { if self.name == name { self.diarizing = false } }
             do {
-                let segments = try await Diarizer.diarize(try Data(contentsOf: url), filename: "\(name).mp3")
+                let segments = try await Diarizer.diarize(url)
                 guard self.name == name else { return }
                 turns = Speakers.align(words, segments)
                 speakersNote = nil
@@ -279,9 +279,7 @@ final class LocalLiveTranscriber {
     private var results: Task<Void, Never>?
     private var target: AVAudioFormat?
     private var pending: [AVAudioPCMBuffer] = []
-    private var decoder: AVAudioConverter?
     private var resampler: AVAudioConverter?
-    private var pcmFormat: AVAudioFormat?
     private var finalText = ""
     private(set) var words: [TimedWord] = []
 
@@ -367,8 +365,21 @@ final class LocalLiveTranscriber {
     }
 
     /// MP3 frames → float PCM at the stream's own rate.
+    private let mp3 = MP3Decoder()
+
     private func decode(_ data: Data, packets: [AudioStreamPacketDescription],
                         format: AudioStreamBasicDescription) -> AVAudioPCMBuffer? {
+        mp3.decode(data, packets: packets, format: format)
+    }
+}
+
+/// MP3 packets (from `MP3Packetizer`) to float PCM at the stream's own rate.
+final class MP3Decoder {
+    private var decoder: AVAudioConverter?
+    private var pcmFormat: AVAudioFormat?
+
+    func decode(_ data: Data, packets: [AudioStreamPacketDescription],
+                format: AudioStreamBasicDescription) -> AVAudioPCMBuffer? {
         var asbd = format
         guard let mp3 = AVAudioFormat(streamDescription: &asbd) else { return nil }
         if decoder == nil {
@@ -476,8 +487,11 @@ final class RemoteLiveTranscriber {
                                                        timeout: 60)
                 guard let self else { return }
                 self.failures = 0
-                if !t.text.isEmpty { self.text += self.text.isEmpty ? t.text : " " + t.text }
-                self.words += t.words.map { TimedWord(word: $0.word, start: $0.start + chunk.offset, end: $0.end + chunk.offset) }
+                // A slice of silence comes back as "*crickets*" or a loop (see `Cleanup`).
+                let words = Cleanup.words(t.words.map { TimedWord(word: $0.word, start: $0.start + chunk.offset, end: $0.end + chunk.offset) })
+                let said = t.words.isEmpty ? (Cleanup.isNoise(t.text) ? "" : t.text) : words.map(\.word).joined(separator: " ")
+                if !said.isEmpty { self.text += self.text.isEmpty ? said : " " + said }
+                self.words += words
                 self.onText?(self.text)
             } catch {
                 guard let self else { return }

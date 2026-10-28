@@ -75,9 +75,9 @@ extension RecordingDetail {
     /// The default language, the favourites, and whatever this recording used.
     func languageChoices(_ r: Recording) -> [String] {
         var out: [String] = []
-        let auto = Prefs.sttRemote ? [Languages.auto] : []
+        let auto = Prefs.canDetectLanguage ? [Languages.auto] : []
         for id in auto + [Prefs.transcriptionLocale] + Prefs.favouriteLocales + [r.meta.locale, language].compactMap({ $0 })
-        where !out.contains(id) && (Prefs.sttRemote || id != Languages.auto) { out.append(id) }
+        where !out.contains(id) && (Prefs.canDetectLanguage || id != Languages.auto) { out.append(id) }
         return out
     }
 }
@@ -107,7 +107,7 @@ struct RecordingRow: View {
                     Label(place.label, systemImage: "mappin.and.ellipse")
                         .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                 }
-                if let s = recording.meta.summary ?? recording.meta.transcript {
+                if let s = recording.meta.summary.map(Analysis.preview) ?? recording.meta.transcript {
                     Text(s).font(.caption).lineLimit(2).foregroundStyle(.secondary)
                 }
             }
@@ -118,159 +118,6 @@ struct RecordingRow: View {
                 if recording.meta.transcript != nil { Image(systemName: "text.quote").foregroundStyle(.secondary) }
                 if recording.meta.summary != nil { Image(systemName: "sparkles").foregroundStyle(.secondary) }
             }
-        }
-    }
-}
-
-struct RecordingDetail: View {
-    @EnvironmentObject var model: AppModel
-    @EnvironmentObject var library: Library
-    @EnvironmentObject var devices: DeviceStore
-    let id: String
-    @StateObject private var player = Player()
-    @State private var title = ""
-    @State private var language = Prefs.transcriptionLocale
-    @State private var renaming: Int?
-    @State private var newName = ""
-
-    private var recording: Recording? { library.recordings.first { $0.id == id } }
-
-    var body: some View {
-        if let r = recording {
-            List {
-                Section {
-                    PlayerControls(player: player, url: r.audioURL)
-                    ShareLink(item: r.audioURL) { Label("Share audio", systemImage: "square.and.arrow.up") }
-                }
-                Section("Details") {
-                    TextField(r.meta.place?.name ?? r.startedAt?.formatted(date: .omitted, time: .shortened) ?? "Title",
-                              text: $title)
-                        .onSubmit { model.rename(r, to: title) }
-                        .submitLabel(.done)
-                    if let t = r.startedAt {
-                        LabeledContent("Recorded", value: t.formatted(date: .abbreviated, time: .shortened))
-                    }
-                    if let s = r.meta.seconds {
-                        LabeledContent("Length", value: Duration.seconds(s).formatted(.time(pattern: .hourMinuteSecond)))
-                    }
-                    LabeledContent("Pocket", value: r.pocketName(devices.devices))
-                    if let place = r.meta.place {
-                        Link(destination: place.mapsURL) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Label(place.label, systemImage: "mappin.and.ellipse")
-                                Text(place.approximate ? "Approximate: where the phone was when it downloaded" : place.coordinateText)
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        Button("Remove location", role: .destructive) { model.clearPlace(r) }
-                    }
-                    Button {
-                        Task { await model.tagHere(r) }
-                    } label: {
-                        Label(r.meta.place == nil ? "Tag with current location" : "Replace with current location",
-                              systemImage: "location")
-                    }
-                }
-                Section {
-                    Picker("Language", selection: $language) {
-                        ForEach(languageChoices(r), id: \.self) { Text(Languages.name($0)).tag($0) }
-                    }
-                    if let turns = r.meta.turns, Speakers.count(turns) > 1 {
-                        ForEach(turns) { t in
-                            TurnRow(turn: t, names: r.meta.speakerNames) { speaker in
-                                newName = r.meta.speakerNames?[String(speaker)] ?? ""
-                                renaming = speaker
-                            }
-                        }
-                    } else if let t = r.meta.transcript {
-                        Text(t).textSelection(.enabled)
-                    }
-                    if let t = r.transcriptForModel {
-                        ShareLink(item: t) { Label("Share transcript", systemImage: "square.and.arrow.up") }
-                    }
-                    if r.meta.words != nil, Prefs.diarize {
-                        Button {
-                            Task { await model.findSpeakers(r) }
-                        } label: {
-                            Label(r.meta.turns == nil ? "Find speakers" : "Find speakers again", systemImage: "person.2")
-                        }
-                        .disabled(model.working.contains(r.id))
-                    }
-                    Button {
-                        Task { await model.transcribe(r, localeID: language) }
-                    } label: {
-                        Label(r.meta.transcript == nil ? "Transcribe in \(Languages.name(language))"
-                                                       : "Transcribe again in \(Languages.name(language))",
-                              systemImage: "text.quote")
-                    }
-                    .disabled(model.working.contains(r.id))
-                } header: { Text("Transcript") } footer: {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if r.meta.liveTranscript == true {
-                            Text("Made live while recording. Transcribe again for the most accurate version.")
-                        }
-                        if let e = r.meta.speakersError { Text("Speakers: \(e)") }
-                        if let turns = r.meta.turns, Speakers.count(turns) > 1 { Text("Tap a speaker's name to rename them.") }
-                        Text(Prefs.sttRemote
-                             ? "Uses \(Prefs.sttModel) on \(URL(string: Prefs.sttURL)?.host() ?? "the server"); the audio is uploaded to it."
-                             : "Apple's on-device speech recognition; the audio does not leave the phone.")
-                    }
-                }
-                Section {
-                    if let s = r.meta.summary {
-                        Text(s).textSelection(.enabled)
-                        ShareLink(item: s) { Label("Share summary", systemImage: "square.and.arrow.up") }
-                    }
-                    Button {
-                        Task { await model.summarise(r) }
-                    } label: {
-                        Label(r.meta.summary == nil ? "Summarise" : "Summarise again", systemImage: "sparkles")
-                    }
-                    .disabled(r.meta.transcript == nil || model.working.contains(r.id) || Summariser.availability != nil)
-                } header: { Text("Summary") } footer: {
-                    Text(Summariser.availability ?? "Needs a transcript first. Uses \(LLM.whereLabel)")
-                }
-                Section {
-                    NavigationLink {
-                        AskView(fixedRecording: r.id)
-                    } label: {
-                        Label("Ask about this recording", systemImage: "questionmark.bubble")
-                    }
-                    .disabled(r.meta.transcript == nil)
-                } footer: {
-                    Text("For example: who was mentioned, or which restaurant was it?")
-                }
-                if model.working.contains(r.id) {
-                    Section { HStack { ProgressView(); Text("Working on this iPhone…").foregroundStyle(.secondary) } }
-                }
-                Section("File") {
-                    LabeledContent("Device file", value: "\(r.day)/\(r.name).mp3")
-                    if let p = r.meta.pocket {
-                        LabeledContent("Pocket ID", value: p.advertised)
-                        if let mac = p.mac { LabeledContent("Pocket MAC", value: mac) }
-                    }
-                    LabeledContent("Size", value: r.size.formatted(.byteCount(style: .file)))
-                }
-            }
-            .navigationTitle(r.displayTitle)
-            .navigationBarTitleDisplayMode(.inline)
-            .alert("Name this speaker", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
-                TextField(renaming.map { "Speaker \($0 + 1)" } ?? "", text: $newName)
-                Button("Save") { if let s = renaming { model.renameSpeaker(r, speaker: s, to: newName) } }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Used in this recording's transcript, summary and answers.")
-            }
-            .onAppear {
-                title = r.meta.title ?? ""
-                language = r.meta.locale ?? Prefs.transcriptionLocale
-            }
-            .onDisappear {
-                player.stop()
-                if title != (r.meta.title ?? "") { model.rename(r, to: title) }
-            }
-        } else {
-            ContentUnavailableView("Recording deleted", systemImage: "trash")
         }
     }
 }
@@ -304,6 +151,12 @@ final class Player: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 
     func seek(_ t: TimeInterval) { player?.currentTime = t; position = t }
+
+    /// Jumps to `t` and plays from there (a transcript time was tapped).
+    func play(from t: TimeInterval) {
+        seek(max(0, t - 0.5))
+        if !playing { toggle() }
+    }
 
     func stop() { player?.stop(); playing = false; timer?.invalidate() }
 

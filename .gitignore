@@ -25,3 +25,6 @@ ios/PrivatePocket/build/
 .DS_Store
 __pycache__/
 .venv/
+
+# Claude Code local state
+.claude/

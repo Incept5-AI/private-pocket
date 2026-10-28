@@ -173,11 +173,32 @@ enum Prefs {
         set { UserDefaults.standard.set(newValue, forKey: "liveTranscript") }
     }
 
-    /// Label speakers with a diarisation server.
+    /// Label speakers, on the phone or with a diarisation server.
     @MainActor static var diarize: Bool {
-        get { UserDefaults.standard.object(forKey: "diarize") as? Bool ?? !Diarizer.defaultURLs.isEmpty }
+        get { UserDefaults.standard.object(forKey: "diarize") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "diarize") }
     }
+
+    /// Analyse a recording as soon as it is transcribed.
+    @MainActor static var autoAnalyse: Bool {
+        get { UserDefaults.standard.object(forKey: "autoAnalyse") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "autoAnalyse") }
+    }
+
+    /// Find speakers on the phone (`OnDeviceSpeech`) rather than on the diarisation server.
+    @MainActor static var diarizeOnDevice: Bool {
+        get { UserDefaults.standard.object(forKey: "diarizeOnDevice") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "diarizeOnDevice") }
+    }
+
+    /// Speech to text on the phone: Parakeet (`OnDeviceSpeech`) or Apple's (`Transcriber`).
+    @MainActor static var localEngine: LocalEngine {
+        get { UserDefaults.standard.string(forKey: "localEngine").flatMap(LocalEngine.init(rawValue:)) ?? .parakeet }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: "localEngine") }
+    }
+
+    /// Whisper on the server and Parakeet both detect the language; Apple's cannot.
+    @MainActor static var canDetectLanguage: Bool { sttRemote || localEngine == .parakeet }
 
     /// Diarizer base URLs, comma-separated, tried in order.
     @MainActor static var diarizeURLs: String {
@@ -227,7 +248,11 @@ enum Prefs {
         set { UserDefaults.standard.set(newValue, forKey: "llmContextChars") }
     }
 
-    static let defaultSummaryInstructions = """
+    static let defaultSummaryInstructions = Analysis.instructions
+
+    /// The default before conversation analysis. Saved by "Reset to default", so it still
+    /// counts as the default rather than as the user's own instructions.
+    static let legacySummaryInstructions = """
     You summarise transcripts of recorded conversations and voice notes. \
     Write a short summary paragraph, then "Key points:" as a bulleted list, \
     then "Action items:" as a bulleted list (write "None" if there are none). \
@@ -235,7 +260,16 @@ enum Prefs {
     """
 
     @MainActor static var summaryInstructions: String {
-        get { UserDefaults.standard.string(forKey: "summaryInstructions") ?? defaultSummaryInstructions }
+        get {
+            let saved = UserDefaults.standard.string(forKey: "summaryInstructions")
+            return saved == nil || saved == legacySummaryInstructions ? defaultSummaryInstructions : saved!
+        }
         set { UserDefaults.standard.set(newValue, forKey: "summaryInstructions") }
     }
+}
+
+enum LocalEngine: String, CaseIterable, Identifiable {
+    case parakeet, apple
+    var id: String { rawValue }
+    var label: String { self == .parakeet ? "Parakeet (most accurate)" : "Apple" }
 }

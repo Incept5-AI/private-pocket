@@ -83,6 +83,8 @@ struct RecordingMeta: Codable, Hashable {
     var transcript: String?
     var transcribedAt: Date?
     var summary: String?
+    /// The model that wrote the summary ("on-device" for Apple's).
+    var summaryModel: String?
     var summarisedAt: Date?
     /// Kept from a stream that was not whole, or not checked against the Pocket's listing:
     /// a sync downloads the Pocket's own file and replaces it when that holds more.

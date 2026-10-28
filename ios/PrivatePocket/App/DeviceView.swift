@@ -9,6 +9,7 @@ struct RootView: View {
             Tab("Recorder", systemImage: "record.circle") { DeviceView() }
             Tab("Recordings", systemImage: "waveform") { RecordingsView() }
             Tab("Ask", systemImage: "questionmark.bubble") { AskTab() }
+            Tab("Translate", systemImage: "character.bubble") { TranslateView() }
             Tab("Settings", systemImage: "gear") { SettingsView() }
         }
         .alert("Error", isPresented: Binding(get: { model.aiError != nil }, set: { if !$0 { model.aiError = nil } })) {

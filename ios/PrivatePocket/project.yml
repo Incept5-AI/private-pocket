@@ -9,6 +9,12 @@ options:
     iOS: "27.0"
   xcodeVersion: "27.0"
 
+packages:
+  # Parakeet speech to text and speaker diarisation on the Neural Engine (see App/Parakeet.swift).
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    exactVersion: 0.17.7
+
 targets:
   PrivatePocket:
     type: application
@@ -17,6 +23,8 @@ targets:
       - App
       - path: Generated
         optional: true
+    dependencies:
+      - package: FluidAudio
     preBuildScripts:
       - name: Generate default device from ../../ble/.env
         script: |
@@ -43,6 +51,7 @@ targets:
         INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: "Connects to your Pocket recorder to list, record and download recordings. Nothing leaves this phone."
         INFOPLIST_KEY_NSLocationWhenInUseUsageDescription: "Tags each recording with where it was made. Stays on this phone."
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: "Transcribes your recordings on this iPhone."
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Listens on the Translate tab, to translate what is said near you."
         INFOPLIST_KEY_UIFileSharingEnabled: YES
         INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: YES
     info:
