@@ -189,7 +189,8 @@ final class Library: ObservableObject {
     }
 
     private func sortRecordings() {
-        recordings.sort { $0.name > $1.name }
+        // By start time, newest first: names alone put call recordings (PH…) above everything.
+        recordings.sort { ($0.startedAt ?? .distantPast, $0.name) > ($1.startedAt ?? .distantPast, $1.name) }
     }
 
     func recordings(for device: UUID) -> [Recording] { recordings.filter { $0.deviceID == device } }

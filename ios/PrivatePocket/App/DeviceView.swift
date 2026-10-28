@@ -14,7 +14,12 @@ struct RootView: View {
         .alert("Error", isPresented: Binding(get: { model.aiError != nil }, set: { if !$0 { model.aiError = nil } })) {
             Button("OK") {}
         } message: { Text(model.aiError ?? "") }
-        .task { if Prefs.tagLocation { model.locator.requestPermission() } }
+        .task {
+            // Location is set up after launch: doing it while the app is being created can stall past the watchdog.
+            try? await Task.sleep(for: .seconds(1))
+            model.locator.prepare()
+            if Prefs.tagLocation { model.locator.requestPermission() }
+        }
         .onChange(of: scenePhase, initial: true) { model.setActive(scenePhase == .active) }
     }
 }
@@ -141,7 +146,7 @@ struct DeviceView: View {
                 if !live.turns.isEmpty, Speakers.count(live.turns) > 1 {
                     ForEach(live.turns.suffix(8)) { t in TurnRow(turn: t, names: nil) }
                 } else if !live.text.isEmpty {
-                    Text(live.text.suffix(1_200)).font(.callout)
+                    Text(live.text.tail(1_200)).font(.callout)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else if Prefs.liveTranscript {
                     Text("Listening…").foregroundStyle(.secondary)

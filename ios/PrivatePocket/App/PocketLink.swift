@@ -278,6 +278,7 @@ final class PocketLink: NSObject, ObservableObject {
         progress = (label, 0, size)
         var lastCount = 0
         var lastChange = Date()
+        var lastShown = Date()
         while true {
             if downloadStop {
                 note("downloading \(f.name) stopped: a recording started")
@@ -288,7 +289,8 @@ final class PocketLink: NSObject, ObservableObject {
             if audio.count != lastCount { lastCount = audio.count; lastChange = Date() }
             if Date().timeIntervalSince(lastChange) > 15 { throw PocketError.timeout("audio data (\(audio.count)/\(size) bytes)") }
             if peripheral?.state != .connected { throw PocketError.notReady }
-            progress = (label, audio.count, size)
+            // Twice a second is plenty for a progress bar, and every screen watching redraws on it.
+            if Date().timeIntervalSince(lastShown) >= 0.5 { progress = (label, audio.count, size); lastShown = Date() }
             try await Task.sleep(for: .milliseconds(150))
         }
         let whole = size == 0 || audio.count >= size
