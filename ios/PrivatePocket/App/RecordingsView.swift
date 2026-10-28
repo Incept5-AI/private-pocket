@@ -99,6 +99,7 @@ struct RecordingRow: View {
                     }
                     if let s = recording.meta.seconds { Text(Duration.seconds(s).formatted(.time(pattern: .minuteSecond))) }
                     Text(recording.size.formatted(.byteCount(style: .file)))
+                    if recording.isCall { Text("Call") }
                     if showDevice { Text(recording.pocketName(devices.devices)) }
                 }
                 .font(.caption).foregroundStyle(.secondary)

@@ -20,6 +20,12 @@ struct DeviceStatus: Equatable {
     var totalMiB: Int?
     var webSync: Bool?
     var recordingSince: Date?
+    /// The device's file name for the recording in progress (`yyyyMMddHHmmss`, or
+    /// `PH…` for call mode), as announced by `MCU&STA&`.
+    var recordingName: String?
+    /// The side switch: `CON` (audio) or `CALL` (phone call, contact mic). Read on
+    /// connect with `REC&SECEN` and announced before every recording start.
+    var mode: String?
 }
 
 struct RemoteFile: Hashable {
@@ -219,6 +225,7 @@ final class PocketLink: NSObject, ObservableObject {
         let spa = try await value("SPACE", reply: "MCU&SPA&").split(separator: "&")
         if spa.count == 2 { status.freeMiB = Int(spa[0]); status.totalMiB = Int(spa[1]) }
         status.webSync = try await value("GET&USB", reply: "MCU&USB&") == "1"
+        status.mode = try await value("REC&SECEN", reply: "MCU&REC&")
     }
 
     func setWebSync(_ on: Bool) async throws {
@@ -227,18 +234,18 @@ final class PocketLink: NSObject, ObservableObject {
 
     func startRecording() async throws {
         if capturingAudio { downloadStop = true }   // recording comes first: a download stops
-        let r = try await send("STA", until: { $0.hasPrefix("MCU&STA&") })
-        if let ts = r.last?.split(separator: "&").last { status.recordingSince = PocketTime.parse(String(ts)) }
+        try await send("STA", until: { $0.hasPrefix("MCU&STA&") })   // handleLine records the name and time
     }
 
-    /// Returns the file name of the recording that was stopped.
+    /// Returns the device's file name of the recording that was stopped.
     func stopRecording() async throws -> String? {
-        let started = status.recordingSince
+        let name = status.recordingName
         stoppingFromApp = true
         defer { stoppingFromApp = false }
-        _ = try await send("STO", until: { $0 == "MCU&STO" })
+        try await send("STO", until: { $0 == "MCU&STO" })
         status.recordingSince = nil
-        return started.map { PocketTime.fileName.string(from: $0) }
+        status.recordingName = nil
+        return name
     }
 
     func listFiles() async throws -> [RemoteFile] {
@@ -378,19 +385,25 @@ final class PocketLink: NSObject, ObservableObject {
     private func handleLine(_ l: String) {
         note("← \(l)")
         if l.hasPrefix("MCU&STA&") {
+            // The name is the device's file name: a UTC timestamp, or `PH…` in call
+            // mode. Unknown forms still count as a recording, timed from now.
             let name = String(l.dropFirst("MCU&STA&".count))
             if capturingAudio {
                 // A recording takes the audio channel: what follows is the room, not the file.
                 downloadStop = true
                 capturingAudio = false
             }
-            let started = PocketTime.parse(name)
-            if started != nil, started != status.recordingSince { onRecordingStarted?(name) }
-            status.recordingSince = started
+            let isNew = status.recordingName != name
+            status.recordingSince = PocketTime.parse(name) ?? Date()
+            status.recordingName = name
+            if isNew { onRecordingStarted?(name) }
         } else if l == "MCU&STO" {
-            let name = status.recordingSince.map { PocketTime.fileName.string(from: $0) }
+            let name = status.recordingName
             status.recordingSince = nil
+            status.recordingName = nil
             if let name, !stoppingFromApp { onRecordingStopped?(name) }
+        } else if l.hasPrefix("MCU&REC&") {
+            status.mode = String(l.dropFirst("MCU&REC&".count))   // the switch, before a start and on request
         }
         lines.append(l)
     }

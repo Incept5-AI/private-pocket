@@ -52,7 +52,7 @@ There are no tests and no linter. To exercise app logic without the phone, copy 
 - **Session key:** `APP&SK&<key>` must be sent first, or the device silently ignores every command.
 - **Live streaming needs no command.** While recording, live MP3 arrives on `…a1` unprompted, whether started by `APP&STA` or the button. Downloads (`APP&U&…`) arrive on the same characteristic, so `PocketLink` routes `…a1` bytes to the download in progress if there is one, otherwise to `onLiveAudio`.
 - **Deleting:** there is no delete over BLE. Deletion is only via USB mass storage: `APP&USB&1`, re-plug, delete under `RECORD/<date>/`, unplug. While the cable is in, the device reports 0 space and ignores `LIST`.
-- File names are UTC timestamps.
+- File names are UTC timestamps (`yyyyMMddHHmmss`). With the side switch on call (contact mic) they are `PH` + `yyMMddHHmmss`, and `LIST` does not list them, so only the live stream captures them. `PocketTime.parse` handles both; `DeviceStatus.recordingName` carries the name from `MCU&STA&` to the stop. `APP&REC&SECEN` reads the switch (`DeviceStatus.mode`, saved as `RecordingMeta.mode`).
 
 ## iOS architecture
 

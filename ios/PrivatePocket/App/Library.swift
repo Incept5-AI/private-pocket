@@ -6,7 +6,7 @@ import Foundation
 struct Recording: Identifiable, Hashable {
     let deviceID: UUID
     let day: String        // yyyy-MM-dd, the device's folder name
-    let name: String       // yyyyMMddHHmmss in UTC, the device's file name
+    let name: String       // yyyyMMddHHmmss in UTC (PH + yyMMddHHmmss in call mode), the device's file name
     let audioURL: URL
     var meta: RecordingMeta
 
@@ -17,6 +17,8 @@ struct Recording: Identifiable, Hashable {
         meta.title ?? meta.place?.name ?? startedAt?.formatted(date: .omitted, time: .shortened) ?? name
     }
     var size: Int { (try? audioURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0 }
+    /// Made with the switch on call: the contact mic, with the card on the phone.
+    var isCall: Bool { meta.mode == "CALL" || name.hasPrefix("PH") }
 }
 
 extension Recording {
@@ -65,6 +67,8 @@ struct RecordingMeta: Codable, Hashable {
     var pocket: PocketID?
     var place: Place?
     var seconds: Int?
+    /// The Pocket's side switch when it was made: `CON` (audio) or `CALL` (phone call).
+    var mode: String?
     /// Locale the transcript was made in, e.g. fr-FR.
     var locale: String?
     /// The transcript was made live while recording (quicker, a little less accurate).
@@ -100,7 +104,27 @@ enum PocketTime {
         return f
     }()
 
-    static func parse(_ name: String) -> Date? { fileName.date(from: name) }
+    /// Call-mode recordings (the card on the back of the phone, contact mic) are named
+    /// `PH` + `yyMMddHHmmss` instead.
+    static let shortName: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC")
+        f.dateFormat = "yyMMddHHmmss"
+        return f
+    }()
+
+    /// `yyyyMMddHHmmss`, or any letter prefix followed by 12 or 14 digits.
+    static func parse(_ name: String) -> Date? {
+        if let d = fileName.date(from: name) { return d }
+        let digits = String(name.drop { !$0.isNumber })
+        guard digits.allSatisfy(\.isNumber) else { return nil }
+        switch digits.count {
+        case 12: return shortName.date(from: digits)
+        case 14: return fileName.date(from: digits)
+        default: return nil
+        }
+    }
     static func now() -> String { fileName.string(from: Date()) }
 }
 

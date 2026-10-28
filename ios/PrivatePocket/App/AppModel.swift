@@ -155,13 +155,20 @@ final class AppModel: ObservableObject {
         let day = PocketTime.day.string(from: date)
         guard !library.has(device: d.id, day: day, name: name) else { return }
         try await Task.sleep(for: .milliseconds(500))   // let the device close the file
-        let remote = try await link.listFiles().first { $0.name == name }
-            ?? RemoteFile(day: day, name: name, seconds: 0)
+        let listed = try await link.listFiles().first { $0.name == name }
+        var remote = listed ?? RemoteFile(day: day, name: name, seconds: 0)
 
         let audio: Data
         if let s = streamed, s.complete, Self.matches(s.audio, seconds: remote.seconds) {
             audio = s.audio
             link.note("kept the streamed copy of \(name): \(s.audio.count) bytes")
+        } else if listed == nil, let s = streamed, !s.audio.isEmpty {
+            // Call-mode recordings (PH…) are not in the Pocket's listing, so they
+            // cannot be downloaded: the stream is all there is.
+            audio = s.audio
+            remote = RemoteFile(day: day, name: name, seconds: Int((Self.duration(of: s.audio) ?? 0).rounded()))
+            link.note(s.complete ? "kept the streamed copy of \(name), which the Pocket does not list: \(s.audio.count) bytes"
+                                 : "stream had a gap and the Pocket does not list \(name); kept \(s.audio.count) bytes")
         } else if d.downloadAfterStop {
             if let s = streamed { link.note("streamed copy incomplete (\(s.audio.count) bytes); downloading") }
             audio = try await link.download(remote)
@@ -171,6 +178,8 @@ final class AppModel: ObservableObject {
         let place = await locator.place(for: name, seconds: remote.seconds)
         var r = try library.save(device: d.id, day: remote.day, name: name, audio: audio, seconds: remote.seconds, place: place,
                                  pocket: pocketID(d))
+        r.meta.mode = name.hasPrefix("PH") ? "CALL" : link.status.mode
+        library.update(r)
         if let s = streamed, let t = s.transcript {
             r.meta.transcript = t
             r.meta.words = s.words.isEmpty ? nil : s.words
@@ -192,12 +201,16 @@ final class AppModel: ObservableObject {
     /// The streamed MP3 lasts as long as the device says the recording does
     /// (LIST reports whole seconds), so nothing was missed.
     static func matches(_ mp3: Data, seconds: Int) -> Bool {
-        guard seconds > 0 else { return false }
+        guard seconds > 0, let duration = duration(of: mp3) else { return false }
+        return abs(duration - Double(seconds)) <= 2
+    }
+
+    /// Seconds of audio in an MP3.
+    static func duration(of mp3: Data) -> Double? {
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("check-\(UUID().uuidString).mp3")
         defer { try? FileManager.default.removeItem(at: tmp) }
-        guard (try? mp3.write(to: tmp)) != nil, let f = try? AVAudioFile(forReading: tmp) else { return false }
-        let duration = Double(f.length) / f.processingFormat.sampleRate
-        return abs(duration - Double(seconds)) <= 2
+        guard (try? mp3.write(to: tmp)) != nil, let f = try? AVAudioFile(forReading: tmp) else { return nil }
+        return Double(f.length) / f.processingFormat.sampleRate
     }
 
     func setWebSync(_ on: Bool) async {
