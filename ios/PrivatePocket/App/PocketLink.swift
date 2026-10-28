@@ -35,7 +35,7 @@ struct Discovered: Identifiable, Hashable {
 }
 
 enum PocketError: LocalizedError {
-    case bluetoothOff, notFound, timeout(String), notReady, rejected, noKey
+    case bluetoothOff, notFound, timeout(String), notReady, rejected, noKey, interrupted
 
     var errorDescription: String? {
         switch self {
@@ -45,6 +45,7 @@ enum PocketError: LocalizedError {
         case .notReady: "Not connected."
         case .rejected: "The Pocket did not accept the session key."
         case .noKey: "This device has no session key. Add it in Settings."
+        case .interrupted: "Downloading stopped because the Pocket started recording. Sync again after the recording."
         }
     }
 }
@@ -76,6 +77,11 @@ final class PocketLink: NSObject, ObservableObject {
     private var audio = Data()
     private var capturingAudio = false
     private var stoppingFromApp = false
+    /// A command is being exchanged. The Pocket answers on one channel, so a second command
+    /// sent meanwhile takes the first one's reply (seen: the key and a listing, both timing out).
+    private var exchanging = false
+    /// A download in flight is to stop: a recording has started on the same channel.
+    private var downloadStop = false
 
     /// Called with the learned CoreBluetooth identifier so it can be stored per device.
     var onPeripheralLearned: ((UUID, UUID) -> Void)?
@@ -191,6 +197,7 @@ final class PocketLink: NSObject, ObservableObject {
     }
 
     func startRecording() async throws {
+        if capturingAudio { downloadStop = true }   // recording comes first: a download stops
         let r = try await send("STA", until: { $0.hasPrefix("MCU&STA&") })
         if let ts = r.last?.split(separator: "&").last { status.recordingSince = PocketTime.parse(String(ts)) }
     }
@@ -219,17 +226,25 @@ final class PocketLink: NSObject, ObservableObject {
         return files.sorted { $0.name < $1.name }
     }
 
+    /// A recording's file. The command channel is held throughout, and a recording starting stops it.
     func download(_ f: RemoteFile) async throws -> Data {
+        try await takeTurn()
+        defer { exchanging = false }
         audio = Data()
+        downloadStop = false
         capturingAudio = true
-        defer { capturingAudio = false; progress = nil }
+        defer { capturingAudio = false; downloadStop = false; progress = nil }
         let label = f.startedLabel
-        let head = try await send("U&\(f.day)&\(f.name)", until: { $0.hasPrefix("MCU&U&") }, timeout: 10)
+        let head = try await exchange("U&\(f.day)&\(f.name)", until: { $0.hasPrefix("MCU&U&") }, timeout: 10)
         let size = Int(head.last?.split(separator: "&").last ?? "") ?? 0
         progress = (label, 0, size)
         var lastCount = 0
         var lastChange = Date()
         while true {
+            if downloadStop {
+                note("downloading \(f.name) stopped: a recording started")
+                throw PocketError.interrupted
+            }
             if lines.contains("MCU&OFF") { lines.removeAll { $0 == "MCU&OFF" }; break }
             if size > 0, audio.count >= size { break }
             if audio.count != lastCount { lastCount = audio.count; lastChange = Date() }
@@ -259,9 +274,27 @@ final class PocketLink: NSObject, ObservableObject {
         return String((r.last ?? "").dropFirst(prefix.count))
     }
 
-    /// Writes `APP&<cmd>` and collects reply lines until one satisfies `until`.
+    /// Writes `APP&<cmd>` and collects reply lines until one satisfies `until`, once any
+    /// command already in flight has had its answer.
     @discardableResult
     func send(_ cmd: String, until done: @escaping (String) -> Bool, timeout: TimeInterval = 5) async throws -> [String] {
+        try await takeTurn()
+        defer { exchanging = false }
+        return try await exchange(cmd, until: done, timeout: timeout)
+    }
+
+    /// Waits for the command channel. A download holds it for the whole file; a recording
+    /// starting cuts that short (`downloadStop`).
+    private func takeTurn() async throws {
+        let deadline = Date().addingTimeInterval(30)
+        while exchanging {
+            guard Date() < deadline else { throw PocketError.timeout("the Pocket to finish what it was doing") }
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        exchanging = true
+    }
+
+    private func exchange(_ cmd: String, until done: @escaping (String) -> Bool, timeout: TimeInterval) async throws -> [String] {
         guard let p = peripheral, let c = commandChar, p.state == .connected else { throw PocketError.notReady }
         lines.removeAll { !Self.isEvent($0) }
         p.writeValue(Data("APP&\(cmd)".utf8), for: c, type: .withResponse)
@@ -305,6 +338,11 @@ final class PocketLink: NSObject, ObservableObject {
         note("← \(l)")
         if l.hasPrefix("MCU&STA&") {
             let name = String(l.dropFirst("MCU&STA&".count))
+            if capturingAudio {
+                // A recording takes the audio channel: what follows is the room, not the file.
+                downloadStop = true
+                capturingAudio = false
+            }
             let started = PocketTime.parse(name)
             if started != nil, started != status.recordingSince { onRecordingStarted?(name) }
             status.recordingSince = started
