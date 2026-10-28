@@ -35,7 +35,7 @@ struct Discovered: Identifiable, Hashable {
 }
 
 enum PocketError: LocalizedError {
-    case bluetoothOff, notFound, timeout(String), notReady, rejected, noKey, interrupted
+    case bluetoothOff, notFound, timeout(String), notReady, rejected, noKey, interrupted, superseded
 
     var errorDescription: String? {
         switch self {
@@ -45,6 +45,7 @@ enum PocketError: LocalizedError {
         case .notReady: "Not connected."
         case .rejected: "The Pocket did not accept the session key."
         case .noKey: "This device has no session key. Add it in Settings."
+        case .superseded: "The Pocket couldn't be reached just then. Try again in a moment."
         case .interrupted: "Downloading stopped because the Pocket started recording. Sync again after the recording."
         }
     }
@@ -82,6 +83,13 @@ final class PocketLink: NSObject, ObservableObject {
     private var exchanging = false
     /// A download in flight is to stop: a recording has started on the same channel.
     private var downloadStop = false
+    /// Each connection attempt's number. A teardown or a newer attempt ends an older one's
+    /// wait, so a stale wait never tears down the connection that replaced it.
+    private var attempt = 0
+    /// Connections this app cancelled. iOS answers a cancel with a disconnect, which is not a
+    /// link loss: taken for one, it re-armed the reconnect, whose cancel was answered the same
+    /// way, in a loop, and the Pocket never reconnected.
+    private var cancelling: Set<UUID> = []
 
     /// Called with the learned CoreBluetooth identifier so it can be stored per device.
     var onPeripheralLearned: ((UUID, UUID) -> Void)?
@@ -115,7 +123,7 @@ final class PocketLink: NSObject, ObservableObject {
 
     func stopDiscovery() {
         discoveryMode = false
-        if phase != .scanning { central.stopScan() }
+        if phase != .scanning { stopScanning() }
     }
 
     // MARK: - Connection
@@ -123,8 +131,10 @@ final class PocketLink: NSObject, ObservableObject {
     func connect(_ d: DeviceConfig) async throws {
         if connectedDeviceID == d.id, isReady { return }
         disconnect()
+        let mine = attempt
         guard !d.sessionKey.isEmpty else { throw PocketError.noKey }
         try await waitForPoweredOn()
+        guard attempt == mine else { throw PocketError.superseded }
         device = d
         lines = []
         phase = .scanning
@@ -138,7 +148,7 @@ final class PocketLink: NSObject, ObservableObject {
         // changed, and notices other Pockets nearby. Stopped once connected.
         wantedName = d.advertisedName
         central.scanForPeripherals(withServices: nil, options: nil)
-        try await waitUntil(timeout: 20, what: "the Pocket to connect") { [weak self] in
+        try await waitUntil(timeout: 20, what: "the Pocket to connect", attempt: mine) { [weak self] in
             guard let self else { return true }
             return self.notifyingReply && self.notifyingAudio && self.commandChar != nil
         }
@@ -147,10 +157,22 @@ final class PocketLink: NSObject, ObservableObject {
         try await handshake()
     }
 
-    func disconnect() {
-        central.stopScan()
+    func disconnect() { teardown(cancel: true) }
+
+    /// Stops a scan only when one is running: stopping waits on the Bluetooth daemon, and
+    /// called from a disconnect callback in the background that wait got the app killed by
+    /// the watchdog.
+    private func stopScanning() {
+        if central.isScanning { central.stopScan() }
+    }
+
+    /// Back to idle. `cancel` cancels the connection, live or pending; once iOS has reported
+    /// it gone there is nothing to cancel, and a cancel would be answered with another disconnect.
+    private func teardown(cancel: Bool) {
+        attempt += 1
+        stopScanning()
         wantedName = nil
-        if let p = peripheral { central.cancelPeripheralConnection(p) }
+        if cancel, let p = peripheral { cancelConnection(p) }
         peripheral = nil
         commandChar = nil
         notifyingReply = false
@@ -160,9 +182,16 @@ final class PocketLink: NSObject, ObservableObject {
         progress = nil
     }
 
+    /// Cancels a live or pending connection, marked so that its disconnect is not taken for a loss.
+    private func cancelConnection(_ p: CBPeripheral) {
+        guard p.state == .connected || p.state == .connecting else { return }
+        cancelling.insert(p.identifier)
+        central.cancelPeripheralConnection(p)
+    }
+
     private func attach(_ p: CBPeripheral) {
-        if let old = peripheral, old != p { central.cancelPeripheralConnection(old) }
-        central.stopScan()
+        if let old = peripheral, old != p { cancelConnection(old) }
+        stopScanning()
         wantedName = nil
         peripheral = p
         p.delegate = self
@@ -261,7 +290,9 @@ final class PocketLink: NSObject, ObservableObject {
     /// `quiet` keeps background reconnects out of alerts (the log still has them).
     func run(_ label: String, quiet: Bool = false, _ body: () async throws -> Void) async {
         if isReady { phase = .busy(label) }
-        do { try await body() } catch {
+        do { try await body() } catch is CancellationError {
+            note("cancelled: \(label)")   // superseded or left the foreground: not a failure, never shown
+        } catch {
             if !quiet { lastError = error.localizedDescription }
             note("error: \(error.localizedDescription)")
         }
@@ -322,16 +353,26 @@ final class PocketLink: NSObject, ObservableObject {
         guard central.state == .poweredOn else { throw PocketError.bluetoothOff }
     }
 
-    private func waitUntil(timeout: TimeInterval, what: String, _ cond: () -> Bool) async throws {
+    private func waitUntil(timeout: TimeInterval, what: String, attempt mine: Int, _ cond: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while !cond() {
+            // Torn down, or a newer attempt began: this one is over, and leaves that alone.
+            guard attempt == mine else { throw PocketError.superseded }
             if Date() > deadline {
                 let neverFound = peripheral == nil
                 disconnect()
                 throw neverFound ? PocketError.notFound : PocketError.timeout(what)
             }
-            try await Task.sleep(for: .milliseconds(100))
+            do {
+                try await Task.sleep(for: .milliseconds(100))
+            } catch {
+                // Cancelled: no half-made connection is left behind, unless something newer
+                // has already taken its place.
+                if attempt == mine { disconnect() }
+                throw error
+            }
         }
+        guard attempt == mine else { throw PocketError.superseded }
     }
 
     private func handleLine(_ l: String) {
@@ -402,7 +443,8 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
 
     nonisolated func centralManager(_ central: CBCentralManager, didConnect p: CBPeripheral) {
         MainActor.assumeIsolated {
-            central.stopScan()
+            cancelling.remove(p.identifier)   // any cancel before this connection has been answered
+            stopScanning()
             wantedName = nil
             note("connected to \(p.name ?? "Pocket")")
             if let d = device, d.peripheralID != p.identifier { onPeripheralLearned?(d.id, p.identifier) }
@@ -413,15 +455,17 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
     nonisolated func centralManager(_ central: CBCentralManager, didFailToConnect p: CBPeripheral, error: Error?) {
         MainActor.assumeIsolated {
             note("connect failed: \(error?.localizedDescription ?? "unknown")")
-            disconnect()
+            guard p == peripheral else { return }
+            teardown(cancel: false)
         }
     }
 
     nonisolated func centralManager(_ central: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
         MainActor.assumeIsolated {
+            if cancelling.remove(p.identifier) != nil { return }   // the answer to a cancel of ours, not a loss
             guard p == peripheral else { return }
             note("disconnected")
-            disconnect()
+            teardown(cancel: false)   // already gone: a cancel now would only be answered with another disconnect
             onLinkLost?()
         }
     }
