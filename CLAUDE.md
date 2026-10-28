@@ -60,19 +60,27 @@ There are no tests and no linter. To exercise app logic without the phone, copy 
 
 Every source file is in `App/`.
 
-- **`PocketLink`** is the CoreBluetooth central. It handles scan, connect, the command/reply exchange, downloads and status, and exposes the hooks `onLiveAudio`, `onRecordingStarted` and `onLinkLost`.
+- **`PocketLink`** is the CoreBluetooth central. It handles scan, connect, the command/reply exchange, downloads and status, and exposes the hooks `onLiveAudio`, `onRecordingStarted`, `onRecordingStopped` and `onLinkLost`. Rules it keeps, each learned from a failure:
+  - **One command at a time.** `send` waits its turn (`takeTurn`), then `exchange` does the work; two commands in flight took each other's replies and both timed out. `download` holds the channel for the whole file; a recording starting (`startRecording` or `MCU&STA&`) stops it with `PocketError.interrupted`. It returns a `FetchedFile` whose `whole` is false when fewer bytes came than `MCU&U&` announced.
+  - **Cancels are not losses.** iOS answers every `cancelPeripheralConnection` with a `didDisconnect`. `cancelConnection` marks what it cancels (`cancelling`) and `didDisconnect` ignores those; a real loss tears down with `teardown(cancel: false)`. Cancelling inside the disconnect handler made a reconnect loop.
+  - **Attempts are numbered.** `teardown` bumps `attempt`; `connect` waits with its number (`waitUntil(attempt:)`), stops with `superseded` once it changes, and never tears down what replaced it.
 - **`AppModel`** is the orchestrator:
   - A keep-alive loop (`setActive`) reconnects every 15 s while the app is in the foreground. It is skipped when the user disconnected, during Add-device discovery, or when no key is set.
   - Sync, plus transcription and diarisation, which run concurrently.
   - Summary and Ask.
-  - `completeRecording`, which runs at stop and decides whether to keep the streamed copy: kept only if the stream had no gap and its duration is within ±2 s of the device's `LIST` seconds; otherwise the file is downloaded.
+  - At a stop, `wrapUp` detaches the stream at once (into `stoppedStreams`), so a new recording can start meanwhile, and `saveStopped` saves each name once (`saving`). A new `MCU&STA&` while a stream is still open saves the old one first. `toggleRecording` is guarded by `toggling`.
+  - `completeRecording` decides whether to keep the streamed copy: kept only if the stream had no gap and its duration is within ±2 s of the device's `LIST` seconds; otherwise the file is downloaded. The listing is tried three times (a call recording never appears in it); when it or the download fails, the stream is kept and marked `RecordingMeta.partial`, as is a short download. A sync downloads the Pocket's file for a partial copy once a session (`recheckedPartial`) and replaces it via `Library.replaceAudio` when that holds more.
+  - Sync runs one at a time (`syncing`), stops at a recording, skips what was deleted here, and never saves an empty file.
 - **`LiveSession` (`Live.swift`)** handles the live stream:
-  - It writes the stream to `Caches/Live/`.
+  - It writes the stream to `Caches/Live/` (a failed write marks a gap). `bytes` is not published; `seconds` is, once a second.
+  - `detach(name:)` takes a stopped recording's stream out at once as an `Ending`, which `finish()` completes on its own. The server's transcriber gives a slice 60 s, pauses after three failures, and `finish` waits at most 20 s; a phone recogniser that cannot start is abandoned.
   - `MP3Packetizer` (AudioFileStream) splits it into packets, which feed one of two transcribers:
     - `LocalLiveTranscriber`: AVAudioConverter, then SpeechAnalyzer
     - `RemoteLiveTranscriber`: 15 s chunks sent to Whisper, with word times offset by chunk start
   - Every 45 s it re-diarises the whole file so far.
 - **`Library`** handles storage: `Documents/Recordings/<device id>/<yyyy-MM-dd>/<UTC>.mp3` plus a `.json` sidecar (`RecordingMeta`).
+  - **A job that awaits writes through `Library.mutate(id) { meta in … }`**: the recording as it is now, only the fields that job owns, nothing if it was deleted meanwhile. `update` is only for a copy taken just now; writing back a copy held across an await loses renames and speaker names.
+  - Deleted recordings are remembered in `Recordings/deleted.json` (`wasDeleted`), so sync and USB import never download them again. A sidecar that no longer decodes is copied aside as `.bad` first.
   - **Every field added to `RecordingMeta` must be optional**, or existing sidecars stop decoding.
   - The same applies to `DeviceConfig` in `Devices.swift`, where a decode failure wipes the saved devices.
 - **`Prefs` (`Devices.swift`)** wraps UserDefaults. Views use `@AppStorage` with the same key names so labels refresh.
