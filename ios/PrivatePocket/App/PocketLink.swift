@@ -262,8 +262,10 @@ final class PocketLink: NSObject, ObservableObject {
         return files.sorted { $0.name < $1.name }
     }
 
-    /// A recording's file. The command channel is held throughout, and a recording starting stops it.
-    func download(_ f: RemoteFile) async throws -> Data {
+    /// A recording's file. The command channel is held throughout, and a recording starting
+    /// stops it. `whole` is false when fewer bytes came than the Pocket announced: what came is
+    /// kept, marked partial, and a later sync downloads it again.
+    func download(_ f: RemoteFile) async throws -> FetchedFile {
         try await takeTurn()
         defer { exchanging = false }
         audio = Data()
@@ -289,8 +291,9 @@ final class PocketLink: NSObject, ObservableObject {
             progress = (label, audio.count, size)
             try await Task.sleep(for: .milliseconds(150))
         }
-        note("downloaded \(f.name): \(audio.count) bytes")
-        return size > 0 ? audio.prefix(size) : audio
+        let whole = size == 0 || audio.count >= size
+        note(whole ? "downloaded \(f.name): \(audio.count) bytes" : "downloaded \(f.name): only \(audio.count) of \(size) bytes")
+        return FetchedFile(data: size > 0 ? audio.prefix(size) : audio, whole: whole)
     }
 
     /// Runs `body` with the phase shown as busy, recording any error for the UI.
@@ -412,6 +415,12 @@ final class PocketLink: NSObject, ObservableObject {
         log.append("\(Date().formatted(date: .omitted, time: .standard))  \(s)")
         if log.count > 300 { log.removeFirst(log.count - 300) }
     }
+}
+
+/// A recording downloaded from the Pocket; `whole` when every byte it announced arrived.
+struct FetchedFile {
+    let data: Data
+    let whole: Bool
 }
 
 extension RemoteFile {

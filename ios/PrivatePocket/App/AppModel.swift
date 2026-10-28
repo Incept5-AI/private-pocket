@@ -60,6 +60,9 @@ final class AppModel: ObservableObject {
         }
         link.onRecordingStarted = { [weak self] name in
             guard let self else { return }
+            // A recording still open here whose stop never came (stopped while the link was
+            // down): it is saved now, before the new one takes the live session, not thrown away.
+            if let old = self.live.name, old != name { self.recordingStopped(old, heard: false) }
             self.locator.recordingStarted(name)
             if let d = self.connectedDevice { self.live.begin(name: name, device: d.id) }
         }
@@ -68,10 +71,7 @@ final class AppModel: ObservableObject {
             self?.live.markGap()
             Task { try? await Task.sleep(for: .seconds(2)); await self?.ensureConnected() }
         }
-        link.onRecordingStopped = { [weak self] name in
-            guard let self, let d = self.connectedDevice else { return }
-            Task { await self.link.run("Saving") { try await self.completeRecording(name: name, device: d) } }
-        }
+        link.onRecordingStopped = { [weak self] name in self?.recordingStopped(name, heard: true) }
     }
 
     // MARK: - Staying connected
@@ -119,6 +119,8 @@ final class AppModel: ObservableObject {
 
     /// A sync is running: one at a time, so two never share the download channel.
     private var syncing = false
+    /// Partial copies checked against the Pocket's file this session.
+    private var recheckedPartial: Set<String> = []
 
     /// Download every recording on the device that is not on the phone yet, and was not deleted here.
     func sync() async {
@@ -128,67 +130,149 @@ final class AppModel: ObservableObject {
         await link.run("Syncing") {
             try await link.connect(d)
             let remote = try await link.listFiles()
-            let missing = remote.filter {
-                !library.has(device: d.id, day: $0.day, name: $0.name) && !library.wasDeleted(device: d.id, day: $0.day, name: $0.name)
+            // What is not here yet, and what was kept from an incomplete stream (checked once a
+            // session against the Pocket's own file); never what was deleted here.
+            let missing = remote.filter { f in
+                guard !library.wasDeleted(device: d.id, day: f.day, name: f.name) else { return false }
+                guard let here = library.recording(device: d.id, day: f.day, name: f.name) else { return true }
+                return here.meta.partial == true && !recheckedPartial.contains(here.id)
             }
             for f in missing {
                 // A recording starting takes the audio channel: the rest waits for the next sync.
                 guard link.status.recordingSince == nil else { break }
-                let data = try await link.download(f)
-                guard !data.isEmpty, link.status.recordingSince == nil else { break }
+                let fetched = try await link.download(f)
+                guard !fetched.data.isEmpty, link.status.recordingSince == nil else { break }
+                if let here = library.recording(device: d.id, day: f.day, name: f.name) {
+                    recheckedPartial.insert(here.id)
+                    let local = library.localSize(device: d.id, day: f.day, name: f.name) ?? 0
+                    if fetched.data.count > local,
+                       let r = library.replaceAudio(here.id, with: fetched.data, seconds: f.seconds, partial: !fetched.whole) {
+                        link.note("replaced the partial copy of \(f.name) with the Pocket's file")
+                        if d.autoTranscribe { Task { await transcribe(r) } }
+                    } else if fetched.whole, fetched.data.count == local {
+                        library.mutate(here.id) { $0.partial = nil }   // the same file: it was whole after all
+                    }
+                    continue
+                }
                 let place = await locator.place(for: f.name, seconds: f.seconds)
-                let r = try library.save(device: d.id, day: f.day, name: f.name, audio: data, seconds: f.seconds, place: place,
+                var r = try library.save(device: d.id, day: f.day, name: f.name, audio: fetched.data, seconds: f.seconds, place: place,
                                          pocket: pocketID(d))
+                if !fetched.whole, let marked = library.mutate(r.id, { $0.partial = true }) { r = marked }
                 if d.autoTranscribe { Task { await transcribe(r) } }
             }
             try await link.refreshStatus()
         }
     }
 
+    /// Record or Stop is being sent: a second tap is not a second command.
+    private var toggling = false
+
     func toggleRecording() async {
-        guard let d = devices.selected else { return }
-        await link.run(link.status.recordingSince == nil ? "Starting" : "Stopping") {
+        guard let d = devices.selected, !toggling else { return }
+        toggling = true
+        defer { toggling = false }
+        let starting = link.status.recordingSince == nil
+        var stopped: String?
+        await link.run(starting ? "Starting" : "Stopping") {
             try await link.connect(d)
-            if link.status.recordingSince == nil {
+            if starting {
+                guard link.status.recordingSince == nil else { return }   // the Pocket's button got there first
                 try await link.startRecording()
             } else if let name = try await link.stopRecording() {
-                try await completeRecording(name: name, device: d)
+                stopped = name
             }
+        }
+        if let name = stopped {
+            wrapUp(name)
+            await saveStopped(name, device: d, inferred: false)
         }
     }
 
-    /// After a stop: keep the streamed copy if it is the whole recording, else
-    /// download the device's file (if downloading after stop is on).
-    private func completeRecording(name: String, device d: DeviceConfig) async throws {
-        let streamed = await live.end(name: name)
+    /// A recording stopped by the Pocket's button, or found still open when a new one started
+    /// (`heard` false): its stream is taken at once, then the recording is saved.
+    private func recordingStopped(_ name: String, heard: Bool) {
+        wrapUp(name)
+        guard let d = connectedDevice ?? devices.selected else { return }
+        Task { await saveStopped(name, device: d, inferred: !heard) }
+    }
+
+    /// Streams detached at a stop, waiting for their save: whichever path saves a recording
+    /// takes its stream, and a second path finds it taken.
+    private var stoppedStreams: [String: LiveSession.Ending] = [:]
+    /// Recordings being saved after their stop, so two paths never save one twice.
+    private var saving: Set<String> = []
+
+    /// Detaches the stopped recording's stream from the live session, so a recording started
+    /// right after gets a session of its own.
+    private func wrapUp(_ name: String) {
+        if let e = live.detach(name: name) { stoppedStreams[name] = e }
+    }
+
+    private func saveStopped(_ name: String, device d: DeviceConfig, inferred: Bool) async {
+        guard !saving.contains(name) else { return }   // already being saved, by the other path
+        let ending = stoppedStreams.removeValue(forKey: name)
+        saving.insert(name)
+        defer { saving.remove(name) }
+        await link.run("Saving") { try await completeRecording(name: name, device: d, ending: ending, inferred: inferred) }
+    }
+
+    /// After a stop: keep the streamed copy if it is the whole recording, else download the
+    /// device's file (if downloading after stop is on). A stream kept because the listing or
+    /// the download failed is marked partial, for a later sync to replace with the Pocket's
+    /// file; so is anything kept for a stop that was `inferred` rather than heard.
+    private func completeRecording(name: String, device d: DeviceConfig, ending: LiveSession.Ending?, inferred: Bool) async throws {
+        let streamed = await ending?.finish()
         guard let date = PocketTime.parse(name) else { return }
         let day = PocketTime.day.string(from: date)
         guard !library.has(device: d.id, day: day, name: name) else { return }
-        try await Task.sleep(for: .milliseconds(500))   // let the device close the file
-        let listed = try await link.listFiles().first { $0.name == name }
+        // The Pocket lists a recording once it has closed the file; a call recording (PH…) never.
+        let call = name.hasPrefix("PH")
+        var listed: RemoteFile?
+        var listError: Error?
+        for round in 0..<(call ? 1 : 3) where listed == nil {
+            try? await Task.sleep(for: .milliseconds(round == 0 ? 500 : 1_500))
+            do { listed = try await link.listFiles().first { $0.name == name } } catch { listError = error; break }
+        }
         var remote = listed ?? RemoteFile(day: day, name: name, seconds: 0)
 
         let audio: Data
+        var partial = inferred
         if let s = streamed, s.complete, Self.matches(s.audio, seconds: remote.seconds) {
             audio = s.audio
             link.note("kept the streamed copy of \(name): \(s.audio.count) bytes")
         } else if listed == nil, let s = streamed, !s.audio.isEmpty {
-            // Call-mode recordings (PH…) are not in the Pocket's listing, so they
-            // cannot be downloaded: the stream is all there is.
+            // Not in the listing (a call recording, or the listing failed): the stream is what
+            // there is. Unless it is a whole call recording, a sync checks it against the Pocket's file.
             audio = s.audio
             remote = RemoteFile(day: day, name: name, seconds: Int((Self.duration(of: s.audio) ?? 0).rounded()))
+            if !s.complete || !call { partial = true }
             link.note(s.complete ? "kept the streamed copy of \(name), which the Pocket does not list: \(s.audio.count) bytes"
                                  : "stream had a gap and the Pocket does not list \(name); kept \(s.audio.count) bytes")
-        } else if d.downloadAfterStop {
+        } else if listed != nil, d.downloadAfterStop {
             if let s = streamed { link.note("streamed copy incomplete (\(s.audio.count) bytes); downloading") }
-            audio = try await link.download(remote)
+            do {
+                let fetched = try await link.download(remote)
+                audio = fetched.data
+                if !fetched.whole { partial = true }
+            } catch {
+                // The download failed (a new recording took the channel, say): the stream, if any,
+                // is kept for now, and a sync replaces it with the Pocket's file.
+                guard let s = streamed, !s.audio.isEmpty else { throw error }
+                audio = s.audio
+                partial = true
+                link.note("downloading \(name) failed; kept the streamed \(s.audio.count) bytes for now")
+            }
+        } else if let listError {
+            throw listError
         } else {
             return
         }
+        guard !audio.isEmpty else { return }
         let place = await locator.place(for: name, seconds: remote.seconds)
         var r = try library.save(device: d.id, day: remote.day, name: name, audio: audio, seconds: remote.seconds, place: place,
                                  pocket: pocketID(d))
         r.meta.mode = name.hasPrefix("PH") ? "CALL" : link.status.mode
+        if partial { r.meta.partial = true }
         library.update(r)
         if let s = streamed, let t = s.transcript {
             r.meta.transcript = t

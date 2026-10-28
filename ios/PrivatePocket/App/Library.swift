@@ -84,6 +84,9 @@ struct RecordingMeta: Codable, Hashable {
     var transcribedAt: Date?
     var summary: String?
     var summarisedAt: Date?
+    /// Kept from a stream that was not whole, or not checked against the Pocket's listing:
+    /// a sync downloads the Pocket's own file and replaces it when that holds more.
+    var partial: Bool?
 }
 
 enum PocketTime {
@@ -193,6 +196,21 @@ final class Library: ObservableObject {
 
     func has(device: UUID, day: String, name: String) -> Bool {
         FileManager.default.fileExists(atPath: folder(device: device, day: day).appendingPathComponent("\(name).mp3").path)
+    }
+
+    func recording(device: UUID, day: String, name: String) -> Recording? {
+        let id = "\(device.uuidString)/\(day)/\(name)"
+        return recordings.first { $0.id == id }
+    }
+
+    /// The Pocket's own file in place of a partial copy. The transcript stays until it is
+    /// transcribed again.
+    func replaceAudio(_ id: String, with audio: Data, seconds: Int?, partial: Bool) -> Recording? {
+        guard let r = recordings.first(where: { $0.id == id }), (try? audio.write(to: r.audioURL, options: .atomic)) != nil else { return nil }
+        return mutate(id) { m in
+            m.partial = partial ? true : nil
+            if let seconds, seconds > 0 { m.seconds = seconds }
+        }
     }
 
     func localSize(device: UUID, day: String, name: String) -> Int? {

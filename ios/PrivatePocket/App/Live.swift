@@ -123,23 +123,48 @@ final class LiveSession: ObservableObject {
     /// The link dropped: the stream now has a hole, so the device file is needed.
     func markGap() { if isActive { gap = true } }
 
-    /// Ends the session for recording `name`; nil if it was for another one.
-    func end(name: String) async -> Result? {
+    /// Takes recording `name`'s stream out of the session at once, so another recording can
+    /// begin while this one's transcriber finishes and its file is read; nil if the session
+    /// was for another one. (Ending it in place let a recording started during that wait
+    /// throw the new session away and have its file read as the old one's.)
+    func detach(name: String) -> Ending? {
         guard self.name == name else { return nil }
         try? file?.close()
-        file = nil
-        var transcript: String?
-        if let l = local { transcript = await l.finish() }
-        if let r = remote { transcript = await r.finish() }
-        let words = self.words
-        let audio = url.flatMap { try? Data(contentsOf: $0) } ?? Data()
-        if let url { try? FileManager.default.removeItem(at: url) }
-        let result = Result(name: name, audio: audio, complete: !gap && !audio.isEmpty,
-                            transcript: transcript.flatMap { $0.isEmpty ? nil : $0 },
-                            words: words,
+        let ending = Ending(name: name, url: url, local: local, remote: remote, gap: gap,
                             locale: remote != nil && localeID == Languages.auto ? nil : localeID)
         reset()
-        return result
+        return ending
+    }
+
+    /// A stopped recording's stream, finishing on its own.
+    @MainActor
+    final class Ending {
+        let name: String
+        private let url: URL?
+        private let local: LocalLiveTranscriber?
+        private let remote: RemoteLiveTranscriber?
+        private let gap: Bool
+        private let locale: String?
+
+        init(name: String, url: URL?, local: LocalLiveTranscriber?, remote: RemoteLiveTranscriber?, gap: Bool, locale: String?) {
+            self.name = name
+            self.url = url
+            self.local = local
+            self.remote = remote
+            self.gap = gap
+            self.locale = locale
+        }
+
+        func finish() async -> LiveSession.Result {
+            var transcript: String?
+            if let l = local { transcript = await l.finish() }
+            if let r = remote { transcript = await r.finish() }
+            let words = local?.words ?? remote?.words ?? []
+            let audio = url.flatMap { try? Data(contentsOf: $0) } ?? Data()
+            if let url { try? FileManager.default.removeItem(at: url) }
+            return LiveSession.Result(name: name, audio: audio, complete: !gap && !audio.isEmpty,
+                                      transcript: transcript.flatMap { $0.isEmpty ? nil : $0 }, words: words, locale: locale)
+        }
     }
 
     @discardableResult
