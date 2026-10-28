@@ -41,6 +41,8 @@ final class AppModel: ObservableObject {
     /// The user tapped Disconnect: do not reconnect until they tap Connect.
     @Published var userDisconnected = false
     private var keepAlive: Task<Void, Never>?
+    /// Pairing tries since the app came to the foreground (see `keepPairing`).
+    private var pairTicks = 0
 
     @Published var working: Set<String> = []   // recording ids being transcribed/summarised
     @Published var aiError: String?
@@ -72,6 +74,7 @@ final class AppModel: ObservableObject {
             Task { try? await Task.sleep(for: .seconds(2)); await self?.ensureConnected() }
         }
         link.onRecordingStopped = { [weak self] name in self?.recordingStopped(name, heard: true) }
+        link.onPaired = { [weak self] d in self?.devices.update(d) }   // the key lives in the Keychain; this refreshes the views
     }
 
     // MARK: - Staying connected
@@ -81,18 +84,46 @@ final class AppModel: ObservableObject {
     func setActive(_ active: Bool) {
         keepAlive?.cancel()
         guard active else { return }
+        pairTicks = 0
         keepAlive = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.ensureConnected()
+                await self?.keepPairing()
                 try? await Task.sleep(for: .seconds(15))
             }
         }
     }
 
+    /// Connected but without a key the Pocket accepts: try to pair, every 15 s for the
+    /// first two minutes in the foreground and every minute after, never while it
+    /// records. In pairing mode the try succeeds; outside it the Pocket drops the link,
+    /// which `ensureConnected` restores a moment later.
+    private func keepPairing() async {
+        guard link.isReady, !canCommand, link.status.recordingSince == nil else { return }
+        if case .busy = link.phase { return }   // never on top of another command
+        pairTicks += 1
+        // Holding the button makes the Pocket drop the link, and that drop triggers a try
+        // at once (`PocketLink.handshake`). This is the safety net.
+        guard pairTicks <= 8 || pairTicks % 4 == 0 else { return }
+        try? await link.tryPairing(quiet: true)
+    }
+
+    /// The selected Pocket answers commands: it has a key the Pocket still accepts.
+    var canCommand: Bool { (devices.selected?.isPaired ?? false) && !link.keyRejected }
+
+    /// Connected even without a key, so recordings started with the Pocket's button stream.
     func ensureConnected() async {
         guard Prefs.stayConnected, !userDisconnected, link.phase == .idle, !link.isDiscovering,
-              let d = devices.selected, !d.sessionKey.isEmpty else { return }
+              let d = devices.selected else { return }
         await link.run("Connecting", quiet: true) { try await link.connect(d) }
+    }
+
+    /// With the Pocket in pairing mode (side button held 5 s, blinking blue), give it a new key.
+    func pairSelected() async {
+        guard let d = devices.selected else { return }
+        userDisconnected = false
+        await link.run("Pairing") { try await link.pair(d) }
+        devices.update(d)   // the key lives in the Keychain; this refreshes the views
     }
 
     func userConnect() async {
@@ -125,6 +156,7 @@ final class AppModel: ObservableObject {
     /// Download every recording on the device that is not on the phone yet, and was not deleted here.
     func sync() async {
         guard let d = devices.selected, !syncing else { return }
+        guard canCommand else { link.lastError = "Pair the Pocket to download recordings from it."; return }
         syncing = true
         defer { syncing = false }
         await link.run("Syncing") {
@@ -168,7 +200,7 @@ final class AppModel: ObservableObject {
     private var toggling = false
 
     func toggleRecording() async {
-        guard let d = devices.selected, !toggling else { return }
+        guard let d = devices.selected, canCommand, !toggling else { return }
         toggling = true
         defer { toggling = false }
         let starting = link.status.recordingSince == nil
@@ -226,10 +258,12 @@ final class AppModel: ObservableObject {
         let day = PocketTime.day.string(from: date)
         guard !library.has(device: d.id, day: day, name: name) else { return }
         // The Pocket lists a recording once it has closed the file; a call recording (PH…) never.
+        // Unpaired, it answers no commands, so the stream is all there is.
         let call = name.hasPrefix("PH")
+        let tries = !(d.isPaired && !link.keyRejected) ? 0 : call ? 1 : 3
         var listed: RemoteFile?
         var listError: Error?
-        for round in 0..<(call ? 1 : 3) where listed == nil {
+        for round in 0..<tries where listed == nil {
             try? await Task.sleep(for: .milliseconds(round == 0 ? 500 : 1_500))
             do { listed = try await link.listFiles().first { $0.name == name } } catch { listError = error; break }
         }

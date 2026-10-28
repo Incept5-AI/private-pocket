@@ -40,7 +40,7 @@ struct SettingsView: View {
                         Label("USB drive: free up space", systemImage: "externaldrive")
                     }
                 } header: { Text("Devices") } footer: {
-                    Text("Each Pocket has its own session key and recordings folder. Stay connected reconnects while the app is open, so recordings stream live. Deleting recordings from a Pocket needs the USB cable.")
+                    Text("Each Pocket gets its own key when paired, and its own recordings folder. Stay connected reconnects while the app is open, so recordings stream live. Deleting recordings from a Pocket needs the USB cable.")
                 }
 
                 Section {
@@ -366,7 +366,7 @@ struct DeviceEditor: View {
                         .buttonStyle(.borderless)
                 }
             } header: { Text("Session key") } footer: {
-                Text("Sent first on every connection (APP&SK&…). The Pocket ignores all commands without it. Stored in the Keychain on this phone only.")
+                Text("Set when you pair, or paste the key another app uses. Sent first on every connection (APP&SK&…); without it the Pocket answers no commands but still streams recordings. Clear it to pair again from the Recorder tab. Stored in the Keychain on this phone only.")
             }
             Section("Bluetooth") {
                 TextField("Advertised name", text: $device.advertisedName)
@@ -406,6 +406,7 @@ struct DeviceEditor: View {
 }
 
 struct AddDeviceSheet: View {
+    @EnvironmentObject var model: AppModel
     @EnvironmentObject var devices: DeviceStore
     @EnvironmentObject var link: PocketLink
     @Environment(\.dismiss) private var dismiss
@@ -425,8 +426,6 @@ struct AddDeviceSheet: View {
                         Button {
                             chosen = d
                             if name.isEmpty { name = defaultName(d.name) }
-                            // Offer the key of a Pocket already added; replace it if this one rejects it.
-                            if key.isEmpty { key = devices.devices.lazy.map(\.sessionKey).first { !$0.isEmpty } ?? "" }
                         } label: {
                             HStack {
                                 Text(d.name)
@@ -444,10 +443,10 @@ struct AddDeviceSheet: View {
                 if chosen != nil {
                     Section("Name") { TextField("Name", text: $name) }
                     Section {
-                        TextField("Session key", text: $key)
+                        TextField("Session key (optional)", text: $key)
                             .textInputAutocapitalization(.never).autocorrectionDisabled().font(.body.monospaced())
                     } header: { Text("Session key") } footer: {
-                        Text("The 16-character key the official app sends as APP&SK&… (see ble/PROTOCOL.md, \"Capturing your session key\"). Filled in from your other Pocket if you have one; replace it if this Pocket rejects it.")
+                        Text("Leave this empty and pair from the Recorder tab: hold the Pocket's side button for 5 seconds until it blinks blue, then tap Pair. Or paste the 16-character key another app already uses.")
                     }
                 }
             }
@@ -458,12 +457,22 @@ struct AddDeviceSheet: View {
                     Button("Add") {
                         guard let c = chosen else { return }
                         let d = DeviceConfig(name: name, advertisedName: c.name, peripheralID: c.id)
-                        d.sessionKey = key.trimmingCharacters(in: .whitespaces)
+                        let k = key.trimmingCharacters(in: .whitespaces)
+                        if !k.isEmpty { d.sessionKey = k }
                         devices.add(d)
                         dismiss()
+                        link.stopDiscovery()
+                        Task { await model.userConnect() }   // now, not at the next tick
                     }
-                    .disabled(chosen == nil || key.trimmingCharacters(in: .whitespaces).isEmpty || name.isEmpty)
+                    .disabled(chosen == nil || name.isEmpty)
                 }
+            }
+            .onChange(of: link.discovered) {
+                // One Pocket nearby and none chosen yet: pick it, so Add is one tap.
+                guard chosen == nil, link.discovered.count == 1, let d = link.discovered.first,
+                      !devices.devices.contains(where: { $0.advertisedName == d.name }) else { return }
+                chosen = d
+                if name.isEmpty { name = defaultName(d.name) }
             }
             .onAppear { link.disconnect(); link.startDiscovery() }
             .onDisappear { link.stopDiscovery() }

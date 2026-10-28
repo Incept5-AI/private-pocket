@@ -47,6 +47,7 @@ struct DeviceView: View {
                     }
                 } else {
                     deviceSection
+                    if !model.canCommand { pairSection }
                     recordSection
                     if recording || live.isActive { liveSection }
                     syncSection
@@ -104,6 +105,30 @@ struct DeviceView: View {
         }
     }
 
+    /// Unpaired: the two steps, and a Pair button that works whether or not the link is up.
+    private var pairSection: some View {
+        Section {
+            Label("Hold the side button for 5 seconds, until the light blinks blue.", systemImage: "1.circle")
+            Label("Tap Pair while it blinks. The light goes solid once it's done.", systemImage: "2.circle")
+            Button { Task { await model.pairSelected() } } label: {
+                Text(link.phase == .busy("Pairing") ? "Pairing…" : "Pair").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(busy)
+        } header: {
+            Text(link.keyRejected ? "Pair your Pocket again" : "Pair your Pocket")
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isConnected || link.bouncingAfterKey
+                     ? "Connected without a key yet. Recordings started with its button still stream here, and the app keeps trying to pair by itself."
+                     : "Not connected right now; Pair connects first.")
+                if link.keyRejected {
+                    Text("Your Pocket no longer accepts this phone's key, which happens after a reset or when another app paired it.")
+                }
+            }
+        }
+    }
+
     private var recordSection: some View {
         Section {
             VStack(spacing: 10) {
@@ -117,14 +142,15 @@ struct DeviceView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(busy && !recording)
+                .disabled((busy && !recording) || !model.canCommand)
                 .accessibilityLabel(recording ? "Stop recording" : "Start recording")
                 if let since = link.status.recordingSince {
                     Text(timerInterval: since...Date.distantFuture, countsDown: false)
                         .font(.title2.monospacedDigit().weight(.medium))
                     Text("Recording on the Pocket").font(.caption).foregroundStyle(.secondary)
                 } else {
-                    Text(isConnected ? "Tap to record on the Pocket" : "Connect to record from here, or use the Pocket's button")
+                    Text(!model.canCommand ? "Pair to record from here. The Pocket's button records, and streams here, meanwhile."
+                         : isConnected ? "Tap to record on the Pocket" : "Connect to record from here, or use the Pocket's button")
                         .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 }
             }
@@ -178,7 +204,7 @@ struct DeviceView: View {
             Button { Task { await model.sync() } } label: {
                 Label("Download new recordings", systemImage: "arrow.down.circle")
             }
-            .disabled(busy || recording)
+            .disabled(busy || recording || !model.canCommand)
         } footer: {
             Text("Fetches every recording the phone does not have yet. Pull down to do the same. Recordings made while connected are saved as they stream.")
         }
@@ -230,7 +256,7 @@ struct DeviceView: View {
         case .idle: "Not connected"
         case .scanning: "Looking for the Pocket…"
         case .connecting: "Connecting…"
-        case .ready: "Connected"
+        case .ready: model.canCommand ? "Connected" : "Connected, not paired"
         case .busy(let what): "\(what)…"
         }
     }

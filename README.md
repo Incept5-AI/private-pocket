@@ -101,9 +101,10 @@ Place names use Apple's geocoder (coordinates only), and can be turned off.
 - An iPhone on iOS 27, built with Xcode 27 and [XcodeGen](https://github.com/yonaskolb/XcodeGen).
   On-device summaries need Apple Intelligence.
 - A Pocket recorder. Tested on firmware 1.8 / Wi-Fi V9 with two cards.
-- Your Pocket's **session key**. The device ignores every command without it. It's a
-  one-time capture of what the official app sends; see
-  [Capturing your session key](ble/PROTOCOL.md#capturing-your-session-key).
+- Nothing else: the app pairs with the Pocket itself (hold the side button for 5 seconds
+  until it blinks blue, then tap Pair). Until then, recordings started with the button
+  still stream in. You can also paste the key the official app uses; see
+  [Session key and pairing](ble/PROTOCOL.md#session-key-and-pairing).
 
 ## Getting started
 

@@ -8,6 +8,9 @@ enum PocketUUID {
     static let audio = CBUUID(string: "001120A1-2233-4455-6677-889912345678")
     static let command = CBUUID(string: "001120A2-2233-4455-6677-889912345678")
     static let reply = CBUUID(string: "001120A3-2233-4455-6677-889912345678")
+    /// Standard Battery Service: readable without a session key.
+    static let batteryService = CBUUID(string: "180F")
+    static let batteryLevel = CBUUID(string: "2A19")
     static let namePrefix = "PKT01"
 }
 
@@ -41,7 +44,7 @@ struct Discovered: Identifiable, Hashable {
 }
 
 enum PocketError: LocalizedError {
-    case bluetoothOff, notFound, timeout(String), notReady, rejected, noKey, interrupted, superseded
+    case bluetoothOff, notFound, timeout(String), notReady, rejected, notPairing, interrupted, superseded
 
     var errorDescription: String? {
         switch self {
@@ -49,8 +52,8 @@ enum PocketError: LocalizedError {
         case .notFound: "Pocket not found. Is it on, nearby, and not connected to another phone or app?"
         case .timeout(let what): "Timed out waiting for \(what)."
         case .notReady: "Not connected."
-        case .rejected: "The Pocket did not accept the session key."
-        case .noKey: "This device has no session key. Add it in Settings."
+        case .rejected: "The Pocket rejected this phone's key, which happens after a reset or when another app pairs it. Hold its side button for 5 seconds until the light blinks blue, then tap Pair."
+        case .notPairing: "The Pocket didn't take the key. Hold its side button for 5 seconds until the light blinks blue, then tap Pair while it blinks."
         case .superseded: "The Pocket couldn't be reached just then. Try again in a moment."
         case .interrupted: "Downloading stopped because the Pocket started recording. Sync again after the recording."
         }
@@ -70,6 +73,13 @@ final class PocketLink: NSObject, ObservableObject {
     @Published private(set) var progress: (label: String, done: Int, total: Int)?
     @Published private(set) var log: [String] = []
     @Published var lastError: String?
+    /// The Pocket dropped the connection on the stored key (it was reset, most likely).
+    /// The link then carries on without a key, so recordings still stream, and tries
+    /// to pair afresh until the user holds the button.
+    @Published private(set) var keyRejected = false
+    /// The Pocket dropped the link right after refusing a key: the reconnect that follows
+    /// is housekeeping, so the screen need not flicker through it.
+    @Published private(set) var bouncingAfterKey = false
 
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
@@ -79,6 +89,23 @@ final class PocketLink: NSObject, ObservableObject {
     private var notifyingAudio = false
     private var discoveryMode = false
     private var wantedName: String?
+    /// Try a fresh key on the next connection made without one (see `handshake`): at
+    /// start, and after any link loss the Pocket caused on its own, which is what it
+    /// does when put into pairing mode. A try outside pairing mode just costs a
+    /// reconnect, so the stream carries on.
+    private var pairAttemptPending = true
+    private var lastKeySentAt = Date.distantPast
+    /// When the stored key was last refused, so it can be tried again after a while.
+    private var rejectedAt = Date.distantPast
+    /// One pairing try at a time, and automatic ones no closer than 8 s apart.
+    private var pairing = false
+    private var lastPairTryAt = Date.distantPast
+    /// One handshake at a time, whichever path started it.
+    private var handshaking = false
+    /// Looks at a key the Pocket may have taken while the link was dropping, a few times.
+    private var triedChecks = 0
+    /// Called when a key was accepted, with the device that now holds it.
+    var onPaired: ((DeviceConfig) -> Void)?
 
     private var lines: [String] = []
     private var audio = Data()
@@ -96,6 +123,8 @@ final class PocketLink: NSObject, ObservableObject {
     /// link loss: taken for one, it re-armed the reconnect, whose cancel was answered the same
     /// way, in a loop, and the Pocket never reconnected.
     private var cancelling: Set<UUID> = []
+    /// When live audio last arrived (outside a download): the Pocket is recording.
+    private(set) var lastLiveAudioAt = Date.distantPast
 
     /// Called with the learned CoreBluetooth identifier so it can be stored per device.
     var onPeripheralLearned: ((UUID, UUID) -> Void)?
@@ -134,13 +163,72 @@ final class PocketLink: NSObject, ObservableObject {
 
     // MARK: - Connection
 
+    /// Connects and, if the device has a key, sends it. Without a key the link still
+    /// delivers recording events and live audio; the Pocket just answers no commands.
     func connect(_ d: DeviceConfig) async throws {
         if connectedDeviceID == d.id, isReady { return }
+        try await establish(d)
+        try await handshake()
+    }
+
+    /// Pair now, on request: the same fresh-key try `handshake` makes by itself, but
+    /// with an error if the Pocket is not in pairing mode.
+    func pair(_ d: DeviceConfig) async throws {
+        if !(connectedDeviceID == d.id && isReady) { try await establish(d) }
+        guard !pairing else { return }
+        pairing = true
+        defer { pairing = false }
+        lastPairTryAt = Date()
+        try await tryNewKey(d, quiet: false)
+    }
+
+    /// Pairs the way the official app does. With the Pocket in pairing mode (side
+    /// button held for 5 s, light blinking blue) it accepts whatever key is sent next
+    /// and that key works from then on; outside pairing mode it drops the link instead.
+    /// `quiet` swallows that drop: the reconnect then carries on without a key.
+    private func tryNewKey(_ d: DeviceConfig, quiet: Bool) async throws {
+        let key = Self.newKey()
+        note("trying to pair")
+        Keychain.set(key, for: Self.triedAccount(d))   // in case the Pocket takes it but the link drops before it says so
+        triedChecks = 0
+        do { try await sendKey(key) } catch {
+            if peripheral?.state == .connected { Keychain.delete(Self.triedAccount(d)) }   // a refusal, not a drop
+            if quiet { return }
+            disconnect()
+            throw PocketError.notPairing
+        }
+        Keychain.delete(Self.triedAccount(d))
+        d.sessionKey = key   // Keychain; the struct itself is unchanged
+        note("paired: the Pocket took a new key")
+        try await afterKey(d)
+        onPaired?(d)
+    }
+
+    /// Clock and status, once a key was accepted.
+    private func afterKey(_ d: DeviceConfig) async throws {
+        keyRejected = false
+        if d.setClockOnConnect {
+            try await send("T&\(PocketTime.now())", until: { $0.hasPrefix("MCU&T&") })
+        }
+        try await refreshStatus()
+    }
+
+    /// 16 characters, like the official app's keys, without look-alike letters.
+    static func newKey() -> String {
+        let chars = Array("ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789")
+        return String((0..<16).map { _ in chars.randomElement()! })
+    }
+
+    /// Scan, connect and subscribe, without sending any key.
+    private func establish(_ d: DeviceConfig) async throws {
         disconnect()
         let mine = attempt
-        guard !d.sessionKey.isEmpty else { throw PocketError.noKey }
         try await waitForPoweredOn()
         guard attempt == mine else { throw PocketError.superseded }
+        if device?.id != d.id {
+            keyRejected = false
+            pairAttemptPending = true
+        }
         device = d
         lines = []
         phase = .scanning
@@ -160,7 +248,7 @@ final class PocketLink: NSObject, ObservableObject {
         }
         phase = .ready
         connectedDeviceID = d.id
-        try await handshake()
+        bouncingAfterKey = false
     }
 
     func disconnect() { teardown(cancel: true) }
@@ -205,14 +293,106 @@ final class PocketLink: NSObject, ObservableObject {
         central.connect(p)
     }
 
+    /// After the link is up. With a key the Pocket has accepted before: send it and
+    /// read the status. Without one, or after a refusal: stay connected for events
+    /// and live audio, and try to pair in case the Pocket is in pairing mode. The
+    /// foreground loop keeps trying (`AppModel.keepPairing`).
     private func handshake() async throws {
         guard let d = device else { throw PocketError.notReady }
-        let r = try await send("SK&\(d.sessionKey)", until: { $0.hasPrefix("MCU&SK&") }, timeout: 5)
-        guard r.last == "MCU&SK&OK" else { disconnect(); throw PocketError.rejected }
-        if d.setClockOnConnect {
-            _ = try await send("T&\(PocketTime.now())", until: { $0.hasPrefix("MCU&T&") })
+        guard !handshaking else { return }
+        handshaking = true
+        defer { handshaking = false }
+        let key = d.sessionKey
+        if !key.isEmpty, !keyRejected {
+            do { try await sendKey(key) } catch PocketError.rejected {
+                // The Pocket drops the link on a key it does not hold (it was reset, or
+                // another app paired it). AppModel reconnects, and this runs again on
+                // the keyless path below. A timeout is not a refusal: it propagates, and
+                // the next connection sends the key again.
+                keyRejected = true
+                rejectedAt = Date()
+                note("key refused: carrying on without one")
+                throw PocketError.rejected
+            }
+            try await afterKey(d)
+            return
         }
-        try await refreshStatus()
+        note(key.isEmpty ? "not paired: recording events and live audio only"
+                         : "key refused earlier: recording events and live audio only")
+        // What only a key can read is forgotten. Whether it records, and the switch, are not:
+        // a recording under way when the link came back is still under way.
+        var s = DeviceStatus(battery: status.battery)
+        s.recordingSince = status.recordingSince
+        s.recordingName = status.recordingName
+        s.mode = status.mode
+        status = s
+        if pairAttemptPending {
+            pairAttemptPending = false
+            try await tryPairing(quiet: true, force: true)
+        }
+    }
+
+    /// Tries to pair, in the order most likely to work. The stored key first, unless it
+    /// was refused in the last 45 s: a refusal is sometimes a missed reply. Then a key
+    /// the Pocket may have taken while the link was dropping. Else a fresh key, which the
+    /// Pocket takes in pairing mode and keeps from then on. Outside pairing mode a wrong
+    /// key drops the link, which costs a reconnect and nothing else: the link had no key
+    /// anyway. Never while the Pocket records or streams, so a recording is never cut.
+    func tryPairing(quiet: Bool, force: Bool = false) async throws {
+        guard let d = device, isReady, status.recordingSince == nil, Date().timeIntervalSince(lastLiveAudioAt) > 5, !pairing,
+              force || !quiet || Date().timeIntervalSince(lastPairTryAt) > 8 else { return }
+        pairing = true
+        defer { pairing = false }
+        lastPairTryAt = Date()
+        let key = d.sessionKey
+        if !key.isEmpty, !keyRejected || Date().timeIntervalSince(rejectedAt) > 45 {
+            do { try await sendKey(key) } catch PocketError.rejected {
+                keyRejected = true
+                rejectedAt = Date()
+                note("key refused again")
+                if quiet { return }
+                throw PocketError.rejected
+            }
+            note("the Pocket took the stored key after all")
+            try await afterKey(d)
+            onPaired?(d)
+            return
+        }
+        if let tried = Keychain.get(Self.triedAccount(d)), !tried.isEmpty, triedChecks < 3 {
+            triedChecks += 1
+            note("checking whether the Pocket took the last key sent")
+            do {
+                try await sendKey(tried)
+            } catch {
+                if peripheral?.state == .connected { Keychain.delete(Self.triedAccount(d)) }   // it answered: it does not hold it
+                note("it had not")
+                if quiet { return }
+                disconnect()
+                throw PocketError.notPairing
+            }
+            Keychain.delete(Self.triedAccount(d))
+            d.sessionKey = tried
+            note("it had: paired")
+            try await afterKey(d)
+            onPaired?(d)
+            return
+        }
+        try await tryNewKey(d, quiet: quiet)
+    }
+
+    /// Where the last key sent to a Pocket waits until the Pocket says whether it took it.
+    static func triedAccount(_ d: DeviceConfig) -> String { "sk.tried.\(d.id.uuidString)" }
+
+    /// `APP&SK&<key>`: the Pocket answers `MCU&SK&OK`, or drops the connection at once
+    /// when the key is wrong (outside pairing mode).
+    private func sendKey(_ key: String) async throws {
+        lastKeySentAt = Date()
+        do {
+            let r = try await send("SK&\(key)", until: { $0.hasPrefix("MCU&SK&") }, timeout: 5)
+            guard r.last == "MCU&SK&OK" else { throw PocketError.rejected }
+        } catch PocketError.notReady {
+            throw PocketError.rejected
+        }
     }
 
     // MARK: - Commands
@@ -473,7 +653,7 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
             wantedName = nil
             note("connected to \(p.name ?? "Pocket")")
             if let d = device, d.peripheralID != p.identifier { onPeripheralLearned?(d.id, p.identifier) }
-            p.discoverServices([PocketUUID.service])
+            p.discoverServices([PocketUUID.service, PocketUUID.batteryService])
         }
     }
 
@@ -490,7 +670,12 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
             if cancelling.remove(p.identifier) != nil { return }   // the answer to a cancel of ours, not a loss
             guard p == peripheral else { return }
             note("disconnected")
+            // A drop the Pocket made on its own, not on a key just sent, may mean it was
+            // put into pairing mode: worth a fresh key on the next connection.
+            let afterKey = Date().timeIntervalSince(lastKeySentAt) <= 3
+            if !afterKey { pairAttemptPending = true }
             teardown(cancel: false)   // already gone: a cancel now would only be answered with another disconnect
+            bouncingAfterKey = afterKey
             onLinkLost?()
         }
     }
@@ -501,6 +686,9 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
                 note("Pocket service not found"); disconnect(); return
             }
             p.discoverCharacteristics([PocketUUID.audio, PocketUUID.command, PocketUUID.reply], for: s)
+            if let b = p.services?.first(where: { $0.uuid == PocketUUID.batteryService }) {
+                p.discoverCharacteristics([PocketUUID.batteryLevel], for: b)
+            }
         }
     }
 
@@ -510,6 +698,7 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
                 switch c.uuid {
                 case PocketUUID.command: commandChar = c
                 case PocketUUID.reply, PocketUUID.audio: p.setNotifyValue(true, for: c)
+                case PocketUUID.batteryLevel: p.readValue(for: c); p.setNotifyValue(true, for: c)
                 default: break
                 }
             }
@@ -527,9 +716,14 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
         guard let v = c.value else { return }
         MainActor.assumeIsolated {
             if c.uuid == PocketUUID.audio {
-                if capturingAudio { audio.append(v) } else { onLiveAudio?(v) }
+                if capturingAudio { audio.append(v) } else {
+                    lastLiveAudioAt = Date()
+                    onLiveAudio?(v)
+                }
             } else if c.uuid == PocketUUID.reply, let s = String(data: v, encoding: .utf8) {
                 handleLine(s.trimmingCharacters(in: .whitespacesAndNewlines))
+            } else if c.uuid == PocketUUID.batteryLevel, let b = v.first {
+                status.battery = Int(b)
             }
         }
     }
