@@ -34,7 +34,7 @@ struct PeopleView: View {
                         }
                     } else {
                         PeopleMap(people: people, selected: $selected)
-                        Text("Bigger: more time talking. Closer: more recent. Amber ring: something owed.").font(.caption).foregroundStyle(Brand.dim)
+                        Text("Closer to you: spoken with more recently. Bigger: more time talking. Amber ring: something owed. Tap someone for what stands between you.").font(.caption).foregroundStyle(Brand.dim)
                         if let s = selected ?? people.first?.name, let p = people.first(where: { $0.name == s }) {
                             PersonCard(person: p)
                         }
@@ -104,54 +104,129 @@ extension Digest.Person {
     var daysSince: Int { lastSeen.map { Int(Date().timeIntervalSince($0) / 86_400) } ?? 999 }
 }
 
-/// The map: the most talked-to at the centre, the rest around them by recency.
+/// The map: you at the centre, each person as far out as it has been since you spoke (two
+/// faint rings for this week and this month), as big as the time you have talked, faded as
+/// they recede, with an amber ring where something is owed. The circles are nudged apart
+/// until none touches another, so every name can be read: placed by angle and distance
+/// alone, they piled into one blob with the names under each other.
 struct PeopleMap: View {
     let people: [Digest.Person]
     @Binding var selected: String?
 
     var body: some View {
         GeometryReader { g in
-            let w = g.size.width, h: CGFloat = 340
-            let c = CGPoint(x: w / 2, y: h / 2)
-            let maxSec = max(1, people.map(\.seconds).max() ?? 1)
+            let size = CGSize(width: g.size.width, height: g.size.height)
+            let c = CGPoint(x: size.width / 2, y: size.height / 2)
+            let geometry = Self.geometry(size)
+            let placed = Self.layout(people, in: size)
+            let labels = Self.labels(people)
             ZStack {
-                ForEach(Array(people.enumerated()), id: \.element.id) { i, p in
-                    let pos = position(i, p, centre: c, w: w, h: h)
-                    if i > 0 {
-                        Path { path in path.move(to: c); path.addLine(to: pos) }
-                            .stroke(Brand.raised, lineWidth: 2)
-                    }
+                ForEach([7, 30], id: \.self) { days in
+                    let r = geometry.radius(Double(days))
+                    Circle().stroke(Brand.hairline, style: StrokeStyle(lineWidth: 1, dash: [3, 5]))
+                        .frame(width: r * 2, height: r * 2).position(c)
+                    Text(days == 7 ? "this week" : "this month").font(.caption2.weight(.semibold)).foregroundStyle(Brand.dim)
+                        .position(x: c.x, y: c.y + r + 9)
                 }
-                ForEach(Array(people.enumerated()), id: \.element.id) { i, p in
-                    let pos = position(i, p, centre: c, w: w, h: h)
-                    let size = 40 + 50 * CGFloat(p.seconds) / CGFloat(maxSec)
+                Text("You").font(.caption.weight(.bold)).foregroundStyle(Brand.text)
+                    .frame(width: geometry.you * 2, height: geometry.you * 2)
+                    .background(Brand.raised, in: Circle())
+                    .position(c)
+                    .accessibilityHidden(true)
+                ForEach(placed, id: \.person.id) { n in
+                    let p = n.person
                     Button { withAnimation(.spring(duration: 0.3)) { selected = p.name } } label: {
-                        Text(p.name.split(separator: " ").first.map(String.init) ?? p.name)
-                            .font(.system(size: size > 70 ? 17 : size > 50 ? 14 : 11, weight: .bold)).lineLimit(1).minimumScaleFactor(0.6)
-                            .frame(width: size, height: size)
-                            .background(p.isWork ? Brand.work : Brand.life, in: Circle())
+                        Text(labels[p.name] ?? p.name)
+                            .font(.system(size: n.r > 30 ? 14 : 12, weight: .bold)).lineLimit(1).minimumScaleFactor(0.6)
+                            .padding(.horizontal, 4)
+                            .frame(width: n.r * 2, height: n.r * 2)
+                            .background((p.isWork ? Brand.work : Brand.life).opacity(1 - 0.45 * geometry.fade(Double(p.daysSince))), in: Circle())
                             .foregroundStyle(p.isWork ? Brand.onWork : Brand.onLife)
-                            .overlay(Circle().strokeBorder(Brand.ground, lineWidth: p.owed ? 4 : 0))
                             .overlay(Circle().strokeBorder(Brand.record, lineWidth: p.owed ? 3 : 0).padding(-4))
-                            .overlay(Circle().strokeBorder(Brand.text, lineWidth: selected == p.name ? 2 : 0).padding(-9))
+                            .overlay(Circle().strokeBorder(Brand.text, lineWidth: selected == p.name ? 2 : 0).padding(p.owed ? -8 : -4))
                     }
                     .buttonStyle(.plain)
-                    .position(pos)
-                    .accessibilityLabel("\(p.name), \(p.moments.count) moments")
+                    .position(n.at)
+                    .accessibilityLabel("\(p.name.asName), \(PersonCard.standing(p))")
+                    .accessibilityAddTraits(selected == p.name ? .isSelected : [])
                 }
             }
         }
-        .frame(height: 340)
+        .aspectRatio(0.92, contentMode: .fit)
     }
 
-    private func position(_ i: Int, _ p: Digest.Person, centre c: CGPoint, w: CGFloat, h: CGFloat) -> CGPoint {
-        guard i > 0 else { return c }
-        let angle = Double(i) * 2.399963 + 0.6   // the golden angle spreads them evenly
-        let radius = 80 + min(60, CGFloat(p.daysSince) * 2)
-        let x = c.x + CGFloat(cos(angle)) * min(radius, w / 2 - 36)
-        let y = c.y + CGFloat(sin(angle)) * min(radius, h / 2 - 36)
-        return CGPoint(x: x, y: y)
+    /// Where the rings and distances fall in a canvas of `size`.
+    struct Geometry {
+        let you: CGFloat, inner: CGFloat, outer: CGFloat
+        /// 0 for today, 1 for half a year or more, on a log scale: the last weeks get the room.
+        func fade(_ days: Double) -> CGFloat { CGFloat(min(1, log1p(max(0, days)) / log1p(180))) }
+        func radius(_ days: Double) -> CGFloat { inner + (outer - inner) * fade(days) }
     }
+
+    static func geometry(_ size: CGSize) -> Geometry {
+        let half = min(size.width, size.height) / 2
+        return Geometry(you: 22, inner: 22 + 46, outer: half - 30)
+    }
+
+    struct Node { let person: Digest.Person; var at: CGPoint; let r: CGFloat; let distance: CGFloat }
+
+    /// Each person at the distance their last moment says, spread by the golden angle, then
+    /// pushed apart and out of your circle until no two touch, inside the canvas.
+    static func layout(_ people: [Digest.Person], in size: CGSize) -> [Node] {
+        let g = geometry(size)
+        let c = CGPoint(x: size.width / 2, y: size.height / 2)
+        let maxSec = Double(max(1, people.map(\.seconds).max() ?? 1))
+        var nodes = people.enumerated().map { i, p -> Node in
+            let r = 22 + 14 * CGFloat(sqrt(Double(p.seconds) / maxSec))
+            let d = g.radius(Double(p.daysSince))
+            let angle = Double(i) * 2.399963 - .pi / 2
+            return Node(person: p, at: CGPoint(x: c.x + CGFloat(cos(angle)) * d, y: c.y + CGFloat(sin(angle)) * d), r: r, distance: d)
+        }
+        for _ in 0..<240 {
+            for a in nodes.indices {
+                for b in nodes.indices where b > a {
+                    var dx = nodes[b].at.x - nodes[a].at.x, dy = nodes[b].at.y - nodes[a].at.y
+                    var dist = (dx * dx + dy * dy).squareRoot()
+                    if dist < 0.01 { dx = 0.01; dy = CGFloat(b - a) * 0.01; dist = 0.02 }
+                    let need = nodes[a].r + nodes[b].r + 6
+                    guard dist < need else { continue }
+                    let push = (need - dist) / 2
+                    nodes[a].at.x -= dx / dist * push; nodes[a].at.y -= dy / dist * push
+                    nodes[b].at.x += dx / dist * push; nodes[b].at.y += dy / dist * push
+                }
+            }
+            for i in nodes.indices {
+                var dx = nodes[i].at.x - c.x, dy = nodes[i].at.y - c.y
+                var dist = (dx * dx + dy * dy).squareRoot()
+                if dist < 0.01 { dx = 0; dy = -1; dist = 1 }
+                let least = g.you + nodes[i].r + 8
+                // Drawn back towards its own distance, gently, and never into your circle.
+                let want = max(least, dist + (nodes[i].distance - dist) * 0.06)
+                nodes[i].at = CGPoint(x: c.x + dx / dist * want, y: c.y + dy / dist * want)
+                let r = nodes[i].r + 4
+                nodes[i].at.x = min(max(nodes[i].at.x, r), size.width - r)
+                nodes[i].at.y = min(max(nodes[i].at.y, r), size.height - r)
+            }
+        }
+        return nodes
+    }
+
+    /// First names, with the surname's initial where two share one ("Maya C.").
+    static func labels(_ people: [Digest.Person]) -> [String: String] {
+        let first = { (n: String) in String(n.asName.split(separator: " ").first ?? Substring(n)) }
+        let counts = Dictionary(grouping: people.map(\.name), by: first).mapValues(\.count)
+        return Dictionary(uniqueKeysWithValues: people.map { p in
+            let f = first(p.name)
+            let parts = p.name.asName.split(separator: " ")
+            guard (counts[f] ?? 0) > 1, parts.count > 1, let initial = parts.last?.first else { return (p.name, f) }
+            return (p.name, "\(f) \(initial).")
+        })
+    }
+}
+
+extension String {
+    /// A name as it should read: one written all in lower case gets its capitals.
+    var asName: String { self == lowercased() ? capitalized : self }
 }
 
 struct PersonRow: View {
@@ -165,7 +240,7 @@ struct PersonRow: View {
                 .foregroundStyle(person.isWork ? Brand.onWork : Brand.onLife)
                 .overlay(Circle().strokeBorder(Brand.record, lineWidth: person.owed ? 3 : 0).padding(-3))
             VStack(alignment: .leading, spacing: 2) {
-                Text(person.name).font(.callout.weight(.bold))
+                Text(person.name.asName).font(.callout.weight(.bold))
                 Text(PersonCard.standing(person)).font(.caption).foregroundStyle(Brand.muted).lineLimit(1)
             }
             Spacer()
@@ -194,7 +269,7 @@ struct PersonCard: View {
         let tint = p.isWork ? Brand.work : Brand.life, ink = p.isWork ? Brand.onWork : Brand.onLife
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline) {
-                Text(p.name).font(.title.weight(.bold)).tracking(-0.4)
+                Text(p.name.asName).font(.title.weight(.bold)).tracking(-0.4)
                 Spacer()
                 Text(Self.standing(p)).font(.caption.weight(.semibold)).opacity(0.85).lineLimit(1)
             }

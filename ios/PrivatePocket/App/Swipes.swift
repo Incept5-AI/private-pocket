@@ -25,6 +25,28 @@ struct SwipeAction: Identifiable {
     static func act(_ title: String, _ run: @escaping () -> Void) -> SwipeAction {
         SwipeAction(title: title, symbol: "arrow.up.right", tint: Brand.act, ink: Brand.onAct, run: run)
     }
+    /// Into Reminders or Calendar, in blue beside Done's green.
+    static func place(_ title: String, _ symbol: String, _ run: @escaping () -> Void) -> SwipeAction {
+        SwipeAction(title: title, symbol: symbol, tint: Brand.work, ink: Brand.onWork, run: run)
+    }
+}
+
+extension AppModel {
+    /// An item's swipes wherever it shows: to the right Done and Remind me for a to-do, Remind
+    /// me (to chase) for a promise, Calendar for a date; to the left Not mine and Delete. The
+    /// row itself only says where it stands; it holds no buttons of its own.
+    func itemSwipes(_ r: Recording, _ item: NextItem) -> (leading: [SwipeAction], trailing: [SwipeAction]) {
+        var leading: [SwipeAction] = []
+        if item.isAction {
+            leading.append(.done(item.isDone) { self.setDone(r, item: item, done: !item.isDone) })
+            if !item.isDone, item.reminderID == nil { leading.append(.place("Remind me", "bell") { Task { _ = await self.place(r, item) } }) }
+        } else if item.isDate {
+            if item.eventID == nil, item.date != nil { leading.append(.place("Calendar", "calendar.badge.plus") { Task { _ = await self.place(r, item) } }) }
+        } else if item.reminderID == nil {
+            leading.append(.place("Remind me", "bell") { Task { await self.remindMe(r, item: item) } })
+        }
+        return (leading, [.away("Not mine") { self.dismiss(r, item: item) }, .delete { self.deleteItem(r, item: item) }])
+    }
 }
 
 /// A row that swipes as a List row does, on a page that is not a List. Opened, it stays open

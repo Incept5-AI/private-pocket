@@ -569,11 +569,12 @@ struct NextRow: View {
     let open: () -> Void
     @State private var clip: Clip.File?
 
-    /// Swipe right for Done on a to-do; swipe left for Not mine or Delete; a tap for the words
-    /// behind it, where Hear, Share the clip and Edit are.
+    /// Swiped right: Done and Reminders for a to-do, Chase for a promise, Calendar for a date;
+    /// swiped left: Not mine or Delete (`AppModel.itemSwipes`); a tap for the words behind it,
+    /// where Hear, Share the clip and Edit are.
     var body: some View {
-        SwipeRow(leading: item.isAction ? [.done(item.isDone) { model.setDone(recording, item: item, done: !item.isDone) }] : [],
-                 trailing: [.away("Not mine") { model.dismiss(recording, item: item) }, .delete { model.deleteItem(recording, item: item) }]) {
+        let swipes = model.itemSwipes(recording, item)
+        SwipeRow(leading: swipes.leading, trailing: swipes.trailing) {
             HStack(alignment: .top, spacing: 12) {
                 glyph
                 Button(action: open) {
@@ -608,26 +609,18 @@ struct NextRow: View {
         return "Done \(day), \(at.formatted(date: .omitted, time: .shortened))"
     }
 
+    /// Where it stands, and nothing to press: adding is a swipe right, or the sheet a tap opens.
     @ViewBuilder private var trailing: some View {
-        if item.isAction {
-            if item.isDone {
-                Text("Done").font(.footnote.weight(.bold)).foregroundStyle(Brand.onAct)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(Brand.good, in: Capsule())
-            } else if item.reminderID != nil {
-                Text("Added").font(.footnote.weight(.semibold)).foregroundStyle(Brand.good)
-            } else {
-                Button("Add") { Task { await model.place(recording, item) } }.font(.footnote.weight(.semibold))
-            }
-        } else if item.isDate {
-            if item.eventID != nil {
-                Text("Added").font(.footnote.weight(.semibold)).foregroundStyle(Brand.good)
-            } else if item.date != nil {
-                Button("Add") { Task { await model.place(recording, item) } }.font(.footnote.weight(.semibold))
-            }
-        } else {
-            Button(item.reminderID == nil ? "Remind me" : "Set") { Task { await model.remindMe(recording, item: item) } }
-                .font(.footnote.weight(.semibold)).disabled(item.reminderID != nil)
+        if item.isAction, item.isDone {
+            Text("Done").font(.footnote.weight(.bold)).foregroundStyle(Brand.onAct)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(Brand.good, in: Capsule())
+        } else if item.reminderID != nil {
+            Label("Reminder set", systemImage: "bell.fill").font(.footnote.weight(.semibold)).foregroundStyle(Brand.good).labelStyle(.iconOnly)
+                .accessibilityLabel("Reminder set")
+        } else if item.isDate, item.eventID != nil {
+            Label("In Calendar", systemImage: "calendar").font(.footnote.weight(.semibold)).foregroundStyle(Brand.good).labelStyle(.iconOnly)
+                .accessibilityLabel("In Calendar")
         }
     }
 

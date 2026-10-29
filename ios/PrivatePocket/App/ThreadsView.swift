@@ -516,9 +516,8 @@ struct ThreadView: View {
             VStack(alignment: .leading, spacing: 10) {
                 SectionTitle("Open, by age")
                 ForEach(t.open) { o in
-                    SwipeRow(leading: o.item.isAction ? [.done(false) { model.setDone(o.recording, item: o.item, done: true) }] : [],
-                             trailing: [.away("Not mine") { model.dismiss(o.recording, item: o.item) },
-                                        .delete { model.deleteItem(o.recording, item: o.item) }]) {
+                    let swipes = model.itemSwipes(o.recording, o.item)
+                    SwipeRow(leading: swipes.leading, trailing: swipes.trailing) {
                         NavigationLink(value: o.recording.id) { OpenRow(open: o) }
                             .buttonStyle(.plain)
                     }
