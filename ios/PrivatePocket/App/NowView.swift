@@ -454,15 +454,7 @@ struct NowView: View {
     }
 
     private func topFinding(_ all: [Recording]) -> Finding? {
-        let window = Calendar.current.dateInterval(of: .weekOfYear, for: Date()) ?? DateInterval(start: .distantPast, end: .distantFuture)
-        let d = cache.digest(all, window: window)
-        let history = (1...3).map { k -> Digest in
-            let cal = Calendar.current
-            let start = cal.date(byAdding: .weekOfYear, value: -k, to: window.start) ?? window.start
-            return cache.digest(all, window: cal.dateInterval(of: .weekOfYear, for: start) ?? window)
-        }
-        return Findings.make(d, previous: history.first, history: history, all: all, spanName: "week")
-            .first { !dismissed.contains("week|" + $0.id) && $0.id != "early" }
+        cache.weekFindings(all).first { !dismissed.contains("week|" + $0.id) && $0.id != "early" }
     }
 
     private func perform(_ a: Finding.Action) {

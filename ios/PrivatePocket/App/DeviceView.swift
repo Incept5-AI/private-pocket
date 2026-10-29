@@ -214,7 +214,11 @@ struct PocketView: View {
                 } else {
                     Text(statusText).font(.title2.weight(.bold))
                 }
-                if let detailText { Text(detailText).font(.subheadline).foregroundStyle(Brand.muted) }
+                if link.progress != nil {
+                    FetchLine(fetch: link.fetch).font(.subheadline).foregroundStyle(Brand.muted)
+                } else if let detailText {
+                    Text(detailText).font(.subheadline).foregroundStyle(Brand.muted)
+                }
             }
             .multilineTextAlignment(.center)
             if model.userDisconnected, !isConnected {
@@ -446,10 +450,6 @@ struct PocketView: View {
     }
 
     private var detailText: String? {
-        if let p = link.progress {
-            let pct = p.total > 0 ? Int(Double(p.done) / Double(p.total) * 100) : 0
-            return "Fetching the recording · \(pct)%"
-        }
         switch link.phase {
         case .waiting, .scanning, .connecting: return "Looking for your Pocket"
         case .idle: return model.userDisconnected ? nil : "Asleep, or out of range"
@@ -478,6 +478,16 @@ struct PocketView: View {
     private var unknownNearby: String? {
         let known = Set(devices.devices.map(\.advertisedName))
         return link.othersNearby.subtracting(known).sorted().first
+    }
+}
+
+/// "Fetching the recording · 42%", the one view that redraws as a fetch moves.
+private struct FetchLine: View {
+    @ObservedObject var fetch: FetchProgress
+
+    var body: some View {
+        let pct = fetch.value.map { $0.total > 0 ? Int(Double($0.done) / Double($0.total) * 100) : 0 } ?? 0
+        Text("Fetching the recording · \(pct)%")
     }
 }
 

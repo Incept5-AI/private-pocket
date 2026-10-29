@@ -264,7 +264,9 @@ final class AppModel: ObservableObject {
         await link.run("Connecting", quiet: true) { try await link.connect(d) }
         refreshPresence()
         settleActivity()
-        await autoSync(d)
+        // Its own task: leaving the foreground cancels the keep-alive loop, and with it a
+        // fetch of a long recording that had minutes to go, begun again from nothing next time.
+        Task { await autoSync(d) }
     }
 
     /// The Dynamic Island left showing a recording by an earlier run of the app is put right
@@ -463,19 +465,25 @@ final class AppModel: ObservableObject {
         await link.run("Saving") { try await self.completeRecording(name: name, device: d, ending: ending, inferred: inferred) }
         saving.remove(name)
         endActivity(name: name)
-        fetchSoonIfMissing(name, device: d)
+        fetchSoon(name, device: d)
     }
 
     /// A recording whose save failed (the link dropped as it stopped, say) is fetched by the
-    /// next sync; this makes that happen soon, not at the next connection.
-    private func fetchSoonIfMissing(_ name: String, device d: DeviceConfig) {
-        guard d.isPaired, !name.hasPrefix("PH"), let date = PocketTime.parse(name) else { return }
+    /// next sync, and a copy kept partial is checked against the Pocket's file; this makes
+    /// that happen soon, not at the next connection.
+    private func fetchSoon(_ name: String, device d: DeviceConfig) {
+        guard d.isPaired, let date = PocketTime.parse(name) else { return }
         let day = PocketTime.day.string(from: date)
-        guard !library.has(device: d.id, day: day, name: name) else { return }
+        let wanted = { [weak self] () -> Bool in
+            guard let self else { return false }
+            guard let r = self.library.recording(device: d.id, day: day, name: name) else { return !name.hasPrefix("PH") }
+            return r.meta.partial == true && !self.recheckedPartial.contains(r.id)
+        }
+        guard wanted() else { return }
         Task { [weak self] in
             for wait in [20.0, 120.0] {
                 try? await Task.sleep(for: .seconds(wait))
-                guard let self, !self.library.has(device: d.id, day: day, name: name) else { return }
+                guard let self, wanted() else { return }
                 await self.autoSync(d)
             }
         }
@@ -673,6 +681,7 @@ final class AppModel: ObservableObject {
         let audio: Data
         var remote: RemoteFile
         var partial = inferred
+        var fetching = false   // the Pocket's file replaces what is saved, and is transcribed then
         if !d.isPaired || link.keyRejected {
             // Not paired: the Pocket answers no commands, so the stream is all there is.
             guard let s = streamed, !s.audio.isEmpty else { return }
@@ -702,20 +711,18 @@ final class AppModel: ObservableObject {
                 if !s.complete || !call { partial = true }
                 link.note(s.complete ? "kept the streamed copy of \(name), which the Pocket does not list: \(s.audio.count) bytes"
                                      : "stream had a gap and the Pocket does not list \(name); kept \(s.audio.count) bytes")
+            } else if listed != nil, d.downloadAfterStop, let s = streamed, !s.audio.isEmpty {
+                // Saved now and marked partial; the sync after the save (`fetchSoon`) replaces it
+                // with the Pocket's file. Fetching first held the stream only in memory, and an
+                // app killed in the minutes a long recording takes lost both.
+                audio = s.audio
+                partial = true
+                fetching = true
+                link.note("streamed copy incomplete (\(s.audio.count) bytes); kept for now, fetching the Pocket's file")
             } else if listed != nil, d.downloadAfterStop {
-                if let s = streamed { link.note("streamed copy incomplete (\(s.audio.count) bytes); downloading") }
-                do {
-                    let fetched = try await link.download(remote)
-                    audio = fetched.data
-                    if !fetched.whole { partial = true }
-                } catch {
-                    // The fetch failed (a new recording took the channel, say): the stream, if any,
-                    // is kept for now, and a sync replaces it with the Pocket's file.
-                    guard let s = streamed, !s.audio.isEmpty else { throw error }
-                    audio = s.audio
-                    partial = true
-                    link.note("fetching \(name) failed; kept the streamed \(s.audio.count) bytes for now")
-                }
+                let fetched = try await link.download(remote)
+                audio = fetched.data
+                if !fetched.whole { partial = true }
             } else if let listError {
                 throw listError
             } else {
@@ -741,7 +748,7 @@ final class AppModel: ObservableObject {
             r.meta.liveTranscript = true
             library.update(r)
             let rec = r
-            if d.autoTranscribe {
+            if d.autoTranscribe, !fetching {
                 enqueueTranscription(rec)
             } else if Prefs.diarize, !s.words.isEmpty {
                 Task {

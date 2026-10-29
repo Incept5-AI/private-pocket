@@ -16,14 +16,8 @@ struct YouView: View {
         let all = library.recordings
         let cal = Calendar.current
         let month = cal.dateInterval(of: .month, for: Date()) ?? DateInterval(start: .distantPast, end: .distantFuture)
-        let week = cal.dateInterval(of: .weekOfYear, for: Date()) ?? month
         let m = cache.digest(all, window: month)
-        let w = cache.digest(all, window: week)
-        let history = (1...3).map { k -> Digest in
-            let start = cal.date(byAdding: .weekOfYear, value: -k, to: week.start) ?? week.start
-            return cache.digest(all, window: cal.dateInterval(of: .weekOfYear, for: start) ?? week)
-        }
-        let findings = Findings.make(w, previous: history.first, history: history, all: all, spanName: "week").filter { !dismissed.contains("week|" + $0.id) }
+        let findings = cache.weekFindings(all).filter { !dismissed.contains("week|" + $0.id) }
         NavigationStack(path: $path) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {

@@ -403,6 +403,26 @@ final class DigestCache {
         return d
     }
 
+    private var findings: (stamp: Int, list: [Finding])?
+
+    /// This week's findings against the three weeks before, made once per change to the
+    /// moments: a body runs on every change it watches, and making them reads every item
+    /// against every name (twice a second during a fetch, iOS killed the app for the CPU).
+    func weekFindings(_ all: [Recording]) -> [Finding] {
+        let stamp = Self.stamp(all)
+        if let f = findings, f.stamp == stamp { return f.list }
+        let cal = Calendar.current
+        let week = cal.dateInterval(of: .weekOfYear, for: Date()) ?? DateInterval(start: .distantPast, end: .distantFuture)
+        let d = digest(all, window: week)
+        let history = (1...3).map { k -> Digest in
+            let start = cal.date(byAdding: .weekOfYear, value: -k, to: week.start) ?? week.start
+            return digest(all, window: cal.dateInterval(of: .weekOfYear, for: start) ?? week)
+        }
+        let list = Findings.make(d, previous: history.first, history: history, all: all, spanName: "week")
+        findings = (stamp, list)
+        return list
+    }
+
     /// Everything a digest depends on, as one hash; the clock in ten-minute steps, since
     /// what needs you depends on it.
     static func stamp(_ all: [Recording]) -> Int {

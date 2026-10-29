@@ -84,7 +84,11 @@ final class PocketLink: NSObject, ObservableObject {
     @Published private(set) var discovered: [Discovered] = []
     /// Other Pockets heard while looking for the selected one (e.g. a new card not added yet).
     @Published private(set) var othersNearby: Set<String> = []
-    @Published private(set) var progress: (label: String, done: Int, total: Int)?
+    /// The fetch under way, in its own object so only what shows the percentage redraws as it
+    /// moves; the link announces a fetch starting and ending, nothing between. Twice a second
+    /// on the link redrew every screen watching it, Now's blocks included.
+    let fetch = FetchProgress()
+    var progress: (label: String, done: Int, total: Int)? { fetch.value }
     @Published private(set) var log: [String] = []
     @Published var lastError: String?
     /// The Pocket dropped the connection on the stored key (it was reset, most likely).
@@ -113,6 +117,11 @@ final class PocketLink: NSObject, ObservableObject {
     /// reconnect, so the stream carries on.
     private var pairAttemptPending = true
     private var lastKeySentAt = Date.distantPast
+    /// When the Pocket last dropped a link with no key just sent. While it drops links on
+    /// its own (still sending a file no one is taking, say), a drop as the key goes says
+    /// nothing about the key: taken as a refusal, it showed Needs pairing with the key good.
+    private var lastOwnDropAt = Date.distantPast
+    private var droppingOnItsOwn: Bool { Date().timeIntervalSince(lastOwnDropAt) < 60 }
     /// When the stored key was last refused, so it can be tried again after a while.
     private var rejectedAt = Date.distantPast
     /// One pairing try at a time, and automatic ones no closer than 8 s apart.
@@ -334,7 +343,7 @@ final class PocketLink: NSObject, ObservableObject {
         notifyingAudio = false
         connectedDeviceID = nil
         phase = .idle
-        progress = nil
+        setProgress(nil)
     }
 
     /// Cancels a live or pending connection, marked so that its disconnect is not taken for a loss.
@@ -485,7 +494,9 @@ final class PocketLink: NSObject, ObservableObject {
             let r = try await send("SK&\(key)", until: { $0.hasPrefix("MCU&SK&") }, timeout: 5)
             guard r.last == "MCU&SK&OK" else { throw PocketError.rejected }
         } catch PocketError.notReady {
-            throw PocketError.rejected
+            guard droppingOnItsOwn else { throw PocketError.rejected }
+            note("dropped as the key went, as it has without one: not a refusal")
+            throw PocketError.timeout("the Pocket to answer the key")
         }
     }
 
@@ -545,11 +556,11 @@ final class PocketLink: NSObject, ObservableObject {
         audio = Data()
         downloadStop = false
         capturingAudio = true
-        defer { capturingAudio = false; downloadStop = false; progress = nil }
+        defer { capturingAudio = false; downloadStop = false; setProgress(nil) }
         let label = f.startedLabel
         let head = try await exchange("U&\(f.day)&\(f.name)", until: { $0.hasPrefix("MCU&U&") }, timeout: 10)
         let size = Int(head.last?.split(separator: "&").last ?? "") ?? 0
-        progress = (label, 0, size)
+        setProgress((label, 0, size))
         var lastCount = 0
         var lastChange = Date()
         var lastShown = Date()
@@ -563,13 +574,18 @@ final class PocketLink: NSObject, ObservableObject {
             if audio.count != lastCount { lastCount = audio.count; lastChange = Date() }
             if Date().timeIntervalSince(lastChange) > 15 { throw PocketError.timeout("audio data (\(audio.count)/\(size) bytes)") }
             if peripheral?.state != .connected { throw PocketError.notReady }
-            // Twice a second is plenty for a progress bar, and every screen watching redraws on it.
-            if Date().timeIntervalSince(lastShown) >= 0.5 { progress = (label, audio.count, size); lastShown = Date() }
+            // Twice a second is plenty for the percentage.
+            if Date().timeIntervalSince(lastShown) >= 0.5 { setProgress((label, audio.count, size)); lastShown = Date() }
             try await Task.sleep(for: .milliseconds(150))
         }
         let whole = size == 0 || audio.count >= size
         note(whole ? "downloaded \(f.name): \(audio.count) bytes" : "downloaded \(f.name): only \(audio.count) of \(size) bytes")
         return FetchedFile(data: size > 0 ? audio.prefix(size) : audio, whole: whole)
+    }
+
+    private func setProgress(_ p: (label: String, done: Int, total: Int)?) {
+        if (p == nil) != (fetch.value == nil) { objectWillChange.send() }
+        fetch.value = p
     }
 
     /// Runs `body` with the phase shown as busy, recording any error for the UI.
@@ -583,7 +599,7 @@ final class PocketLink: NSObject, ObservableObject {
             note("error: \(error.localizedDescription)")
         }
         if case .busy = phase { phase = peripheral?.state == .connected ? .ready : .idle }
-        progress = nil
+        setProgress(nil)
     }
 
     private func value(_ cmd: String, reply prefix: String) async throws -> String {
@@ -720,6 +736,12 @@ final class PocketLink: NSObject, ObservableObject {
     }
 }
 
+/// How far the fetch under way has got (`PocketLink.fetch`).
+@MainActor
+final class FetchProgress: ObservableObject {
+    @Published fileprivate(set) var value: (label: String, done: Int, total: Int)?
+}
+
 /// A recording fetched from the Pocket; `whole` when every byte it announced arrived.
 struct FetchedFile {
     let data: Data
@@ -824,9 +846,9 @@ extension PocketLink: CBCentralManagerDelegate, CBPeripheralDelegate {
             // A drop the Pocket made on its own, not on a key just sent, may mean it was
             // put into pairing mode: worth a fresh key on the next connection.
             let afterKey = Date().timeIntervalSince(lastKeySentAt) <= 3
-            if !afterKey { pairAttemptPending = true }
+            if !afterKey { pairAttemptPending = true; lastOwnDropAt = Date() }
             teardown(cancel: false)   // already gone: a cancel now would only be answered with another disconnect
-            bouncingAfterKey = afterKey
+            bouncingAfterKey = afterKey && !droppingOnItsOwn
             onLinkLost?()
         }
     }
