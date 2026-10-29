@@ -89,7 +89,7 @@ App sources are in `App/`. `Shared/` is compiled into both the app and the `Priv
 - **`Prefs` (`Devices.swift`)** wraps UserDefaults. Views use `@AppStorage` with the same key names so labels refresh.
 - **Speech to text and the language model are each local or remote, chosen independently** (`Prefs.sttRemote`, `Prefs.llmRemote`):
   - Local STT: `Transcriber` in `OnDeviceAI.swift`, on SpeechAnalyzer/SpeechTranscriber (iOS 26+). Only a few locales can be reserved, so `reserve` evicts ones that aren't favourites.
-  - Remote STT: `RemoteSTT` in `LLM.swift`, OpenAI `/audio/transcriptions` with `verbose_json` and word timestamps.
+  - Remote STT: `RemoteSTT` in `LLM.swift`, OpenAI `/audio/transcriptions` with `verbose_json` and word timestamps. A whole recording over seven and a half minutes goes in five-minute pieces (`LongAudio.swift`: `MP3Frames` cuts on frame lines, `quietCuts` at the quietest tenth of a second in the twenty before each cut, word times moved to each piece's start): sent whole, Whisper lost its place in a 2.6-hour call and wrote one sentence for hours, its own output keeping it there. A piece that still loops is read again a minute at a time, and `Repeats` keeps once any phrase of four words or more written three times running, in the text and the word times. The log says how many pieces and repeats.
   - Local LLM: FoundationModels, with about 6k characters per chunk.
   - Remote LLM: OpenAI `/chat/completions`, with `chat_template_kwargs.enable_thinking=false` and any `<think>` block stripped from the reply.
   - Summaries and Ask map-reduce long transcripts in chunks of `LLMConfig.chunkChars`.

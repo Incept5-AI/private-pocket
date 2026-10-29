@@ -138,9 +138,9 @@ enum RemoteSTT {
         return nil
     }
 
+    /// A whole recording: in pieces when long, with Whisper's loops taken out (`LongAudio`).
     static func transcribe(_ audio: URL, localeID: String) async throws -> TimedTranscript {
-        try await transcribe(try Data(contentsOf: audio), filename: audio.lastPathComponent,
-                             type: "audio/mpeg", localeID: localeID)
+        try await LongAudio.transcribe(audio, localeID: localeID)
     }
 
     /// Sends one second of silence, to check the URL, key and model.
