@@ -75,6 +75,8 @@ struct MomentView: View {
                             }
                             AskSection(recording: r)
                             TodoSection(recording: r) { behind = Behind(item: $0) }
+                            DecidedSection(recording: r)
+                            TodoSection(recording: r, promised: true) { behind = Behind(item: $0) }
                             EventSection(recording: r) { behind = Behind(item: $0) }
                             TranscriptSection(recording: r, blocks: blocks, current: current, player: player, showAll: $showAll) { i in
                                 newName = r.meta.speakerNames?[String(i)] ?? ""
@@ -416,17 +418,20 @@ struct BriefText: View {
     }
 }
 
-/// What the user has to do, each addable to Reminders, and what others promised.
+/// What the user has to do, each addable to Reminders; or, `promised`, what others said they
+/// would do, under its own title, as the card's pins count them (in To do, nothing said which
+/// were promises, and the card's "2 promises" seemed to be nowhere).
 struct TodoSection: View {
     @EnvironmentObject var model: AppModel
     @AppStorage("autoReminders") private var autoReminders = false
     @AppStorage("askedReminders") private var askedReminders = false
     let recording: Recording
+    var promised = false
     let open: (NextItem) -> Void
 
     var body: some View {
         let r = recording
-        let items = NextList.ordered(r.meta.insight?.items ?? []).filter { $0.isAction || $0.isPromise }
+        let items = NextList.ordered(r.meta.insight?.items ?? []).filter { promised ? $0.isPromise : $0.isAction }
         if !items.isEmpty {
             let unplaced = items.filter { $0.isAction && $0.reminderID == nil && !$0.isDone }
             let solid = unplaced.filter(\.isSolid)
@@ -436,7 +441,7 @@ struct TodoSection: View {
                             always: { autoReminders = true; askedReminders = true; Task { await model.placeNext(r) } },
                             notNow: { askedReminders = true })
             }
-            SectionTitle("To do") {
+            SectionTitle(promised ? "Promised" : "To do") {
                 if unplaced.count > 1 {
                     Button("Add all to Reminders") { Task { for i in unplaced { await model.place(r, i) } } }
                         .font(.caption.weight(.semibold))
@@ -462,6 +467,27 @@ struct TodoSection: View {
         }
     }
 }
+/// What was decided, as the reader wrote it: what the card's "decided" pin counts.
+struct DecidedSection: View {
+    let recording: Recording
+
+    var body: some View {
+        let decisions = recording.meta.insight?.decisions ?? []
+        if !decisions.isEmpty {
+            SectionTitle("Decided")
+            ForEach(Array(decisions.enumerated()), id: \.offset) { _, d in
+                HStack(alignment: .top, spacing: 12) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Brand.good).frame(width: 22).padding(.top, 2)
+                    Text(d).font(.body).foregroundStyle(Brand.text).frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.vertical, 11)
+                .contextMenu { Button { UIPasteboard.general.string = d } label: { Label("Copy the words", systemImage: "doc.on.doc") } }
+                Divider().overlay(Brand.hairline)
+            }
+        }
+    }
+}
+
 /// Meetings, deadlines and dates, each addable to Calendar.
 struct EventSection: View {
     @EnvironmentObject var model: AppModel
