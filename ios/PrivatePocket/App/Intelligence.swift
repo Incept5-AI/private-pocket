@@ -71,7 +71,10 @@ struct NextItem: Codable, Hashable, Identifiable {
     var done: Bool?
     /// When it was ticked, here or in Reminders, for the week's shape.
     var doneAt: Date?
+    /// Not mine: someone else's, or not what it seemed. Kept, and shown nowhere.
     var dismissed: Bool?
+    /// Deleted: wrong altogether. Kept only so a new reading does not bring it back.
+    var deleted: Bool?
     /// Said plainly as something that will be done, with enough detail to act on.
     var sure: Bool?
     /// Was in Reminders or Calendar and the user removed it there: not put back by itself.
@@ -83,7 +86,8 @@ struct NextItem: Codable, Hashable, Identifiable {
     var isDate: Bool { kind == "date" }
     var isPromise: Bool { kind == "promise" }
     var isDone: Bool { done == true }
-    var isDismissed: Bool { dismissed == true }
+    /// Put away, as not mine or deleted: what every list leaves out.
+    var isDismissed: Bool { dismissed == true || deleted == true }
     /// Worth placing without asking: said plainly, and resting on words from the transcript.
     var isSolid: Bool { sure == true && !(quote ?? "").isEmpty }
 }
@@ -112,6 +116,9 @@ struct MomentInsight: Codable, Hashable {
     var decisions: [String]?
     var questions: [String]?
     var figures: [String]?
+    /// Decisions put away, as not mine or deleted: out of `decisions`, and kept out of a new reading.
+    var decisionsNotMine: [String]?
+    var decisionsDeleted: [String]?
     /// Which reader wrote it; older readings are redone when a moment opens.
     var version: Int?
     static let readerVersion = 13

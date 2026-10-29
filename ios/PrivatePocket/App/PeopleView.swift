@@ -26,16 +26,17 @@ struct PeopleView: View {
                         Text("People appear as the reader names them. Rename a speaker on a moment and they show here.")
                             .font(.subheadline).foregroundStyle(Brand.muted)
                     } else if asList {
+                        // Swiped left: Not a person. Renaming and Same person as… are on the person's ••• menu.
                         ForEach(people) { p in
-                            NavigationLink(value: p.name) { PersonRow(person: p) }.buttonStyle(.plain)
-                                .contextMenu { PersonMenuItems(name: p.name, others: people.map(\.name), renaming: $renaming, newName: $newName) }
+                            SwipeRow(trailing: [.away("Not a person") { withAnimation { threads.notAPerson(p.name) } }]) {
+                                NavigationLink(value: p.name) { PersonRow(person: p) }.buttonStyle(.plain)
+                            }
                         }
                     } else {
                         PeopleMap(people: people, selected: $selected)
                         Text("Bigger: more time talking. Closer: more recent. Amber ring: something owed.").font(.caption).foregroundStyle(Brand.dim)
                         if let s = selected ?? people.first?.name, let p = people.first(where: { $0.name == s }) {
                             PersonCard(person: p)
-                                .contextMenu { PersonMenuItems(name: p.name, others: people.map(\.name), renaming: $renaming, newName: $newName) }
                         }
                     }
                 }

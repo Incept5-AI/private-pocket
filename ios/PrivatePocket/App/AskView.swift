@@ -199,7 +199,7 @@ struct AnswerCard: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(qa.question).font(.subheadline.weight(.semibold)).foregroundStyle(Brand.muted)
             if let a = qa.answer {
-                Text(a.answerText).font(.title3.weight(.medium)).lineSpacing(4).textSelection(.enabled)
+                Text(a.answerText).font(.title3.weight(.medium)).lineSpacing(4)
                     .fixedSize(horizontal: false, vertical: true)
                 if !sources.isEmpty {
                     VStack(spacing: 6) {
@@ -216,8 +216,13 @@ struct AnswerCard: View {
                     }
                     .padding(.top, 2)
                 }
-                Text("Answered \(Prefs.llmRemoteNow ? "on your server" : "on this iPhone") from \(qa.scopeCount) \(qa.scopeCount == 1 ? "moment" : "moments").")
-                    .font(.caption).foregroundStyle(Brand.dim)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Answered \(Prefs.llmRemoteNow ? "on your server" : "on this iPhone") from \(qa.scopeCount) \(qa.scopeCount == 1 ? "moment" : "moments").")
+                        .font(.caption).foregroundStyle(Brand.dim)
+                    Spacer(minLength: 8)
+                    Button { UIPasteboard.general.string = a } label: { Label("Copy", systemImage: "doc.on.doc").font(.caption.weight(.semibold)) }
+                        .tint(Brand.act)
+                }
             } else if let e = qa.error {
                 Text(e).font(.subheadline).foregroundStyle(Brand.muted)
             } else {
@@ -230,9 +235,6 @@ struct AnswerCard: View {
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Brand.surface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .contextMenu {
-            if let a = qa.answer { Button("Copy answer") { UIPasteboard.general.string = a } }
-        }
     }
 
     private func sourceRow(_ r: Recording) -> some View {

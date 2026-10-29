@@ -512,7 +512,13 @@ struct NowView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text("The tape").font(.title2.weight(.bold))
                 Spacer()
-                Text(scale == .day ? "newest first" : scale == .year ? "every day" : "tap a day").font(.caption).foregroundStyle(Brand.dim)
+                if scale == .day, !library.recordings.isEmpty, !selecting {
+                    // Choosing several to delete together starts here, in plain sight.
+                    Button("Select") { withAnimation(.spring(duration: 0.3)) { selecting = true } }
+                        .font(.subheadline.weight(.semibold))
+                } else if !selecting {
+                    Text(scale == .year ? "every day" : "tap a day").font(.caption).foregroundStyle(Brand.dim)
+                }
             }
             TapeScaleControl(scale: $scale)
         }
@@ -578,13 +584,7 @@ struct NowView: View {
         .id(r.id)
         .onAppear { visible.insert(r.id); noteScrolling() }
         .onDisappear { visible.remove(r.id); noteScrolling() }
-        .contextMenu { momentMenu(r) }
-        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-            if !selecting {
-                Button { deleting = r } label: { Label("Delete", systemImage: "trash") }
-                    .tint(Brand.bad)
-            }
-        }
+        .listSwipes(trailing: selecting ? [] : [.delete { deleting = r }])
         .accessibilityAddTraits(selecting && chosen ? .isSelected : [])
     }
 
@@ -640,19 +640,6 @@ struct NowView: View {
             .padding(.horizontal, 16).padding(.bottom, 6)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
-    }
-
-    @ViewBuilder private func momentMenu(_ r: Recording) -> some View {
-        Button { withAnimation(.spring(duration: 0.3)) { selecting = true; picked.insert(r.id) } } label: {
-            Label("Select", systemImage: "checkmark.circle")
-        }
-        Button { path.append(r.id) } label: { Label("Open", systemImage: "arrow.up.right") }
-        ShareLink(item: model.notes(for: r)) { Label("Share as notes", systemImage: "square.and.arrow.up") }
-        if !r.people.isEmpty, let p = r.people.first {
-            Button { path.append(MomentsFilter(title: p, ids: library.recordings.filter { $0.people.contains(p) }.map(\.id))) } label: { Label("Everything with \(p)", systemImage: "person") }
-        }
-        Divider()
-        Button(role: .destructive) { deleting = r } label: { Label("Delete", systemImage: "trash") }
     }
 }
 
@@ -858,9 +845,9 @@ struct LiveWave: View {
     }
 }
 
-/// A block on Now answers to the hand: tap for its one thing, swipe right for it too,
-/// swipe left to put it away for today, hold for the menu. The swipes are the system's own
-/// list swipes, so they never fight the scroll.
+/// A block on Now answers to the hand as everything does (`SwipeAction`): tap for its one
+/// thing, swipe right for it too, swipe left to put it away for today. The swipes are the
+/// system's own list swipes, so they never fight the scroll.
 struct CardGestures: ViewModifier {
     let primary: String?
     let act: (() -> Void)?
@@ -868,22 +855,8 @@ struct CardGestures: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                if let primary, let act {
-                    Button { act() } label: { Label(primary, systemImage: "arrow.up.right") }
-                        .tint(Brand.act)
-                }
-            }
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                if let dismiss {
-                    Button { withAnimation { dismiss() } } label: { Label("Put away", systemImage: "eye.slash") }
-                        .tint(Brand.raised)
-                }
-            }
-            .contextMenu {
-                if let primary, let act { Button { act() } label: { Label(primary, systemImage: "arrow.up.right") } }
-                if let dismiss { Button(role: .destructive) { dismiss() } label: { Label("Put away for today", systemImage: "eye.slash") } }
-            }
+            .listSwipes(leading: primary.flatMap { p in act.map { [.act(p, $0)] } } ?? [],
+                        trailing: dismiss.map { d in [.away("Put away") { withAnimation { d() } }] } ?? [])
     }
 }
 

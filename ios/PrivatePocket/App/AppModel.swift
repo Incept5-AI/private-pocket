@@ -1093,6 +1093,7 @@ final class AppModel: ObservableObject {
             fresh[idx].done = o.done
             fresh[idx].doneAt = o.doneAt
             fresh[idx].dismissed = o.dismissed
+            fresh[idx].deleted = o.deleted
             fresh[idx].unplaced = o.unplaced
             fresh[idx].byHand = o.byHand
             if o.reminderID != nil || o.eventID != nil || o.byHand == true { fresh[idx].text = o.text }
@@ -1105,6 +1106,13 @@ final class AppModel: ObservableObject {
         out.next = fresh
         out.actions = fresh.filter(\.isAction).map(\.text)
         out.promises = fresh.filter(\.isPromise).map(\.text)
+        // A decision put away stays away, however the new reading words it.
+        out.decisionsNotMine = old.decisionsNotMine
+        out.decisionsDeleted = old.decisionsDeleted
+        let away = (old.decisionsNotMine ?? []) + (old.decisionsDeleted ?? [])
+        if !away.isEmpty {
+            out.decisions = out.decisions?.filter { d in !away.contains { key($0) == key(d) || Ageing.similar($0, d) } }
+        }
         return out
     }
 
@@ -1233,6 +1241,24 @@ final class AppModel: ObservableObject {
         if let id = item.reminderID { Planner.removeReminder(id) }
         if let id = item.eventID { Planner.removeEvent(id) }
         change(r, item) { $0.dismissed = true }
+    }
+
+    /// Wrong altogether: gone from the moment, and from Reminders or Calendar if it was there.
+    func deleteItem(_ r: Recording, item: NextItem) {
+        if let id = item.reminderID { Planner.removeReminder(id) }
+        if let id = item.eventID { Planner.removeEvent(id) }
+        change(r, item) { $0.deleted = true; $0.reminderID = nil; $0.eventID = nil }
+    }
+
+    /// A decision put away, as not mine or deleted: out of the moment, and out of a new reading.
+    func putAway(_ r: Recording, decision: String, deleted: Bool) {
+        library.mutate(r.id) { m in
+            guard var i = m.insight, let idx = i.decisions?.firstIndex(of: decision) else { return }
+            i.decisions?.remove(at: idx)
+            if deleted { i.decisionsDeleted = (i.decisionsDeleted ?? []) + [decision] }
+            else { i.decisionsNotMine = (i.decisionsNotMine ?? []) + [decision] }
+            m.insight = i
+        }
     }
 
     /// A reminder to chase a promise, on the day it was due, else tomorrow morning.

@@ -30,31 +30,34 @@ struct ThreadsView: View {
                             .font(.subheadline).foregroundStyle(Brand.muted)
                     }
                     ForEach(back) { t in
-                        NavigationLink(value: ThreadLink(id: t.id)) { BackCard(thread: t) }
-                            .buttonStyle(.plain)
-                            .contextMenu { ThreadMenuItems(thread: t, live: live, mending: $mending) }
+                        SwipeRow(trailing: [notAThread(t)]) {
+                            NavigationLink(value: ThreadLink(id: t.id)) { BackCard(thread: t) }
+                                .buttonStyle(.plain)
+                        }
                     }
                     if !alive.isEmpty {
                         Text("LIVE").font(.caption2.weight(.bold)).tracking(0.8).foregroundStyle(Brand.muted).padding(.top, 6)
                         ForEach(alive) { t in
-                            card(t, hint: hints.first { $0.from.id == t.id }, axis: axis)
-                                .contextMenu { ThreadMenuItems(thread: t, live: live, mending: $mending) }
+                            SwipeRow(trailing: [notAThread(t)]) {
+                                card(t, hint: hints.first { $0.from.id == t.id }, axis: axis)
+                            }
                         }
                     }
                     if !quiet.isEmpty {
                         Text("QUIET").font(.caption2.weight(.bold)).tracking(0.8).foregroundStyle(Brand.muted).padding(.top, 10)
                         ForEach(quiet.prefix(40)) { t in
-                            NavigationLink(value: ThreadLink(id: t.id)) {
-                                HStack(alignment: .firstTextBaseline) {
-                                    Text(t.name).font(.body.weight(.semibold)).foregroundStyle(Brand.textSecondary).lineLimit(1)
-                                    Spacer(minLength: 8)
-                                    Text(t.last.map { "quiet since \(ThreadText.month($0))" } ?? "").font(.caption.weight(.semibold)).foregroundStyle(Brand.dim)
+                            SwipeRow(trailing: [notAThread(t)]) {
+                                NavigationLink(value: ThreadLink(id: t.id)) {
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(t.name).font(.body.weight(.semibold)).foregroundStyle(Brand.textSecondary).lineLimit(1)
+                                        Spacer(minLength: 8)
+                                        Text(t.last.map { "quiet since \(ThreadText.month($0))" } ?? "").font(.caption.weight(.semibold)).foregroundStyle(Brand.dim)
+                                    }
+                                    .padding(.vertical, 4)
+                                    .contentShape(Rectangle())
                                 }
-                                .padding(.vertical, 4)
-                                .contentShape(Rectangle())
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
-                            .contextMenu { ThreadMenuItems(thread: t, live: live, mending: $mending) }
                         }
                     }
                 }
@@ -71,6 +74,11 @@ struct ThreadsView: View {
     }
 
     /// A live thread: its row, and under it the merge it looks like it wants, if any.
+    /// Swiped left on the list; renaming, merging and splitting are on the thread's own ••• menu.
+    private func notAThread(_ t: LiveThread) -> SwipeAction {
+        .away("Not a thread") { withAnimation { threads.hide(t.id) } }
+    }
+
     private func card(_ t: LiveThread, hint: ThreadStore.MergeHint?, axis: ThreadAxis) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             NavigationLink(value: ThreadLink(id: t.id)) { ThreadRow(thread: t, axis: axis) }
@@ -508,12 +516,12 @@ struct ThreadView: View {
             VStack(alignment: .leading, spacing: 10) {
                 SectionTitle("Open, by age")
                 ForEach(t.open) { o in
-                    NavigationLink(value: o.recording.id) { OpenRow(open: o) }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button { model.setDone(o.recording, item: o.item, done: true) } label: { Label("Done", systemImage: "checkmark.circle") }
-                            Button(role: .destructive) { model.dismiss(o.recording, item: o.item) } label: { Label("Not mine", systemImage: "xmark") }
-                        }
+                    SwipeRow(leading: o.item.isAction ? [.done(false) { model.setDone(o.recording, item: o.item, done: true) }] : [],
+                             trailing: [.away("Not mine") { model.dismiss(o.recording, item: o.item) },
+                                        .delete { model.deleteItem(o.recording, item: o.item) }]) {
+                        NavigationLink(value: o.recording.id) { OpenRow(open: o) }
+                            .buttonStyle(.plain)
+                    }
                 }
             }
         }
@@ -554,11 +562,10 @@ struct ThreadView: View {
         return VStack(alignment: .leading, spacing: 8) {
             SectionTitle("Its " + ThreadText.moments(ms.count))
             ForEach(Array(ms.enumerated()), id: \.element.id) { i, r in
-                NavigationLink(value: r.id) { TapeBand(recording: r) }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        Button(role: .destructive) { threads.exclude(r.id, from: t.id) } label: { Label("Not part of this", systemImage: "minus.circle") }
-                    }
+                SwipeRow(trailing: [.away("Not part of this") { threads.exclude(r.id, from: t.id) }]) {
+                    NavigationLink(value: r.id) { TapeBand(recording: r) }
+                        .buttonStyle(.plain)
+                }
                 if i + 1 < ms.count, let a = r.startedAt, let b = ms[i + 1].startedAt, a.timeIntervalSince(b) >= 30 * 86_400 {
                     QuietGap(days: Int(a.timeIntervalSince(b) / 86_400))
                 }
@@ -822,18 +829,20 @@ struct MomentThreads: View {
                             chip((t.id == into ? "Continues " : "") + t.name, "line.3.horizontal", t.isWork ? Brand.work : Brand.life, t.isWork ? Brand.onWork : Brand.onLife)
                         }
                         .buttonStyle(.plain)
-                        .contextMenu {
-                            Button(role: .destructive) { threads.exclude(recording.id, from: t.id) } label: { Label("Not part of \(t.name)", systemImage: "minus.circle") }
-                        }
                     }
                     Menu {
+                        if !mine.isEmpty {
+                            Section("Take it out of") {
+                                ForEach(mine) { t in Button(role: .destructive) { threads.exclude(recording.id, from: t.id) } label: { Label(t.name, systemImage: "minus.circle") } }
+                            }
+                        }
                         ForEach(Array(live.filter { t in !mine.contains { $0.id == t.id } }.sorted { $0.weight > $1.weight }.prefix(12))) { t in
                             Button(t.name) { threads.pin(recording.id, to: t.id) }
                         }
                         Divider()
                         Button { name = ""; naming = true } label: { Label("New thread…", systemImage: "plus") }
                     } label: {
-                        chip(mine.isEmpty ? "Add to a thread" : "Add", "plus", Brand.surface, Brand.textSecondary)
+                        chip(mine.isEmpty ? "Add to a thread" : "Edit", mine.isEmpty ? "plus" : "pencil", Brand.surface, Brand.textSecondary)
                     }
                 }
             }

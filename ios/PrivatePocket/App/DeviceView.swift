@@ -589,7 +589,7 @@ struct TurnRow: View {
                 }
                 Text(Speakers.stamp(turn.start)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
             }
-            Text(turn.text).textSelection(.enabled)
+            Text(turn.text)
         }
     }
 }

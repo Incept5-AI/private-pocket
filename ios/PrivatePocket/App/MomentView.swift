@@ -467,21 +467,25 @@ struct TodoSection: View {
         }
     }
 }
-/// What was decided, as the reader wrote it: what the card's "decided" pin counts.
+/// What was decided, as the reader wrote it: what the card's "decided" pin counts. Swipe left
+/// for Not mine or Delete.
 struct DecidedSection: View {
+    @EnvironmentObject var model: AppModel
     let recording: Recording
 
     var body: some View {
         let decisions = recording.meta.insight?.decisions ?? []
         if !decisions.isEmpty {
             SectionTitle("Decided")
-            ForEach(Array(decisions.enumerated()), id: \.offset) { _, d in
-                HStack(alignment: .top, spacing: 12) {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(Brand.good).frame(width: 22).padding(.top, 2)
-                    Text(d).font(.body).foregroundStyle(Brand.text).frame(maxWidth: .infinity, alignment: .leading)
+            ForEach(Array(decisions.enumerated()), id: \.element) { _, d in
+                SwipeRow(trailing: [.away("Not mine") { model.putAway(recording, decision: d, deleted: false) },
+                                    .delete { model.putAway(recording, decision: d, deleted: true) }]) {
+                    HStack(alignment: .top, spacing: 12) {
+                        Image(systemName: "checkmark.seal.fill").foregroundStyle(Brand.good).frame(width: 22).padding(.top, 2)
+                        Text(d).font(.body).foregroundStyle(Brand.text).frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(.vertical, 11)
                 }
-                .padding(.vertical, 11)
-                .contextMenu { Button { UIPasteboard.general.string = d } label: { Label("Copy the words", systemImage: "doc.on.doc") } }
                 Divider().overlay(Brand.hairline)
             }
         }
@@ -565,52 +569,36 @@ struct NextRow: View {
     let open: () -> Void
     @State private var clip: Clip.File?
 
+    /// Swipe right for Done on a to-do; swipe left for Not mine or Delete; a tap for the words
+    /// behind it, where Hear, Share the clip and Edit are.
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            glyph
-            Button(action: open) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.text).font(.body).foregroundStyle(item.isDone ? Brand.muted : Brand.text)
-                    if item.isDone {
-                        Text(doneText).font(.footnote.weight(.semibold)).foregroundStyle(Brand.good)
-                    } else if let w = whenText {
-                        Text(w).font(.footnote).foregroundStyle(Brand.muted)
+        SwipeRow(leading: item.isAction ? [.done(item.isDone) { model.setDone(recording, item: item, done: !item.isDone) }] : [],
+                 trailing: [.away("Not mine") { model.dismiss(recording, item: item) }, .delete { model.deleteItem(recording, item: item) }]) {
+            HStack(alignment: .top, spacing: 12) {
+                glyph
+                Button(action: open) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.text).font(.body).foregroundStyle(item.isDone ? Brand.muted : Brand.text)
+                        if item.isDone {
+                            Text(doneText).font(.footnote.weight(.semibold)).foregroundStyle(Brand.good)
+                        } else if let w = whenText {
+                            Text(w).font(.footnote).foregroundStyle(Brand.muted)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
+                trailing
             }
-            .buttonStyle(.plain)
-            trailing
+            .padding(.vertical, 11)
+            // Done is unmistakable: the filled check, the row tinted green, when it was done, and a Done pill.
+            .padding(.horizontal, 10)
+            .background(item.isDone ? Brand.good.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .padding(.vertical, 11)
-        .contextMenu {
-            if let at = item.at {
-                Button { open() } label: { Label("Hear the words", systemImage: "play.fill") }
-                Button { shareClip(at) } label: { Label("Share the clip", systemImage: "square.and.arrow.up") }
-            }
-            if item.isAction {
-                Button { model.setDone(recording, item: item, done: !item.isDone) } label: { Label(item.isDone ? "Not done" : "Done", systemImage: "checkmark.circle") }
-            }
-            Button { open() } label: { Label("Edit", systemImage: "pencil") }
-            Button(role: .destructive) { model.dismiss(recording, item: item) } label: { Label("Not mine", systemImage: "xmark") }
-        }
-        .sheet(item: $clip) { ShareSheet(items: [$0.url]) }
-        // Done is unmistakable: the filled check, the row tinted green, when it was done, and a Done pill.
-        .padding(.horizontal, 10)
-        .background(item.isDone ? Brand.good.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         .padding(.horizontal, -10)
         .animation(.easeInOut(duration: 0.25), value: item.isDone)
         .sensoryFeedback(.success, trigger: item.isDone) { _, now in now }
-    }
-
-    private func shareClip(_ at: Double) {
-        let r = recording
-        let text = item.quote ?? item.text
-        Task {
-            if let f = try? await Clip.export(r, from: max(0, at - 1), to: at + 9, words: text) { clip = f }
-            else { model.aiError = "The clip couldn't be made from this recording." }
-        }
     }
 
     private var doneText: String {
@@ -810,6 +798,8 @@ struct TranscriptSection: View {
 
     @State private var clip: Clip.File?
     @State private var clipping = false
+    /// The line last tapped: it plays from there, and its actions show under it.
+    @State private var chosen: Int?
 
     var body: some View {
         let r = recording
@@ -827,22 +817,33 @@ struct TranscriptSection: View {
             ForEach(showAll ? blocks : Array(blocks.prefix(3))) { b in
                 TranscriptBlockRow(block: b, names: r.meta.speakerNames, position: b.id == current ? player.position : nil, onRename: renameSpeaker)
                     .id(b.id)
-                    .contextMenu { lineMenu(b, in: r) }
                     .padding(.horizontal, 8)
                     .background(b.id == current && player.playing ? Brand.record.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .onTapGesture { player.play(from: b.start) }
+                    .onTapGesture { player.play(from: b.start); withAnimation(.snappy(duration: 0.2)) { chosen = b.id } }
+                if chosen == b.id { lineActions(b, in: r).transition(.opacity.combined(with: .move(edge: .top))) }
             }
-            Text(blocks.count > 3 && !showAll ? "Tap a line to play from there. Hold one for more." : "Tap a line to play from there. Hold one for more.")
+            Text("Tap a line to play from there, and to share it, copy it or make it a to-do.")
                 .font(.caption).foregroundStyle(Brand.dim).padding(.top, 6)
                 .sheet(item: $clip) { ShareSheet(items: [$0.url]) }
         }
     }
 
-    @ViewBuilder private func lineMenu(_ b: TranscriptBlock, in r: Recording) -> some View {
-        Button { player.play(from: b.start) } label: { Label("Hear it", systemImage: "play.fill") }
-        Button { shareClip(b) } label: { Label("Share the clip", systemImage: "square.and.arrow.up") }
-        Button { UIPasteboard.general.string = b.text } label: { Label("Copy the words", systemImage: "doc.on.doc") }
-        Button { model.addItem(r, text: Self.sentence(b.text), at: b.start, quote: String(b.text.prefix(80))) } label: { Label("Make it a to-do", systemImage: "checkmark.circle") }
+    /// What a tapped line can become, in plain sight under it.
+    private func lineActions(_ b: TranscriptBlock, in r: Recording) -> some View {
+        HStack(spacing: 8) {
+            lineAction("Share the clip", "square.and.arrow.up") { shareClip(b) }
+            lineAction("Copy", "doc.on.doc") { UIPasteboard.general.string = b.text }
+            lineAction("Make it a to-do", "checkmark.circle") {
+                model.addItem(r, text: Self.sentence(b.text), at: b.start, quote: String(b.text.prefix(80)))
+                withAnimation { chosen = nil }
+            }
+        }
+        .padding(.leading, 8).padding(.top, 2).padding(.bottom, 8)
+    }
+
+    private func lineAction(_ title: String, _ symbol: String, _ run: @escaping () -> Void) -> some View {
+        Button(action: run) { Label(title, systemImage: symbol).font(.caption.weight(.semibold)).lineLimit(1) }
+            .buttonStyle(.glass).tint(Brand.act)
     }
 
     /// The block's own span: to the next block, or a sentence's worth, capped by the audio.
@@ -885,7 +886,9 @@ struct AskSection: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(qa.question).font(.subheadline.weight(.semibold))
                 if let a = qa.answer {
-                    Text(a.answerText).font(.body).foregroundStyle(Brand.textSecondary).textSelection(.enabled)
+                    Text(a.answerText).font(.body).foregroundStyle(Brand.textSecondary)
+                    Button { UIPasteboard.general.string = a } label: { Label("Copy", systemImage: "doc.on.doc").font(.caption.weight(.semibold)) }
+                        .tint(Brand.act)
                 } else if let e = qa.error {
                     Text(e).font(.subheadline).foregroundStyle(Brand.muted)
                 } else {
@@ -1002,7 +1005,8 @@ struct BehindSheet: View {
                             HStack(spacing: 10) {
                                 secondary(item.isDone ? "Not done" : "Done") { model.setDone(r, item: item, done: !item.isDone) }
                                 secondary("Edit") { newText = item.text; editing = true }
-                                secondary("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                                secondary("Not mine") { model.dismiss(r, item: item); dismiss() }
+                                secondary("Delete", destructive: true) { model.deleteItem(r, item: item); dismiss() }
                             }
                         } else if item.isDate {
                             if let d = item.date, let u = Planner.calendarURL(at: d) {
@@ -1012,7 +1016,8 @@ struct BehindSheet: View {
                             }
                             HStack(spacing: 10) {
                                 secondary("Edit") { newText = item.text; editing = true }
-                                secondary("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                                secondary("Not mine") { model.dismiss(r, item: item); dismiss() }
+                                secondary("Delete", destructive: true) { model.deleteItem(r, item: item); dismiss() }
                             }
                         } else {
                             if let rid = item.reminderID, let u = Planner.reminderURL(rid) {
@@ -1022,7 +1027,8 @@ struct BehindSheet: View {
                             }
                             HStack(spacing: 10) {
                                 secondary("Edit") { newText = item.text; editing = true }
-                                secondary("Not mine", destructive: true) { model.dismiss(r, item: item); dismiss() }
+                                secondary("Not mine") { model.dismiss(r, item: item); dismiss() }
+                                secondary("Delete", destructive: true) { model.deleteItem(r, item: item); dismiss() }
                             }
                         }
                     }

@@ -294,7 +294,7 @@ struct TestRow: View {
                 HStack { Text("Test"); if testing { Spacer(); ProgressView() } }
             }
             .disabled(testing || disabledReason != nil)
-            if let result { Text(result).font(.callout).textSelection(.enabled) }
+            if let result { Text(result).font(.callout) }
         } footer: {
             if let disabledReason { Text(disabledReason) }
         }

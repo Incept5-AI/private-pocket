@@ -73,7 +73,7 @@ struct TranscriptBlockRow: View {
                     Text(Speakers.stamp(block.start)).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
-            Text(attributed).textSelection(.enabled)
+            Text(attributed)
         }
         .padding(.vertical, 2)
         .contentShape(Rectangle())
