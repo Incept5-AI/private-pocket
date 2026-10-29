@@ -58,12 +58,17 @@ struct SwipeRow<Content: View>: View {
     @ViewBuilder var content: () -> Content
     @State private var settled: CGFloat = 0
     @GestureState private var drag: CGFloat = 0
+    /// Set as soon as a drag is plainly sideways, cleared a moment after it ends: the row's own
+    /// buttons and links are off meanwhile, since a Button fires on lift even after the finger
+    /// has moved, and a swipe opened the item's sheet as it finished.
+    @State private var swiping = false
     private let width: CGFloat = 76
 
     var body: some View {
         let lead = width * CGFloat(leading.count), trail = width * CGFloat(trailing.count)
         let x = min(leading.isEmpty ? 0 : lead + 64, max(trailing.isEmpty ? 0 : -(trail + 24), settled + drag))
         content()
+            .disabled(swiping)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .overlay { if settled != 0 { Color.clear.contentShape(Rectangle()).onTapGesture { close() } } }
@@ -78,6 +83,9 @@ struct SwipeRow<Content: View>: View {
                     .updating($drag) { v, state, _ in
                         if abs(v.translation.width) > abs(v.translation.height) * 1.2 { state = v.translation.width }
                     }
+                    .onChanged { v in
+                        if !swiping, abs(v.translation.width) > 10, abs(v.translation.width) > abs(v.translation.height) * 1.2 { swiping = true }
+                    }
                     .onEnded { v in
                         guard abs(v.translation.width) > abs(v.translation.height) * 1.2 else { return }
                         if let first = leading.first, settled + v.translation.width > lead + 48 { settled = 0; first.run(); return }
@@ -85,6 +93,11 @@ struct SwipeRow<Content: View>: View {
                         settled = end > lead / 2 && !leading.isEmpty ? lead : end < -trail / 2 && !trailing.isEmpty ? -trail : 0
                     }
             )
+            // Ended or taken over by the scroll, the drag goes back to nothing; the lift has passed by then.
+            .onChange(of: drag == 0) { _, idle in
+                guard idle, swiping else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { swiping = false }
+            }
             .sensoryFeedback(.selection, trigger: settled) { _, now in now != 0 }
             .accessibilityActions { ForEach(leading + trailing) { a in Button(a.title, action: a.run) } }
             .sideScrollZone()
